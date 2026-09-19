@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <memory>
+#include <protobuf_nspanel.pb-c.h>
 #include <protobuf_nspanel_entity.pb-c.h>
 #include <string>
 
@@ -66,6 +67,29 @@ private:
    */
   static void _handle_string_event_thermostat(char *data);
 
+  /*
+   * Update displayed page and value of "Media player" page.
+   * The GUI does not have a media player page yet, so this stops following the media player instead.
+   * A GUI with a media player page replaces this and _handle_touch_event_media_player.
+   */
+  static void _update_display_media_player();
+
+  /*
+   * Handle touch event for "Media player" page.
+   */
+  static void _handle_touch_event_media_player(uint16_t component_id, bool pressed);
+
+  /*
+   * Commands for the currently displayed media player. Decisions that depend on the
+   * current state (play or pause, mute or unmute) are made from the last state received.
+   */
+  static void _media_player_play_pause();
+  static void _media_player_next_track();
+  static void _media_player_previous_track();
+  static void _media_player_toggle_mute();
+  static void _media_player_set_volume(int32_t volume);
+  static void _media_player_set_source_volume(int32_t volume);
+
   /**
    * properly delete pointer and clear old data when shared_ptr expires
    */
@@ -80,11 +104,15 @@ private:
   // Send new set temp for a thermostat
   static void _send_thermostat_setpoint_command();
 
+  // Send a command for the currently displayed media player to the manager. Fills in the media player ID.
+  static void _send_media_player_command(NSPanelMQTTManagerCommand__MediaPlayerCommand *command);
+
   // What is the page currently showing
   enum _entity_page_modes {
     LIGHT_COLOR_TEMPERATURE,
     LIGHT_RGB,
     THERMOSTAT,
+    MEDIA_PLAYER,
   };
   static inline std::atomic<_entity_page_modes> _current_mode;
 

@@ -69,6 +69,8 @@ void EntityPage::_handle_mqtt_event(void *arg, esp_event_base_t event_base, int3
             }
           } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT) {
             EntityPage::_current_mode = _entity_page_modes::THERMOSTAT;
+          } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) {
+            EntityPage::_current_mode = _entity_page_modes::MEDIA_PLAYER;
           } else {
             ESP_LOGE("EntityPage", "Unknown entity state case!");
           }
@@ -96,6 +98,10 @@ void EntityPage::_update_display() {
     EntityPage::_update_display_thermostat();
     break;
 
+  case NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER:
+    EntityPage::_update_display_media_player();
+    break;
+
   default:
     ESP_LOGE("EntityPage", "Unknown state type. Can't call appropriate update display function.");
     break;
@@ -115,6 +121,9 @@ void EntityPage::_handle_nextion_event(void *arg, esp_event_base_t event_base, i
       EntityPage::_handle_string_event_thermostat((char *)event_data);
       break;
 
+    case NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER:
+      break;
+
     default:
       ESP_LOGE("EntityPage", "Unknown state type. Can't call appropriate string event function.");
       break;
@@ -132,6 +141,10 @@ void EntityPage::_handle_touch_event(uint16_t component_id, bool pressed) {
     break;
 
   case NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT:
+    break;
+
+  case NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER:
+    EntityPage::_handle_touch_event_media_player(component_id, pressed);
     break;
 
   default:
@@ -701,5 +714,97 @@ void EntityPage::_send_thermostat_setpoint_command() {
     }
 
     EntityPage::_update_display_thermostat();
+  }
+}
+
+void EntityPage::_update_display_media_player() {
+  // There is no media player page in the GUI yet. Stop following the media player, the display stays on the entities page.
+  ESP_LOGW("EntityPage", "The GUI has no media player page, can't show media player.");
+  EntityPage::unshow();
+}
+
+void EntityPage::_handle_touch_event_media_player(uint16_t component_id, bool pressed) {
+  // There is no media player page in the GUI yet, see _update_display_media_player.
+}
+
+void EntityPage::_media_player_play_pause() {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) [[unlikely]] {
+    ESP_LOGE("EntityPage", "Tried to play/pause without a media player state.");
+    return;
+  }
+
+  NSPanelMQTTManagerCommand__MediaPlayerCommand command = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__INIT;
+  if (state->media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING || state->media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__BUFFERING) {
+    command.playback_action = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__PLAYBACK_ACTION__PAUSE;
+  } else {
+    command.playback_action = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__PLAYBACK_ACTION__PLAY;
+  }
+  EntityPage::_send_media_player_command(&command);
+}
+
+void EntityPage::_media_player_next_track() {
+  NSPanelMQTTManagerCommand__MediaPlayerCommand command = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__INIT;
+  command.playback_action = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__PLAYBACK_ACTION__NEXT_TRACK;
+  EntityPage::_send_media_player_command(&command);
+}
+
+void EntityPage::_media_player_previous_track() {
+  NSPanelMQTTManagerCommand__MediaPlayerCommand command = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__INIT;
+  command.playback_action = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__PLAYBACK_ACTION__PREVIOUS_TRACK;
+  EntityPage::_send_media_player_command(&command);
+}
+
+void EntityPage::_media_player_toggle_mute() {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) [[unlikely]] {
+    ESP_LOGE("EntityPage", "Tried to toggle mute without a media player state.");
+    return;
+  }
+
+  NSPanelMQTTManagerCommand__MediaPlayerCommand command = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__INIT;
+  command.has_muted = true;
+  command.muted = !state->media_player->is_muted;
+  EntityPage::_send_media_player_command(&command);
+}
+
+void EntityPage::_media_player_set_volume(int32_t volume) {
+  NSPanelMQTTManagerCommand__MediaPlayerCommand command = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__INIT;
+  command.has_volume = true;
+  command.volume = volume;
+  EntityPage::_send_media_player_command(&command);
+}
+
+void EntityPage::_media_player_set_source_volume(int32_t volume) {
+  NSPanelMQTTManagerCommand__MediaPlayerCommand command = NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__INIT;
+  command.has_source_volume = true;
+  command.source_volume = volume;
+  EntityPage::_send_media_player_command(&command);
+}
+
+void EntityPage::_send_media_player_command(NSPanelMQTTManagerCommand__MediaPlayerCommand *command) {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) [[unlikely]] {
+    ESP_LOGE("EntityPage", "Tried to send media player command without a media player state.");
+    return;
+  }
+  command->media_player_id = state->media_player->media_player_id;
+
+  NSPanelMQTTManagerCommand cmd = NSPANEL_MQTTMANAGER_COMMAND__INIT;
+  cmd.command_data_case = NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_MEDIA_PLAYER_COMMAND;
+  cmd.media_player_command = command;
+  cmd.nspanel_id = NSPM_ConfigManager::get_nspanel_id();
+
+  uint32_t packed_length = nspanel_mqttmanager_command__get_packed_size(&cmd);
+  std::vector<uint8_t> buffer(packed_length); // Use vector for automatic cleanup of data when going out of scope
+  size_t packed_data_size = nspanel_mqttmanager_command__pack(&cmd, buffer.data());
+  if (packed_data_size == packed_length) [[likely]] {
+    if (MqttManager::publish(NSPM_ConfigManager::get_manager_command_topic(), (const char *)buffer.data(), packed_length, false) != ESP_OK) [[unlikely]] {
+      ESP_LOGE("EntityPage", "Failed to send MQTT message with command payload.");
+      EntityPage::_update_display_media_player(); // Update display to reset values to those stored
+    }
+  } else {
+    ESP_LOGE("EntityPage", "Failed to pack protobuf command.");
+    EntityPage::_update_display_media_player(); // Update display to reset values to those stored
   }
 }
