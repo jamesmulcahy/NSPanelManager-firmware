@@ -469,3 +469,29 @@ public:
       },
   };
 };
+
+// Component IDs match the media player page from the proof-of-concept TFT.
+// TODO: Update once the media player page is part of the official HMI files.
+class GUI_MEDIA_PLAYER_CONTROL_PAGE {
+public:
+  static inline constexpr const char *page_name = "mediaplayer";
+
+  static inline constexpr const uint8_t back_button_id = 6;
+  static inline constexpr const uint8_t volume_slider_id = 1;
+  static inline constexpr const uint8_t source_volume_slider_id = 2;
+  static inline constexpr const uint8_t previous_track_button_id = 18;
+  static inline constexpr const uint8_t next_track_button_id = 19;
+  static inline constexpr const uint8_t play_pause_button_id = 20;
+  static inline constexpr const uint8_t mute_button_id = 21;
+
+  static inline constexpr const char *name_label_name = "room";
+  static inline constexpr const char *state_label_name = "state";
+  static inline constexpr const char *title_label_name = "song";
+  static inline constexpr const char *artist_label_name = "artist";
+  static inline constexpr const char *volume_slider_name = "s_zonevol";
+  static inline constexpr const char *source_volume_slider_name = "s_sourcevol";
+  static inline constexpr const char *previous_track_button_name = "b_prev";
+  static inline constexpr const char *next_track_button_name = "b_next";
+  static inline constexpr const char *play_pause_button_name = "b_play";
+  static inline constexpr const char *mute_button_name = "b_mute";
+};

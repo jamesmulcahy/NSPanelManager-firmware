@@ -718,13 +718,129 @@ void EntityPage::_send_thermostat_setpoint_command() {
 }
 
 void EntityPage::_update_display_media_player() {
-  // There is no media player page in the GUI yet. Stop following the media player, the display stays on the entities page.
-  ESP_LOGW("EntityPage", "The GUI has no media player page, can't show media player.");
-  EntityPage::unshow();
+  ESP_LOGI("EntityPage", "Updating EntityPage with media player state.");
+  if (!EntityPage::_currently_showing) {
+    ESP_LOGD("EntityPage", "Switching page to %s", GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name);
+    EntityPage::_currently_showing = true;
+    if (Nextion::go_to_page(GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
+      ESP_LOGE("EntityPage", "Failed to navigate Nextion to page. Will go back.");
+      EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
+      return;
+    }
+
+    InterfaceManager::call_unshow_callback();
+    InterfaceManager::current_page_unshow_callback.set(EntityPage::unshow);
+
+    esp_event_handler_register(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event, NULL);
+  }
+
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  NSPanelEntityState__MediaPlayer *media_player = state->media_player;
+
+  const char *state_text;
+  bool is_playing = false;
+  switch (media_player->state) {
+  case NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__OFF:
+    state_text = "Off";
+    break;
+  case NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__ON:
+    state_text = "On";
+    break;
+  case NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__IDLE:
+    state_text = "Idle";
+    break;
+  case NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING:
+    state_text = "Playing";
+    is_playing = true;
+    break;
+  case NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PAUSED:
+    state_text = "Paused";
+    break;
+  case NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__BUFFERING:
+    state_text = "Buffering";
+    is_playing = true;
+    break;
+  default:
+    state_text = "";
+    break;
+  }
+
+  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::name_label_name, media_player->name, 1000);
+  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::state_label_name, state_text, 1000);
+  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::title_label_name, media_player->media_title, 1000);
+  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::artist_label_name, media_player->media_artist, 1000);
+
+  // Play/pause is a dual state button, value 1 shows it as playing.
+  Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::play_pause_button_name, is_playing ? 1 : 0, 250);
+  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::play_pause_button_name, is_playing ? media_player->can_pause : media_player->can_play, 250);
+  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::previous_track_button_name, media_player->can_previous_track, 250);
+  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::next_track_button_name, media_player->can_next_track, 250);
+
+  Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::mute_button_name, media_player->is_muted ? 1 : 0, 250);
+  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::mute_button_name, media_player->can_mute, 250);
+
+  Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_slider_name, media_player->volume, 250);
+  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_slider_name, media_player->can_set_volume, 250);
+
+  if (media_player->has_source_volume) {
+    Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::source_volume_slider_name, media_player->source_volume, 250);
+  }
+  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::source_volume_slider_name, media_player->has_source_volume, 250);
 }
 
 void EntityPage::_handle_touch_event_media_player(uint16_t component_id, bool pressed) {
-  // There is no media player page in the GUI yet, see _update_display_media_player.
+  ESP_LOGD("EntityPage", "Touch component %d, pressed %s", component_id, pressed ? "Yes" : "No");
+  if (pressed) {
+    return; // Act on release so that sliders report their final value.
+  }
+
+  switch (component_id) {
+  case GUI_MEDIA_PLAYER_CONTROL_PAGE::back_button_id:
+    ESP_LOGD("EntityPage", "Received touch event to go back.");
+    EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
+    break;
+
+  case GUI_MEDIA_PLAYER_CONTROL_PAGE::play_pause_button_id:
+    EntityPage::_media_player_play_pause();
+    break;
+
+  case GUI_MEDIA_PLAYER_CONTROL_PAGE::previous_track_button_id:
+    EntityPage::_media_player_previous_track();
+    break;
+
+  case GUI_MEDIA_PLAYER_CONTROL_PAGE::next_track_button_id:
+    EntityPage::_media_player_next_track();
+    break;
+
+  case GUI_MEDIA_PLAYER_CONTROL_PAGE::mute_button_id:
+    EntityPage::_media_player_toggle_mute();
+    break;
+
+  case GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_slider_id: {
+    int32_t new_volume;
+    if (Nextion::get_component_integer_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_slider_name, &new_volume, 250, 250) != ESP_OK) [[unlikely]] {
+      ESP_LOGE("EntityPage", "Failed to get new volume value from Nextion. Will not send update command.");
+      EntityPage::_update_display_media_player(); // Update display to reset values to those stored
+      return;
+    }
+    EntityPage::_media_player_set_volume(new_volume);
+    break;
+  }
+
+  case GUI_MEDIA_PLAYER_CONTROL_PAGE::source_volume_slider_id: {
+    int32_t new_source_volume;
+    if (Nextion::get_component_integer_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::source_volume_slider_name, &new_source_volume, 250, 250) != ESP_OK) [[unlikely]] {
+      ESP_LOGE("EntityPage", "Failed to get new source volume value from Nextion. Will not send update command.");
+      EntityPage::_update_display_media_player(); // Update display to reset values to those stored
+      return;
+    }
+    EntityPage::_media_player_set_source_volume(new_source_volume);
+    break;
+  }
+
+  default:
+    break;
+  }
 }
 
 void EntityPage::_media_player_play_pause() {

@@ -69,8 +69,6 @@ private:
 
   /*
    * Update displayed page and value of "Media player" page.
-   * The GUI does not have a media player page yet, so this stops following the media player instead.
-   * A GUI with a media player page replaces this and _handle_touch_event_media_player.
    */
   static void _update_display_media_player();
 
