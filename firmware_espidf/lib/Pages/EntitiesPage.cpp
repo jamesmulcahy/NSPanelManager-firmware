@@ -69,17 +69,23 @@ void EntitiesPage::unshow() {
 }
 
 void EntitiesPage::_update_display() {
-  if (EntitiesPage::_current_entities_page == nullptr) {
+  // Render from a local copy. The static is reassigned on this task for every update and cleared by unshow() from
+  // whichever task leaves the page, so it must not be re-read part-way through a render.
+  std::shared_ptr<NSPanelRoomEntitiesPage> page = EntitiesPage::_current_entities_page;
+  if (page == nullptr) {
     ESP_LOGE("EntitiesPage", "Tried to show RoomEntitiesPage but no _current_room_status has been set. Returning to HomePage.");
     HomePage::show();
     return;
   }
 
-  switch (EntitiesPage::_current_entities_page->page_type) {
+  // go_to_page resets every component, including the header label, to its designed default, so any time we
+  // navigate the cached header text no longer reflects what is on screen.
+  switch (page->page_type) {
   case 4: {
     if (EntitiesPage::_currently_showing_page_type != 4) {
       Nextion::go_to_page(GUI_ITEMS4_PAGE::page_name, 1000);
       EntitiesPage::_currently_showing_page_type = 4;
+      EntitiesPage::_currently_showing_header_text.set("");
     }
     break;
   }
@@ -88,6 +94,7 @@ void EntitiesPage::_update_display() {
     if (EntitiesPage::_currently_showing_page_type != 8) {
       Nextion::go_to_page(GUI_ITEMS8_PAGE::page_name, 1000);
       EntitiesPage::_currently_showing_page_type = 8;
+      EntitiesPage::_currently_showing_header_text.set("");
     }
     break;
   }
@@ -96,42 +103,64 @@ void EntitiesPage::_update_display() {
     if (EntitiesPage::_currently_showing_page_type != 12) {
       Nextion::go_to_page(GUI_ITEMS12_PAGE::page_name, 1000);
       EntitiesPage::_currently_showing_page_type = 12;
+      EntitiesPage::_currently_showing_header_text.set("");
     }
     break;
   }
 
   default:
-    ESP_LOGE("EntitiesPage", "Unknown entities page type! Type: %ld. Will navigate to home page.", EntitiesPage::_current_entities_page->page_type);
+    ESP_LOGE("EntitiesPage", "Unknown entities page type! Type: %ld. Will navigate to home page.", page->page_type);
     HomePage::show();
     return;
   }
 
-  EntitiesPage::_update_displayed_items();
-
-  if (std::string(EntitiesPage::_current_entities_page->header_text).compare(EntitiesPage::_currently_showing_header_text.get()) != 0) {
-    Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, EntitiesPage::_current_entities_page->header_text, 250);
-    EntitiesPage::_currently_showing_header_text.set(EntitiesPage::_current_entities_page->header_text);
+  // Header first: it is a single command with no delay, whereas the slots below are paced at 50 ms each.
+  if (std::string(page->header_text).compare(EntitiesPage::_currently_showing_header_text.get()) != 0) {
+    Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, page->header_text, 250);
+    EntitiesPage::_currently_showing_header_text.set(page->header_text);
   }
+
+  EntitiesPage::_update_displayed_items(page);
 }
 
-void EntitiesPage::_update_displayed_items() {
-  for (int i = 0; i < EntitiesPage::_current_entities_page->page_type; i++) {
+bool EntitiesPage::_render_is_stale(const std::shared_ptr<NSPanelRoomEntitiesPage> &page) {
+  if (EntitiesPage::_currently_showing_page_type == 0) {
+    return true; // unshow() ran, we have left the page.
+  }
+
+  std::shared_ptr<NSPanelRoomEntitiesPage> latest;
+  if (RoomManager::get_current_room_entities_page_status(&latest) != ESP_OK) {
+    return false; // Can't tell, so finish what we started.
+  }
+  // RoomManager swaps in a new object for every state publish and then posts ROOM_ENTITIES_PAGE_UPDATED, which is
+  // queued behind this render on the same loop. A different object means that event will redraw the page anyway.
+  return latest != page;
+}
+
+void EntitiesPage::_update_displayed_items(const std::shared_ptr<NSPanelRoomEntitiesPage> &page) {
+  for (int i = 0; i < page->page_type; i++) {
+    // Every render redraws every slot, so abandoning this one part-way leaves nothing behind once the next completes.
+    if (EntitiesPage::_render_is_stale(page)) {
+      ESP_LOGD("EntitiesPage", "Newer entities page data available, abandoning render at slot %d.", i);
+      return;
+    }
+
     NSPanelRoomEntitiesPage__EntitySlot *slot = nullptr;
-    for (int j = 0; j < EntitiesPage::_current_entities_page->n_entities; j++) {
-      if (EntitiesPage::_current_entities_page->entities[j]->room_view_position == i) {
-        slot = EntitiesPage::_current_entities_page->entities[j];
+    for (int j = 0; j < page->n_entities; j++) {
+      if (page->entities[j]->room_view_position == i) {
+        slot = page->entities[j];
         break;
       }
     }
 
-    if (EntitiesPage::_current_entities_page->page_type == 12) {
+    if (page->page_type == 12) {
       EntitiesPage::_update_displayed_item_in_slot(slot, GUI_ITEMS12_PAGE::item_slots[i]);
-    } else if (EntitiesPage::_current_entities_page->page_type == 8) {
+    } else if (page->page_type == 8) {
       EntitiesPage::_update_displayed_item_in_slot(slot, GUI_ITEMS8_PAGE::item_slots[i]);
-    } else if (EntitiesPage::_current_entities_page->page_type == 4) {
+    } else if (page->page_type == 4) {
       EntitiesPage::_update_displayed_item_in_slot(slot, GUI_ITEMS4_PAGE::item_slots[i]);
     } else {
-      ESP_LOGE("EntitiesPage", "Unknown entities page type: %ld. Will not update displayed entity slot.", EntitiesPage::_current_entities_page->page_type);
+      ESP_LOGE("EntitiesPage", "Unknown entities page type: %ld. Will not update displayed entity slot.", page->page_type);
     }
   }
 }

@@ -33,11 +33,17 @@ public:
   static void _update_display();
 
   /**
-   * Updated displayed items in each slot.
+   * Updated displayed items in each slot from the given page. Returns early if the render goes stale.
    */
-  static void _update_displayed_items();
+  static void _update_displayed_items(const std::shared_ptr<NSPanelRoomEntitiesPage> &page);
 
 private:
+  /**
+   * True if a render of the given page should be abandoned: either we have left the page, or RoomManager holds
+   * newer page data, in which case a ROOM_ENTITIES_PAGE_UPDATED event for it is already queued.
+   */
+  static bool _render_is_stale(const std::shared_ptr<NSPanelRoomEntitiesPage> &page);
+
   /**
    * Update a given items slot with the given EntitySlot data. In case slot_data is nullptr, blank the slot.
    */
