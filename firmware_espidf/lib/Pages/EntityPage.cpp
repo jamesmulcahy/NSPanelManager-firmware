@@ -723,7 +723,12 @@ void EntityPage::_update_display_media_player() {
     ESP_LOGD("EntityPage", "Switching page to %s", GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name);
     EntityPage::_currently_showing = true;
     if (Nextion::go_to_page(GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
+      // The official HMI has no media player page yet, so on a stock TFT this fails every time
+      // rather than never. Clear the flag before backing out: otherwise the next state update
+      // takes the "already showing" path, skips the page switch, and writes the media player
+      // components onto whatever page is actually displayed.
       ESP_LOGE("EntityPage", "Failed to navigate Nextion to page. Will go back.");
+      EntityPage::_currently_showing = false;
       EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
       return;
     }
