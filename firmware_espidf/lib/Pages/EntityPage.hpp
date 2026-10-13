@@ -73,6 +73,16 @@ private:
   static void _update_display_media_player();
 
   /*
+   * Human readable name for a playback state, used by the display and the log.
+   */
+  static const char *_playback_state_name(NSPanelEntityState__MediaPlayer__PlaybackState state);
+
+  /*
+   * Log a decoded media player state at debug level.
+   */
+  static void _log_media_player_state(NSPanelEntityState__MediaPlayer *media_player);
+
+  /*
    * Handle touch event for "Media player" page.
    */
   static void _handle_touch_event_media_player(uint16_t component_id, bool pressed);
