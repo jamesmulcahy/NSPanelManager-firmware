@@ -4,6 +4,52 @@
 // This file contains data that is needed to communicate between the Nextion display and the ESP32.
 // This includes data such as page names, component IDs and so on
 
+// Icon glyphs available in the "newfont9" icon font (font 11 in the HMI).
+//
+// The Nextion has no notion of an icon: an icon is just a character drawn in a font whose
+// glyphs are pictures. To show one, write the character into a text component (or the txt of
+// a dual state button) with Nextion::set_component_text, exactly as the items pages do for the
+// light switch icon. The component's own "font" attribute must already be 11 in the HMI --
+// there is no runtime way to change a component's font, so a component set to a text font will
+// render these as plain letters.
+//
+// newfont9 is 50x50 px and holds 18 glyphs on the character codes 'a'..'r'. Every glyph the
+// font has is listed here; anything not listed does not exist in the font.
+class GUI_ICONS {
+public:
+  // Font id as referenced by a component's "font" attribute in the HMI.
+  static inline constexpr const uint8_t icon_font_id = 11;
+
+  // Media transport
+  static inline constexpr const char *play = "m";
+  static inline constexpr const char *stop = "n";
+  static inline constexpr const char *previous_track = "o";
+  static inline constexpr const char *next_track = "p";
+
+  // NOTE: newfont9 has no pause glyph, and no muted-speaker glyph. A play/pause button has to
+  // either toggle between play and stop, or swap the picture rather than the character.
+
+  // Volume / chevrons
+  static inline constexpr const char *arrow_up = "k";
+  static inline constexpr const char *arrow_down = "l";
+  static inline constexpr const char *speaker = "q";        // single speaker
+  static inline constexpr const char *speaker_group = "r";  // two stacked speakers
+
+  // Power / misc
+  static inline constexpr const char *standby = "h";
+  static inline constexpr const char *thermometer = "j";
+  static inline constexpr const char *house_temperature = "i"; // house outline with a thermometer
+  static inline constexpr const char *spray_bottle = "g";
+  static inline constexpr const char *house_occupied = "a";    // house with a person inside
+  static inline constexpr const char *moon = "b";
+
+  // Alarm / shields
+  static inline constexpr const char *shield_disarmed = "c"; // shield with a slash through it
+  static inline constexpr const char *shield_home = "d";
+  static inline constexpr const char *shield_locked = "e";
+  static inline constexpr const char *shield_night = "f";
+};
+
 // BOOTSCREEN PAGE
 class GUI_LOADING_PAGE {
 public:
