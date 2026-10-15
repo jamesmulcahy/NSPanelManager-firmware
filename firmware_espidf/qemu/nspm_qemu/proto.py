@@ -1,32 +1,71 @@
-"""Python bindings for the NSPanel protobufs, compiled on first import."""
+"""Python bindings for the NSPanel protobufs.
 
+The firmware repo only carries protobuf-c output (lib/ProtoBuf), so the .proto
+sources come from NSPanelManager, which owns the schema:
+
+- by default, fetched from GitHub at PROTO_REF and cached under build/,
+- NSPM_PROTO_REF=<commit or branch> fetches another revision,
+- NSPM_PROTO_DIR=<dir> uses a local checkout's docker/protobuf instead,
+  e.g. to test a schema change before it is pushed.
+
+PROTO_REF is pinned, so an upstream schema change cannot break these tests
+until someone bumps it. A newer manager schema than the one lib/ProtoBuf was
+generated from is fine: protobuf is wire-compatible, and the firmware ignores
+fields it does not know.
+"""
+
+import hashlib
 import importlib
 import os
 import sys
+import urllib.request
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_PROTO_DIR = os.path.join(os.path.dirname(_HERE), "proto")
-_OUT_DIR = os.path.join(os.path.dirname(_HERE), "build", "pb")
-_PROTOS = ["protobuf_nspanel.proto", "protobuf_nspanel_entity.proto"]
+# NSPManager/NSPanelManager devel, "Home Assistant media players and album art for NSPanels (#385)".
+PROTO_REF = "ca00441aff1da8f4d2c70189887eca439e43d477"
+PROTO_URL = "https://raw.githubusercontent.com/NSPManager/NSPanelManager/{ref}/docker/protobuf/{name}"
+PROTOS = ["protobuf_nspanel.proto", "protobuf_nspanel_entity.proto"]
+
+_BUILD = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build")
 
 
-def _compile() -> None:
+def _proto_dir() -> str:
+    local = os.environ.get("NSPM_PROTO_DIR")
+    if local:
+        return os.path.abspath(local)
+    ref = os.environ.get("NSPM_PROTO_REF", PROTO_REF)
+    cache = os.path.join(_BUILD, "proto", ref)
+    os.makedirs(cache, exist_ok=True)
+    for name in PROTOS:
+        path = os.path.join(cache, name)
+        # A branch moves, so only the pinned commit is served from cache.
+        if os.path.exists(path) and ref == PROTO_REF:
+            continue
+        with urllib.request.urlopen(PROTO_URL.format(ref=ref, name=name), timeout=30) as r:
+            data = r.read()
+        with open(path + ".tmp", "wb") as f:
+            f.write(data)
+        os.replace(path + ".tmp", path)
+    return cache
+
+
+def _compile(src_dir: str, out_dir: str) -> None:
     from grpc_tools import protoc
 
-    os.makedirs(_OUT_DIR, exist_ok=True)
-    for proto in _PROTOS:
-        src = os.path.join(_PROTO_DIR, proto)
-        out = os.path.join(_OUT_DIR, proto.replace(".proto", "_pb2.py"))
+    os.makedirs(out_dir, exist_ok=True)
+    for name in PROTOS:
+        src = os.path.join(src_dir, name)
+        out = os.path.join(out_dir, name.replace(".proto", "_pb2.py"))
         if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(src):
             continue
-        rc = protoc.main(["protoc", "-I" + _PROTO_DIR, "--python_out=" + _OUT_DIR, src])
-        if rc != 0:
-            raise RuntimeError("protoc failed on %s" % proto)
+        if protoc.main(["protoc", "-I" + src_dir, "--python_out=" + out_dir, src]) != 0:
+            raise RuntimeError("protoc failed on %s" % src)
 
 
-_compile()
-if _OUT_DIR not in sys.path:
-    sys.path.insert(0, _OUT_DIR)
+_src = _proto_dir()
+_out = os.path.join(_BUILD, "pb", hashlib.sha1(_src.encode()).hexdigest()[:12])
+_compile(_src, _out)
+if _out not in sys.path:
+    sys.path.insert(0, _out)
 
 nspanel = importlib.import_module("protobuf_nspanel_pb2")
 entity = importlib.import_module("protobuf_nspanel_entity_pb2")

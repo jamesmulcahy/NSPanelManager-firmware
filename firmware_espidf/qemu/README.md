@@ -130,5 +130,15 @@ Consequences:
 
 ## Protobufs
 
-`proto/` holds copies of NSPanelManager's `.proto` files, compiled with grpcio-tools on first use.
-See `proto/README.md` for why a newer schema is fine.
+The firmware repo carries only protobuf-c output (`lib/ProtoBuf`), so `nspm_qemu/proto.py`
+fetches the `.proto` sources from NSPanelManager, which owns the schema. It downloads
+`docker/protobuf/*.proto` at a pinned commit (`PROTO_REF`), caches them under `build/proto/`,
+and compiles them with grpcio-tools.
+
+- `NSPM_PROTO_REF=<commit or branch>` uses another revision. Bump `PROTO_REF` to move the
+  default.
+- `NSPM_PROTO_DIR=~/nspanel/NSPanelManager/docker/protobuf` uses a local checkout, to test a
+  schema change before it is pushed.
+
+The manager's schema can be newer than the one `lib/ProtoBuf` was generated from. That is
+wire-compatible: the firmware ignores fields it does not know.
