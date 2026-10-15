@@ -1,0 +1,3 @@
+pytest>=8
+grpcio-tools>=1.66
+paho-mqtt>=2.1

@@ -1,0 +1,61 @@
+name: QEMU firmware tests
+
+# Boots the real firmware in Espressif's QEMU fork against a fake manager,
+# broker and Nextion display, and drives it with simulated screen input.
+# See firmware_espidf/qemu/README.md.
+
+on:
+  push:
+    paths:
+      - "firmware_espidf/**"
+      - ".github/workflows/qemu-tests.yml"
+  pull_request:
+    paths:
+      - "firmware_espidf/**"
+      - ".github/workflows/qemu-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: firmware_espidf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU runtime libraries and mosquitto
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0 zlib1g mosquitto
+          # Each test starts its own broker on a random port; the system service is not used.
+          sudo systemctl disable --now mosquitto
+
+      - name: Cache PlatformIO toolchains and QEMU
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/nspm-qemu
+          key: qemu-tests-${{ runner.os }}-${{ hashFiles('firmware_espidf/platformio.ini', 'firmware_espidf/qemu/install_qemu.sh') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build and test
+        run: qemu/run_tests.sh
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-test-logs
+          path: |
+            firmware_espidf/qemu/build/junit.xml
+            firmware_espidf/qemu/build/test-logs/
+          if-no-files-found: ignore
