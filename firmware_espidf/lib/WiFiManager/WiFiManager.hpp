@@ -65,6 +65,11 @@ private:
   // to get back into the NSPanel.
   static void _fallback_timer_callback(TimerHandle_t timer);
 
+#if defined(NSPM_QEMU)
+  static void _start_qemu_ethernet(std::string *hostname);
+  static void _qemu_ethernet_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+#endif
+
   // Timer to start the fallback AP if wifi is not connected within WIFI_TIMEOUT_MS threshold
   static inline TimerHandle_t _fallback_timer;
 

@@ -81,7 +81,7 @@ void StatusUpdateManager::init() {
 #endif
 
 // Setup ADC for reading temperature
-#if not defined(BOARD_CUSTOM)
+#if not defined(BOARD_CUSTOM) && not defined(NSPM_QEMU)
   // Init ADC1
   adc_oneshot_unit_init_cfg_t adc1_init_config = {};
   adc1_init_config.unit_id = ADC_UNIT_1;
@@ -134,7 +134,14 @@ void StatusUpdateManager::reboot() {
 
 void StatusUpdateManager::_send_status_update(void *arg) {
   int current_wifi_rssi;
+#if defined(NSPM_QEMU)
+  // Wi-Fi is never initialised under QEMU, and esp_wifi_sta_get_rssi()
+  // dereferences driver state that only esp_wifi_init() creates.
+  current_wifi_rssi = -50;
+  if (true) {
+#else
   if (esp_wifi_sta_get_rssi(&current_wifi_rssi) == ESP_OK) [[likely]] {
+#endif
     StatusUpdateManager::_status_report.rssi = current_wifi_rssi;
   } else {
     ESP_LOGW("StatusUpdateManager", "Failed to get current wifi RSSI. Will use old value.");
@@ -180,6 +187,13 @@ void StatusUpdateManager::_send_status_update(void *arg) {
 #if defined(BOARD_SONOFF)
 void StatusUpdateManager::_measure_temperature(void *arg) {
   for (;;) {
+    int read_voltage_mv;
+#if defined(NSPM_QEMU)
+    // QEMU does not emulate the SAR ADC: a conversion spins forever on a
+    // conversion-done bit with the ADC spinlock held, freezing the core.
+    // Report the NTC voltage for roughly 22 C instead.
+    read_voltage_mv = 1680;
+#else
     int read_voltage_mv_raw;
     if (adc_oneshot_read(StatusUpdateManager::_temp_adc_handle, ADC_CHANNEL_2, &read_voltage_mv_raw) != ESP_OK) {
       ESP_LOGE("StatusUpdateManager", "Failed to read raw voltage data from temp sensor. Will retry in 5 seconds.");
@@ -187,11 +201,11 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
       continue;
     }
 
-    int read_voltage_mv;
     if (adc_cali_raw_to_voltage(StatusUpdateManager::_temp_calibration_data, read_voltage_mv_raw, &read_voltage_mv) != ESP_OK) {
       ESP_LOGE("StatusUpdateManager", "Failed to convert read raw voltage with calibration data.");
       return;
     }
+#endif
 
     // We now have temperature as a voltage. Convert voltage into celsius:
     double read_voltage_v = (double)read_voltage_mv / 1000.0; // Convert mV to V.

@@ -1,0 +1,17 @@
+# Overlay applied on top of sdkconfig.original_sonoff to produce sdkconfig.qemu.
+# Each CONFIG_ line here replaces the base file's line for that symbol.
+
+# QEMU has no Wi-Fi radio; WiFiManager uses its OpenCores Ethernet MAC instead.
+CONFIG_ETH_USE_OPENETH=y
+CONFIG_ETH_OPENETH_DMA_RX_BUFFER_NUM=4
+CONFIG_ETH_OPENETH_DMA_TX_BUFFER_NUM=1
+
+# partitions.csv spans 4 MB.
+# CONFIG_ESPTOOLPY_FLASHSIZE_2MB is not set
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# A panic should stop the run with its backtrace on the console, not reboot
+# into a loop the test then has to notice.
+# CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT is not set
+CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y

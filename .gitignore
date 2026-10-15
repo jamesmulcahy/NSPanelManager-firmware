@@ -1,2 +1,6 @@
 firmware_espidf/.vscode/
 firmware_espidf/node_modules/
+firmware_espidf/sdkconfig.qemu
+firmware_espidf/qemu/.venv/
+firmware_espidf/qemu/build/
+__pycache__/

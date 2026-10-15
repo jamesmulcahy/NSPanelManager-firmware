@@ -6,11 +6,26 @@
 #include <esp_netif.h>
 #include <string>
 
+#if defined(NSPM_QEMU)
+#include <esp_eth.h>
+#include <esp_eth_mac_openeth.h>
+#endif
+
 // Helper
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
 void WiFiManager::init() {
   esp_netif_init();
+
+#if defined(NSPM_QEMU)
+  // QEMU emulates no Wi-Fi radio, so there is no Wi-Fi driver to initialise.
+  // start_client() brings the network up over Ethernet instead.
+  uint8_t qemu_mac[6];
+  esp_read_mac(qemu_mac, ESP_MAC_WIFI_STA);
+  snprintf(WiFiManager::_mac_address, sizeof(WiFiManager::_mac_address), "%02X:%02X:%02X:%02X:%02X:%02X", qemu_mac[0], qemu_mac[1], qemu_mac[2], qemu_mac[3], qemu_mac[4], qemu_mac[5]);
+  return;
+#endif
+
   esp_netif_create_default_wifi_sta();
 
   // Create AP netif now; it gets attached when APSTA mode starts.
@@ -40,6 +55,14 @@ void WiFiManager::start_client(std::string *ssid, std::string *psk, std::string 
 
   WiFiManager::_connected = false;
   WiFiManager::_ip_info.set({});
+
+#if defined(NSPM_QEMU)
+  // Report the emulated Ethernet link through the same connected()/ip_info()
+  // state, so everything downstream of WiFiManager runs unmodified. There is
+  // no fallback AP: it needs Wi-Fi.
+  WiFiManager::_start_qemu_ethernet(hostname);
+  return;
+#endif
 
   esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
   if (esp_netif_set_hostname(netif, hostname->c_str()) != ESP_OK) {
@@ -201,6 +224,58 @@ void WiFiManager::_event_handler(void *arg, esp_event_base_t event_base, int32_t
     }
   }
 }
+
+#if defined(NSPM_QEMU)
+void WiFiManager::_start_qemu_ethernet(std::string *hostname) {
+  esp_netif_config_t netif_config = ESP_NETIF_DEFAULT_ETH();
+  esp_netif_t *netif = esp_netif_new(&netif_config);
+
+  eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+  eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+  phy_config.autonego_timeout_ms = 100;
+  esp_eth_mac_t *eth_mac = esp_eth_mac_new_openeth(&mac_config);
+  // QEMU models a standard 802.3 PHY; IDF 6 keeps only the generic driver in-tree.
+  esp_eth_phy_t *eth_phy = esp_eth_phy_new_generic(&phy_config);
+
+  esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(eth_mac, eth_phy);
+  esp_eth_handle_t eth_handle = NULL;
+  ESP_ERROR_CHECK(esp_eth_driver_install(&eth_config, &eth_handle));
+  ESP_ERROR_CHECK(esp_netif_attach(netif, esp_eth_new_netif_glue(eth_handle)));
+
+  if (esp_netif_set_hostname(netif, hostname->c_str()) != ESP_OK) {
+    ESP_LOGW("WiFiManager", "Failed to set hostname!");
+  }
+
+  esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &WiFiManager::_qemu_ethernet_event_handler, NULL);
+  esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &WiFiManager::_qemu_ethernet_event_handler, NULL);
+
+  ESP_LOGI("WiFiManager", "QEMU build: using emulated Ethernet instead of Wi-Fi.");
+  ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+}
+
+void WiFiManager::_qemu_ethernet_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  if (event_base == ETH_EVENT) {
+    switch (event_id) {
+    case ETHERNET_EVENT_CONNECTED:
+      ESP_LOGI("WiFiManager", "Ethernet link up.");
+      break;
+    case ETHERNET_EVENT_DISCONNECTED:
+      ESP_LOGI("WiFiManager", "Ethernet link down.");
+      WiFiManager::_connected = false;
+      break;
+    default:
+      break;
+    }
+  } else if (event_base == IP_EVENT && event_id == IP_EVENT_ETH_GOT_IP) {
+    ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+    WiFiManager::_ip_info.set(event->ip_info);
+    ESP_LOGI("WiFiManager", "Got IP: " IPSTR ", Netmask: " IPSTR ", Gateway: " IPSTR, IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.netmask), IP2STR(&event->ip_info.gw));
+    // On Wi-Fi, connected() goes true on association, before DHCP. Ethernet
+    // has no association step, so report connected once we are addressable.
+    WiFiManager::_connected = true;
+  }
+}
+#endif
 
 void WiFiManager::_fallback_timer_callback(TimerHandle_t timer) {
   ESP_LOGE("WiFiManager", "Fallback WiFi AP callback called. Starting fallback AP.");
