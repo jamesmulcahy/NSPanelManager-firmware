@@ -7,3 +7,5 @@ esptool==5.6.0
 # as the HMI and the .proto files are pinned to a commit (nspanelmanager.ref), so a change there
 # cannot break these tests until someone bumps it. NEXTION_TOOLS=<checkout> in run_tests.sh uses a local one instead.
 nextion-tools[images]==0.2.0
+# The dev stack's STOMP-over-websocket server (nspm_qemu/stack_web.py), for the stack tests.
+websocket-client>=1.8

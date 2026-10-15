@@ -71,6 +71,7 @@ on the lights, through the viewer alone.
 | `requirements.txt` | Pin | Python packages, nextion-tools included. |
 | `nspm_qemu/rig.py`, `panel.py`, `image.py`, `waiting.py` | Library | Running the panel: see the table above. `image.py` builds the flash and eFuse images. |
 | `nspm_qemu/fake_manager.py`, `broker.py`, `fake_nextion.py` | Fake | The manager, broker and display the panel talks to. |
+| `nspm_qemu/stack_manager.py`, `stack_web.py` | Library | The real manager on a dev stack, in place of the fake ([Stack tests](#stack-tests)): watches its MQTT, and accepts and deletes panels through its web API. |
 | `nspm_qemu/upstream.py`, `hmi.py`, `proto.py` | Library | Fetch and cache NSPanelManager's HMI and `.proto` files, and load them. |
 | `nspm_qemu/gui.py`, `display_errors.py` | Data | Component names tests touch; display rejections known to be the firmware's. |
 | `nspm_qemu/freertos_tasks.py` | gdb script | The task dump a failing test takes ([Debugging](#debugging)). |
@@ -198,6 +199,36 @@ Two things differ from a panel:
   clock, can still end the session then; it starts another, and `Rig.boot()` waits for it.
 - **The stream is slow**, ~8 KB/s under QEMU against ~1.5 Mpx/s on a panel, so a full repaint
   takes seconds. Wait for the screen with `settle()` (in the test file), not fixed sleeps.
+
+## Stack tests
+
+`tests/test_stack.py` runs the firmware against the real NSPanelManager instead of
+`FakeManager`, using the dev stack from the NSPanelManager repo (`docker/dev`). Start the
+stack, then give the harness its broker:
+
+```
+docker/dev/nspm-dev up                                          # in NSPanelManager; prints the broker port
+NSPM_STACK_MQTT=127.0.0.1:<port> qemu/run_tests.sh -m stack     # here
+```
+
+`NSPM_STACK_WEB` is the stack's web UI (default `http://127.0.0.1:8010`). Tests marked
+`stack` are skipped without `NSPM_STACK_MQTT`.
+
+```
+   QEMU panel ── slirp ──► FaultProxy ──► stack mosquitto ◄──► MQTTManager ◄── Django
+                                               ▲                    ▲ STOMP     ▲ REST
+                                               └ observer ─── StackManager ─────┘
+```
+
+Each panel gets a random MAC and its own hostname, so it is new to the stack. It registers,
+shows up as awaiting accept, and `StackManager.accept()` accepts it through the same STOMP
+topics (`entity_states`, `nspanel/<mac>/status`) and REST call
+(`POST /rest/nspanel/<id>/accept`) the web UI uses. That makes any number of panels
+possible: `make_rig()` builds another one. At teardown the panel is deleted from the stack
+(`NSPM_STACK_KEEP_PANELS=1` keeps it, to look at it in the UI).
+
+The stack is shared state, so `subscriptions()` and the connect/subscribe waits, which read
+the harness's own mosquitto log, are unavailable here.
 
 ## What differs from hardware
 
