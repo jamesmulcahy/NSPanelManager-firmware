@@ -60,8 +60,7 @@ void ScreensaverPage::show() {
     ScreensaverPage::init();
   }
 
-  InterfaceManager::call_unshow_callback();
-  InterfaceManager::current_page_unshow_callback.set(ScreensaverPage::unshow);
+  InterfaceManager::begin_page(ScreensaverPage::unshow);
 
   ScreensaverPage::_go_to_nextion_page();
   ScreensaverPage::_update_displayed_date();

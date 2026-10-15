@@ -1,5 +1,6 @@
 #pragma once
 #include <MutexWrapper.hpp>
+#include <PageHandlers.hpp>
 #include <atomic>
 #include <esp_event.h>
 #include <functional>
@@ -14,16 +15,20 @@ public:
   static void init();
 
   /**
-   * When calling "show" on any page this can be used to unshow the previous page if
-   * that page had declared an unshow callback function.
+   * @brief Make the calling page the current page. Every page's show() calls this first.
+   *
+   * The previous page is unshown on a separate task, as show() is usually
+   * called from inside one of that page's own event handlers. Register the new
+   * page's event handlers through the returned PageHandlers, never directly:
+   * the previous page's late unshow then only removes its own registrations,
+   * not the new page's.
+   *
+   * @param unshow The page's unshow function. It is skipped if the same page has
+   *               been shown again by the time it would run, so that it cannot
+   *               reset the state of the newer show().
+   * @return The handlers owned by this show() of the page.
    */
-  static inline MutexWrapped<std::function<void()>> current_page_unshow_callback;
-
-  /**
-   * Start a task to call unshow on given callback. This is to not remove a registered loop event handler
-   * from within that handler. Doing so will cause a crash.
-   */
-  static void call_unshow_callback();
+  static std::shared_ptr<PageHandlers> begin_page(void (*unshow)());
 
   /**
    * Show the user selected default page
@@ -68,11 +73,20 @@ private:
    */
   static void _subscribe_to_relevant_mqtt_topics();
 
+  // The page currently shown, as recorded by begin_page().
+  struct ShownPage {
+    void (*unshow)(); // nullptr until the first page is shown (static storage is zeroed)
+    std::shared_ptr<PageHandlers> handlers;
+  };
+  static inline ShownPage _current_page;
+  static inline portMUX_TYPE _current_page_lock = portMUX_INITIALIZER_UNLOCKED;
+
   /**
-   * Unshow the currently showing page by starting a task to prevent the running task from removing
-   * its own task handler from within. Doing so will cause a crash
+   * Unshows pages handed over by begin_page(). Runs on its own task so that a
+   * page's unshow never runs inside one of that page's own handlers.
    */
   static void _task_unshow_page(void *param);
+  static void _finish_unshow(ShownPage *page);
 
   // Page transitions requested from event-loop handlers run here instead.
   //

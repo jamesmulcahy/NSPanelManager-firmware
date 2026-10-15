@@ -163,6 +163,11 @@ public:
   static esp_err_t register_handler(int32_t event_id, esp_event_handler_t event_handler, void *event_handler_arg);
 
   /**
+   * @brief The loop ROOMMANAGER_EVENTs are posted on, for PageHandlers::add_to().
+   */
+  static esp_event_loop_handle_t event_loop() { return RoomManager::_local_event_loop; }
+
+  /**
    * @brief Unregister event handler for events.
    * @param event_id: The event id to unsubscribe from.
    * @param event_handler: The event handler callback to register

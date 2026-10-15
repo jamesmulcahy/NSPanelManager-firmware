@@ -18,8 +18,7 @@
 void HomePage::show() {
   esp_log_level_set("HomePage", ConfigManager::log_level);
 
-  InterfaceManager::call_unshow_callback();
-  InterfaceManager::current_page_unshow_callback.set(HomePage::unshow);
+  std::shared_ptr<PageHandlers> handlers = InterfaceManager::begin_page(HomePage::unshow);
 
   Nextion::go_to_page(GUI_HOME_PAGE::page_name, 250);
 
@@ -31,9 +30,9 @@ void HomePage::show() {
   }
 
   HomePage::_update_display();
-  RoomManager::register_handler(ESP_EVENT_ANY_ID, HomePage::_handle_roommanager_event, NULL);
-  esp_event_handler_register(NEXTION_EVENT, ESP_EVENT_ANY_ID, HomePage::_handle_nextion_event, NULL);
-  esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, HomePage::_handle_config_update, NULL);
+  handlers->add_to(RoomManager::event_loop(), ROOMMANAGER_EVENT, ESP_EVENT_ANY_ID, HomePage::_handle_roommanager_event);
+  handlers->add(NEXTION_EVENT, ESP_EVENT_ANY_ID, HomePage::_handle_nextion_event);
+  handlers->add(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, HomePage::_handle_config_update);
 
   if (HomePage::_special_mode_timer_handle == NULL) {
     // This is the first time this page is shown, create timers
@@ -56,9 +55,7 @@ void HomePage::show() {
 }
 
 void HomePage::unshow() {
-  RoomManager::unregister_handler(ESP_EVENT_ANY_ID, HomePage::_handle_roommanager_event);
-  esp_event_handler_unregister(NEXTION_EVENT, ESP_EVENT_ANY_ID, HomePage::_handle_nextion_event);
-  esp_event_handler_unregister(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, HomePage::_handle_config_update);
+  // Event handlers are removed by InterfaceManager (PageHandlers::retire()).
   HomePage::_current_affect_mode = HomePageAffectMode::ROOM;
   HomePage::_current_edit_mode = HomePageEditMode::ALL_LIGHTS;
 }

@@ -20,8 +20,8 @@
 
 void InterfaceManager::init() {
   esp_log_level_set("InterfaceManager", ConfigManager::log_level);
-  current_page_unshow_callback.set(NULL);
-  InterfaceManager::_unshow_queue = xQueueCreate(4, sizeof(std::function<void()>));
+  InterfaceManager::_unshow_queue = xQueueCreate(8, sizeof(ShownPage *));
+  xTaskCreatePinnedToCore(InterfaceManager::_task_unshow_page, "unshow_task", 4096, NULL, 6, NULL, 1);
   // Must exist before any handler below can notify it.
   xTaskCreatePinnedToCore(InterfaceManager::_task_page_transitions, "page_transitions", 8192, NULL, 6, &InterfaceManager::_page_transitions_task, 1);
   esp_err_t nextion_init_result = Nextion::init();
@@ -132,12 +132,42 @@ void InterfaceManager::init() {
   // successfully loaded the event handler for RoomManager will take over and send the Nextion display to the correct page
 }
 
-void InterfaceManager::call_unshow_callback() {
-  auto unshow_handle = InterfaceManager::current_page_unshow_callback.get();
-  if (unshow_handle != nullptr) {
-    xQueueSend(InterfaceManager::_unshow_queue, &unshow_handle, pdMS_TO_TICKS(500));
-    xTaskCreatePinnedToCore(InterfaceManager::_task_unshow_page, "unshow_task", 4096, NULL, 6, NULL, 1);
+std::shared_ptr<PageHandlers> InterfaceManager::begin_page(void (*unshow)()) {
+  ShownPage next;
+  next.unshow = unshow;
+  next.handlers = std::make_shared<PageHandlers>();
+  ShownPage *previous = new ShownPage();
+
+  // Only reference counts change in here: the old record stays referenced by
+  // *previous, so nothing is freed inside the critical section.
+  portENTER_CRITICAL(&InterfaceManager::_current_page_lock);
+  *previous = InterfaceManager::_current_page;
+  InterfaceManager::_current_page = next;
+  portEXIT_CRITICAL(&InterfaceManager::_current_page_lock);
+
+  if (previous->unshow == nullptr) {
+    delete previous; // First page since boot
+  } else if (xQueueSend(InterfaceManager::_unshow_queue, &previous, 0) != pdTRUE) {
+    // Never block the caller, which is usually an event handler.
+    ESP_LOGW("InterfaceManager", "Unshow queue full, unshowing previous page inline.");
+    InterfaceManager::_finish_unshow(previous);
   }
+  return next.handlers;
+}
+
+void InterfaceManager::_finish_unshow(ShownPage *page) {
+  // Always safe: removes only the registrations that page's show() made.
+  page->handlers->retire();
+
+  portENTER_CRITICAL(&InterfaceManager::_current_page_lock);
+  bool shown_again = InterfaceManager::_current_page.unshow == page->unshow;
+  portEXIT_CRITICAL(&InterfaceManager::_current_page_lock);
+  if (shown_again) {
+    ESP_LOGD("InterfaceManager", "Page was shown again before its unshow ran; keeping its state.");
+  } else {
+    page->unshow();
+  }
+  delete page;
 }
 
 void InterfaceManager::show_default_page() {
@@ -208,11 +238,12 @@ void InterfaceManager::_associate_with_manager_if_ready() {
 }
 
 void InterfaceManager::_task_unshow_page(void *param) {
-  std::function<void()> unshow_handle;
-  while (xQueueReceive(InterfaceManager::_unshow_queue, &unshow_handle, pdMS_TO_TICKS(250)) == pdPASS) {
-    unshow_handle();
+  ShownPage *page;
+  for (;;) {
+    if (xQueueReceive(InterfaceManager::_unshow_queue, &page, portMAX_DELAY) == pdTRUE) {
+      InterfaceManager::_finish_unshow(page);
+    }
   }
-  vTaskDelete(NULL);
 }
 
 void InterfaceManager::_nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {

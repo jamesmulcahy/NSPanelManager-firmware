@@ -30,7 +30,7 @@ void EntityPage::show(std::string state_topic) {
 
 void EntityPage::unshow() {
   MqttManager::unregister_handler(MQTT_EVENT_ANY, &EntityPage::_handle_mqtt_event);
-  esp_event_handler_unregister(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event);
+  // The Nextion handler is removed by InterfaceManager (PageHandlers::retire()).
   if (!EntityPage::_current_entity_mqtt_topic.empty()) {
     MqttManager::unsubscribe(EntityPage::_current_entity_mqtt_topic);
   }
@@ -163,10 +163,9 @@ void EntityPage::_update_display_light() {
       return;
     }
 
-    InterfaceManager::call_unshow_callback();
-    InterfaceManager::current_page_unshow_callback.set(EntityPage::unshow);
+    std::shared_ptr<PageHandlers> handlers = InterfaceManager::begin_page(EntityPage::unshow);
 
-    esp_event_handler_register(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event, NULL);
+    handlers->add(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event);
   }
 
   auto state = EntityPage::_get_current_state();
@@ -402,10 +401,9 @@ void EntityPage::_update_display_thermostat() {
       EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
     }
 
-    InterfaceManager::call_unshow_callback();
-    InterfaceManager::current_page_unshow_callback.set(EntityPage::unshow);
+    std::shared_ptr<PageHandlers> handlers = InterfaceManager::begin_page(EntityPage::unshow);
 
-    esp_event_handler_register(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event, NULL);
+    handlers->add(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event);
   }
 
   std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
