@@ -1,5 +1,7 @@
 """Recovery after the broker connection drops, as on a flaky network."""
 
+import time
+
 
 def test_resubscribes_and_reregisters_after_connection_drop(home):
     client = home.panel.client_id
@@ -36,3 +38,30 @@ def test_last_will_marks_panel_offline(home):
     will = home.broker.wait_for_message("nspanel/%s/status" % home.mac, lambda m: b"offline" in m.payload,
                                         since=mark, timeout=10)
     assert will.retain  # MqttManager sets last_will.retain
+
+
+def test_reregisters_after_rename_and_reconnect(home):
+    """A panel renamed in the manager must still complete registration after a reconnect.
+
+    The panel adopts the manager's name as its hostname, and register_accept is
+    sent to nspanel/<that name>/command, so its command subscription has to
+    follow the rename.
+    """
+    client = home.panel.client_id
+    home.manager.config.name = "Renamed Panel"
+    home.manager.publish_config()
+    home.panel.wait_for_log(r"Updating internal WiFi hostname to match manager provided friendly name")
+
+    reg_mark = home.manager.registration_mark()
+    log_mark = home.panel.mark()
+    home.broker.drop_client(client)
+
+    request = home.manager.wait_for_registration(since=reg_mark, timeout=120)
+    assert request["friendly_name"] == "Renamed Panel"
+    home.panel.wait_for_log(r"Received register_accept from manager", since=log_mark, timeout=30)
+
+    # Accepted, so the panel stops asking. It re-sends every 5 s until it is.
+    settled = home.manager.registration_mark()
+    home.panel.wait_for_log(r"Subscribed to 'nspanel/C0:49:EF:00:00:01/config'", since=log_mark, timeout=30)
+    time.sleep(15)
+    assert home.manager.registration_mark() - settled <= 1, "panel kept sending register_request after being accepted"

@@ -177,6 +177,21 @@ void NSPM_ConfigManager::_handle_new_config_data(const char *data, size_t data_l
       ESP_LOGI("NSPM_ConfigManager", "Updating internal WiFi hostname to match manager provided friendly name.");
       ConfigManager::wifi_hostname = new_config->name;
       ConfigManager::save_config();
+
+      // register_request carries the hostname as friendly_name, and the manager
+      // answers on nspanel/<friendly_name>/command. Follow the rename, or the
+      // next register_accept (e.g. after an MQTT reconnect) goes unheard and the
+      // panel re-sends register_request forever.
+      std::string new_command_topic = "nspanel/";
+      new_command_topic.append(ConfigManager::wifi_hostname);
+      new_command_topic.append("/command");
+      if (new_command_topic != NSPM_ConfigManager::_mqtt_command_topic) {
+        MqttManager::unsubscribe(NSPM_ConfigManager::_mqtt_command_topic);
+        NSPM_ConfigManager::_mqtt_command_topic = new_command_topic;
+        if (MqttManager::subscribe(NSPM_ConfigManager::_mqtt_command_topic) != ESP_OK) {
+          ESP_LOGE("NSPM_ConfigManager", "Failed to subscribe to renamed command topic '%s'.", NSPM_ConfigManager::_mqtt_command_topic.c_str());
+        }
+      }
     }
   } else {
     ESP_LOGE("NSPM_ConfigManager", "Failed to gain config mutex while processing new config from MQTT!");
