@@ -22,6 +22,8 @@ void InterfaceManager::init() {
   esp_log_level_set("InterfaceManager", ConfigManager::log_level);
   current_page_unshow_callback.set(NULL);
   InterfaceManager::_unshow_queue = xQueueCreate(4, sizeof(std::function<void()>));
+  // Must exist before any handler below can notify it.
+  xTaskCreatePinnedToCore(InterfaceManager::_task_page_transitions, "page_transitions", 8192, NULL, 6, &InterfaceManager::_page_transitions_task, 1);
   esp_err_t nextion_init_result = Nextion::init();
   if (nextion_init_result != ESP_OK) {
     ESP_LOGE("InterfaceManager", "Failed to initialize Nextion display. Will not continue with InterfaceManager!");
@@ -168,6 +170,43 @@ void InterfaceManager::show_default_page() {
   }
 }
 
+void InterfaceManager::request_show_home_page() {
+  xTaskNotify(InterfaceManager::_page_transitions_task, PAGE_TRANSITION_SHOW_HOME, eSetBits);
+}
+
+void InterfaceManager::_task_page_transitions(void *param) {
+  for (;;) {
+    uint32_t requested = 0;
+    xTaskNotifyWait(0, UINT32_MAX, &requested, portMAX_DELAY);
+    if (requested & PAGE_TRANSITION_ASSOCIATE) {
+      InterfaceManager::_associate_with_manager_if_ready();
+    }
+    if (requested & PAGE_TRANSITION_SHOW_HOME) {
+      HomePage::show();
+    }
+  }
+}
+
+void InterfaceManager::_associate_with_manager_if_ready() {
+  // First time both the home page status and the config are loaded: leave the
+  // loading page for the default page. Re-checked here because several
+  // notifications can be coalesced into one wake-up.
+  if (InterfaceManager::_home_page_status_loaded && InterfaceManager::_nspm_config_loaded && LoadingPage::showing() && !InterfaceManager::_has_been_associated_with_manager) {
+    if (!ConfigManager::has_updated) [[likely]] {
+      ESP_LOGI("InterfaceManager", "Home page status and base config loaded. Will go to home page on default room.");
+      RoomManager::go_to_default_room();
+      RoomManager::go_to_first_entities_page(); // Also select the first entities page for default room as this is the first time and no room is currently selected.
+      InterfaceManager::show_default_page();
+
+      // Initialize Screensaver page so that it's ready when it's time to show it.
+      ScreensaverPage::init();
+      InterfaceManager::_has_been_associated_with_manager = true;
+    } else {
+      LoadingPage::set_loading_text("Updated checksums, rebooting.");
+    }
+  }
+}
+
 void InterfaceManager::_task_unshow_page(void *param) {
   std::function<void()> unshow_handle;
   while (xQueueReceive(InterfaceManager::_unshow_queue, &unshow_handle, pdMS_TO_TICKS(250)) == pdPASS) {
@@ -281,20 +320,7 @@ void InterfaceManager::_nspm_configmanager_event_handler(void *arg, esp_event_ba
   switch (event_id) {
   case nspm_configmanager_event::CONFIG_LOADED: {
     InterfaceManager::_nspm_config_loaded = true;
-    if (InterfaceManager::_home_page_status_loaded && InterfaceManager::_nspm_config_loaded && LoadingPage::showing() && !InterfaceManager::_has_been_associated_with_manager) {
-      if (!ConfigManager::has_updated) [[likely]] {
-        ESP_LOGI("InterfaceManager", "Home page status and base config loaded. Will go to home page on default room.");
-        RoomManager::go_to_default_room();
-        RoomManager::go_to_first_entities_page(); // Also select the first entities page for default room as this is the first time and no room is currently selected.
-        InterfaceManager::show_default_page();
-
-        // Initialize Screensaver page so that it's ready when it's time to show it.
-        ScreensaverPage::init();
-        InterfaceManager::_has_been_associated_with_manager = true;
-      } else {
-        LoadingPage::set_loading_text("Updated checksums, rebooting.");
-      }
-    }
+    xTaskNotify(InterfaceManager::_page_transitions_task, PAGE_TRANSITION_ASSOCIATE, eSetBits);
 
     std::shared_ptr<NSPanelConfig> config;
     if (NSPM_ConfigManager::get_config(&config) == ESP_OK) [[likely]] {
@@ -385,20 +411,8 @@ void InterfaceManager::_room_manager_event_handler(void *arg, esp_event_base_t e
   // This should only happen on first boot of panel, force navigate to default page.
   if (event_id == roommanager_event_t::HOME_PAGE_UPDATED) {
     InterfaceManager::_home_page_status_loaded = true;
-    if (InterfaceManager::_home_page_status_loaded && InterfaceManager::_nspm_config_loaded && LoadingPage::showing() && !InterfaceManager::_has_been_associated_with_manager) {
-      if (!ConfigManager::has_updated) [[likely]] {
-        ESP_LOGI("InterfaceManager", "Home page status and base config loaded. Will go to home page.");
-        RoomManager::go_to_default_room();
-        RoomManager::go_to_first_entities_page(); // Also select the first entities page for default room as this is the first time and no room is currently selected.
-        InterfaceManager::show_default_page();
-
-        // Initialize Screensaver page so that it's ready when it's time to show it.
-        ScreensaverPage::init();
-        InterfaceManager::_has_been_associated_with_manager = true;
-      } else {
-        LoadingPage::set_loading_text("Updated checksums, rebooting.");
-      }
-    }
+    // Never switch pages here, on the RoomManager loop: see _task_page_transitions.
+    xTaskNotify(InterfaceManager::_page_transitions_task, PAGE_TRANSITION_ASSOCIATE, eSetBits);
   }
 }
 

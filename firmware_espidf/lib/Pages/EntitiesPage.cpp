@@ -164,7 +164,8 @@ void EntitiesPage::_handle_roommanager_event(void *arg, esp_event_base_t event_b
       ESP_LOGE("EntitiesPage", "Got new entity page data event but couldn't get new entity page data!");
       if (EntitiesPage::_current_entities_page.get() == nullptr) {
         ESP_LOGE("EntitiesPage", "Currently not showing entities page and we failed to get data. Will go back to HomePage.");
-        HomePage::show();
+        // Not HomePage::show(): this runs on the RoomManager loop, see InterfaceManager::_task_page_transitions.
+        InterfaceManager::request_show_home_page();
       }
     }
   }
