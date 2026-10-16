@@ -230,6 +230,11 @@ possible: `make_rig()` builds another one. At teardown the panel is deleted from
 The stack is shared state, so `subscriptions()` and the connect/subscribe waits, which read
 the harness's own mosquitto log, are unavailable here.
 
+CI runs these tests in `.github/workflows/stack-tests.yml`: it checks out NSPanelManager,
+starts its dev stack, waits for MQTTManager to build, and runs `-m stack`. The NSPanelManager
+repository and branch are set at the top of that workflow (and can be overridden when it is
+run by hand).
+
 ## What differs from hardware
 
 The `qemu` PlatformIO env is `original_sonoff` with `-DNSPM_QEMU` and
