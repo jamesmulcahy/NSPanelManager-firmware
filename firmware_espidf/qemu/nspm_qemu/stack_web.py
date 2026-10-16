@@ -39,7 +39,7 @@ class Stomp:
         self._cond = threading.Condition()
         self._next_id = 0
         self._connected = threading.Event()
-        self._ws = websocket.WebSocketApp(url, subprotocols=["v12.stomp"], on_open=self._on_open,
+        self._ws = websocket.WebSocketApp(url, on_open=self._on_open,
                                           on_message=self._on_message,
                                           on_error=lambda ws, e: log.warning("STOMP websocket error: %s", e))
         self._thread = threading.Thread(target=self._ws.run_forever, name="stomp", daemon=True)
@@ -146,6 +146,38 @@ class StackWeb:
 
     def delete_panel(self, panel_id: int) -> None:
         self._request("DELETE", "/rest/nspanel/%d" % panel_id)
+
+    def add_light(self, room_id: int, name: str, ceiling: bool = True) -> int:
+        """Add a dimmable Home Assistant light to the room, as the UI's "add light"
+        dialog does, and return its entity id. The stack has no Home Assistant, so
+        the light is never really switched, but the manager counts it in the room's
+        status, and the panel only sends light commands for a room with lights."""
+        page = next(p for p in self._request("GET", "/rest/rooms/%d/entities_pages" % room_id)["entities_pages"]
+                    if p["type"] == "entity")
+        position = len(page["entities"])
+        self._request("PUT", "/rest/entities/lights", {"values": {
+            "room_id": room_id,
+            "entities_page_id": page["id"],
+            "room_view_position": position,
+            "controller": "home_assistant",
+            "type": "light",
+            "friendly_name": name,
+            "can_color_temperature": True,
+            "can_dim": True,
+            "can_rgb": False,
+            "controlled_by_nspanel_main_page": True,
+            "home_assistant_name": "light." + name.replace("-", "_"),
+            "is_ceiling_light": ceiling,
+            "openhab_item_color_temp": "",
+            "openhab_item_dimmer": "",
+            "openhab_item_rgb": "",
+        }})
+        # The PUT does not return the new id; the name is unique to this test.
+        entities = self._request("GET", "/rest/rooms/%d/entities" % room_id)["entities"]
+        return next(e["id"] for e in entities if e.get("friendly_name") == name)
+
+    def delete_entity(self, entity_id: int) -> None:
+        self._request("DELETE", "/rest/entities/%d" % entity_id)
 
     def restart_manager(self) -> None:
         self._request("GET", "/api/restart_mqtt_manager")

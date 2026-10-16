@@ -142,10 +142,17 @@ class StackManager:
             self.web.accept_panel(self.panel_id, room_id)
 
     def forget(self) -> None:
-        """Delete the panel from the stack, as the UI's delete button does."""
-        if self.panel_id is not None:
-            self.web.delete_panel(self.panel_id)
-            self.panel_id = None
+        """Delete the panel from the stack, as the UI's delete button does. Also
+        works after a test that failed before learning the panel's id, so it
+        does not leave the panel behind as awaiting accept."""
+        panel_id = self.panel_id
+        if panel_id is None:
+            try:
+                panel_id = self.web.wait_for_panel_id(self.panel_mac, timeout=5)
+            except Exception:
+                return  # the stack never saw it
+        self.web.delete_panel(panel_id)
+        self.panel_id = None
 
     def restart(self) -> None:
         """Restart MQTTManager, as saving settings in the web UI does."""
