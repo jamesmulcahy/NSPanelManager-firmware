@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <esp_err.h>
 #include <esp_http_client.h>
 #include <esp_https_ota.h>
@@ -147,6 +148,10 @@ private:
 
   // Size of the TFT file being uploaded.
   static inline uint64_t _nextion_update_file_size = 0;
+
+  // Set when the display owes a reply (after the upload command and after each chunk), cleared by
+  // the first one. Written by the update task, read by the Nextion event handler.
+  static inline std::atomic<bool> _nextion_update_awaiting_ack = false;
 
   // Set by the Nextion event handler when the display asks to jump past the end of the file.
   static inline bool _nextion_update_bad_jump = false;

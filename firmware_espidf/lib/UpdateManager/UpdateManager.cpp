@@ -165,6 +165,8 @@ void UpdateManager::update_gui(void *param) {
           }
         }
 
+        // Before writing: the display can answer as soon as the last byte is out.
+        UpdateManager::_nextion_update_awaiting_ack = true;
         while (Nextion::write_update_bytes(tft_data_buffer.data(), tft_data_buffer.size()) != ESP_OK) {
           ESP_LOGE("UpdateManager", "Failed to write TFT chunk to UART while updating GUI. Will try again in 5 seconds.");
           vTaskDelay(pdMS_TO_TICKS(5000));
@@ -472,6 +474,7 @@ void UpdateManager::_reset_nextion_update_position() {
   UpdateManager::_nextion_update_next_chunk_size = 0;
   UpdateManager::_nextion_update_reset_http_client = false;
   UpdateManager::_nextion_update_bad_jump = false;
+  UpdateManager::_nextion_update_awaiting_ack = true; // The display acknowledges the upload command first.
 }
 
 void UpdateManager::_abandon_gui_update(const char *reason) {
@@ -674,6 +677,13 @@ void UpdateManager::_task_reboot(void *param) {
 }
 
 void UpdateManager::_nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  if ((event_id == nextion_event_t::UPDATE_READY_FOR_NEXT_CHUNK || event_id == nextion_event_t::UPDATE_JUMP_TO_OFFSET) &&
+      !UpdateManager::_nextion_update_awaiting_ack.exchange(false)) {
+    // One reply per chunk written (and one for the upload command). A second one would move the
+    // offset past a chunk the display never got.
+    ESP_LOGW("UpdateManager", "Ignoring an extra acknowledgement from the Nextion display.");
+    return;
+  }
   switch (event_id) {
   case nextion_event_t::UPDATE_READY_FOR_NEXT_CHUNK: {
     UpdateManager::_nextion_update_current_offset += UpdateManager::_nextion_update_next_chunk_size;

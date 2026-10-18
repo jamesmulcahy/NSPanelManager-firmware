@@ -161,7 +161,7 @@ OUTAGE_IDLE_TIMEOUT = 150
 
 def test_manager_unreachable_before_update(staged):
     """The size probe never succeeds: the panel gives up without touching the display, and a later update works."""
-    server = staged.tft_server
+    server = staged.update_server
     server.drop_next(1000)
     boots = staged.panel.boots
     mark = staged.panel.mark()
@@ -176,7 +176,7 @@ def test_manager_unreachable_before_update(staged):
 
 def test_checksum_unreachable_before_update(staged):
     """The md5 cannot be fetched before the upload: give up without touching the display."""
-    server = staged.tft_server
+    server = staged.update_server
     server.checksum_respond_next(1000, 500, ERROR_PAGE)
     boots = staged.panel.boots
     mark = staged.panel.mark()
@@ -188,7 +188,7 @@ def test_checksum_unreachable_before_update(staged):
 
 def test_manager_goes_down_mid_update(staged):
     """The download drops and the manager never comes back: reboot, old GUI md5 kept."""
-    server = staged.tft_server
+    server = staged.update_server
     server.reset_at(int(TFT_SIZE * 0.5))
     result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300,
                             during=after_reset(server, lambda: server.drop_next(1000)))
@@ -203,12 +203,12 @@ def test_jump_past_end_of_file(staged):
     result = run_gui_update(staged)
     check_invariants(result, expect_success=False)
     assert result.rebooted and not result.completed, result.summary()
-    assert result.stored_md5 != staged.tft_server.md5, result.summary()
+    assert result.stored_md5 != staged.update_server.md5, result.summary()
 
 
 def test_checksum_unreachable_after_upload(staged):
     """The upload completes but the md5 never arrives: reboot without storing one (the manager will offer the update again)."""
-    server = staged.tft_server
+    server = staged.update_server
     result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300,
                             during=lambda: (staged.nextion.wait_for_upload_start(),
                                             server.checksum_respond_next(1000, 500, ERROR_PAGE)))
@@ -255,7 +255,6 @@ def test_jump_offset(staged):
     assert result.uploads[-1].chunks[1][0] == 20 * CHUNK, result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="H5: the UPDATING RX path expects 0x08 and its offset in separate UART reads")
 def test_jump_reply_in_one_read(staged):
     """H5: the 0x08 and its offset arrive together, as one UART read."""
     staged.nextion.split_jump = False
@@ -267,10 +266,9 @@ def test_jump_reply_in_one_read(staged):
 def test_duplicate_ack(staged):
     """H8: the display acks one chunk twice."""
     staged.nextion.dup_ack_at = {10}
-    check_invariants(run_gui_update(staged), expect_success=False)
+    check_invariants(run_gui_update(staged))
 
 
-@pytest.mark.xfail(strict=True, reason="H8: the UPDATING RX path treats each UART read as one message")
 def test_frames_sharing_a_read_with_an_ack(staged):
     """H8: another frame reaches the panel in the same UART read as an ack (here, a touch just ahead of it).
 
