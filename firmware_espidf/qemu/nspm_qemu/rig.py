@@ -60,6 +60,14 @@ class Rig:
         self.manager.wait_for_registration(timeout=BOOT_TIMEOUT)
         self.panel.wait_for_log(r"Manager is online!", timeout=60)
         self.panel.wait_for_log(r"ScreensaverPage: Showing screensaver", timeout=60)
+        # The manager's first config never matches the config.json written
+        # above (button timings differ), so ButtonManager saves it to LittleFS
+        # from the default loop. Under QEMU that takes ~20 s of guest time,
+        # with the default loop stalled and flash cache off. Let it finish
+        # before a test starts: MQTT traffic during it can overflow the
+        # Ethernet RX ring (see "What differs from hardware" in the README),
+        # and pages switched meanwhile unshow late.
+        self.panel.wait_for_log(r"ConfigManager: Saved \d+ bytes to /littlefs/config.json", timeout=120)
         self.panel.check_alive()
 
     def wake_to_home(self) -> None:
