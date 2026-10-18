@@ -73,7 +73,6 @@ def test_manager_down_then_back(staged):
     check_invariants(run_gui_update(staged, during=after_reset(server, lambda: server.drop_next(4))))
 
 
-@pytest.mark.xfail(strict=True, reason="size probe: a failed request is taken as size 0, then the reconnect loop never ends")
 def test_size_probe_fails(staged):
     """H7: the manager is unreachable for the panel's first request, which only reads the file size."""
     staged.update_server.drop_next(1)
@@ -84,7 +83,6 @@ def test_size_probe_fails(staged):
     assert result.rebooted, "update never finished\n" + result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="H1: the HTTP status of a resumed download is not checked")
 def test_resume_error_page_is_not_flashed(staged):
     """H1: a resume that gets a 500 error page must not write the page into the TFT."""
     server = staged.update_server
@@ -92,7 +90,6 @@ def test_resume_error_page_is_not_flashed(staged):
     check_invariants(run_gui_update(staged, during=after_reset(server, lambda: server.respond_next(1, 500, ERROR_PAGE))))
 
 
-@pytest.mark.xfail(strict=True, reason="H1: the size probe's HTTP status is not checked")
 def test_error_page_on_size_probe(staged):
     """H1: the manager answers the size probe with a 500 page; its length is not the TFT's size."""
     staged.update_server.respond_next(1, 500, ERROR_PAGE)
@@ -102,7 +99,6 @@ def test_error_page_on_size_probe(staged):
     assert sizes <= {TFT_SIZE}, "panel announced upload size(s) %s for a %d-byte file\n%s" % (sizes, TFT_SIZE, result.summary())
 
 
-@pytest.mark.xfail(strict=True, reason="H2: Content-Length is not compared with the requested range")
 def test_ignored_range_is_not_flashed(staged):
     """H2: a resume answered with the whole file (Range ignored) must not be written at the resume offset."""
     server = staged.update_server
@@ -110,7 +106,12 @@ def test_ignored_range_is_not_flashed(staged):
     check_invariants(run_gui_update(staged, during=after_reset(server, lambda: server.ignore_range_next(1))))
 
 
-@pytest.mark.xfail(strict=True, reason="H7: the size probe takes a missing Content-Length (-1) as the size")
+def test_checksum_error_page_is_not_stored(staged):
+    """The manager answers the md5 request with an error page once; the page must not be stored as the md5."""
+    staged.update_server.checksum_respond_next(1, 500, ERROR_PAGE)
+    check_invariants(run_gui_update(staged))
+
+
 def test_missing_content_length(staged):
     """H7: the size probe gets no Content-Length; the panel must not start an upload of a bogus size."""
     staged.update_server.no_content_length_next(1)

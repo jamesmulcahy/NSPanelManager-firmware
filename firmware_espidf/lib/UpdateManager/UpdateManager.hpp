@@ -92,6 +92,16 @@ private:
   static esp_err_t _get_remote_file_size(std::string remote_file_url, size_t *file_size);
 
   /**
+   * @brief Request the TFT file from `offset` to its end and check the manager answered with exactly those bytes.
+   * @param url: The TFT download URL.
+   * @param offset: First byte to download.
+   * @param file_size: Size of the whole TFT file, as found by _get_remote_file_size.
+   * @param client: Set to the open client, ready for esp_http_client_read(), on success.
+   * @return ESP_OK on success, otherwise an error with the client already cleaned up.
+   */
+  static esp_err_t _open_tft_stream(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client);
+
+  /**
    * Handle event from ESP HTTP client
    */
   static inline esp_err_t _http_event_handler(esp_http_client_event_t *event);

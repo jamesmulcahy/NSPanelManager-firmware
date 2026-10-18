@@ -50,11 +50,6 @@ void UpdateManager::update_gui(void *param) {
     tft_file_url.append("/download_tft/");
     tft_file_url.append(std::to_string(config->nspanel_id));
 
-    esp_http_client_config_t http_client_config = {};
-    http_client_config.url = tft_file_url.c_str();
-    http_client_config.cert_pem = NULL;
-    http_client_config.keep_alive_enable = true;
-
     size_t remote_tft_file_size;
     while (UpdateManager::_get_remote_file_size(tft_file_url, &remote_tft_file_size) != ESP_OK) {
       ESP_LOGW("UpdateManager", "Failed to get remote TFT file size. Will try again in 500ms");
@@ -77,49 +72,8 @@ void UpdateManager::update_gui(void *param) {
     std::vector<uint8_t> tft_data_buffer;
     uint8_t consecutive_errors = 0;
     esp_http_client_handle_t http_client;
-    for (;;) { // Try forever to setup a valid HTTP client
-      http_client = esp_http_client_init(&http_client_config);
-      if (http_client == NULL) {
-        ESP_LOGE("UpdateManager", "Failed to init http_client. Got NULL! Will try again in 2 seconds.");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        continue;
-      }
-
-      std::string range_header = "bytes=";
-      range_header.append(std::to_string(UpdateManager::_nextion_update_current_offset));
-      range_header.append("-");
-      // NOTE: RFC 7233 byte ranges are inclusive, so the correct end would be
-      // (remote_tft_file_size - 1). However, the server-side implementation uses
-      // Python slice notation data[start:end] (exclusive end), so it interprets
-      // the range end as exclusive too. Both sides use the same non-standard
-      // convention and the protocol works correctly as a result. Do not change
-      // this without a coordinated fix to the server. See PR #12 for context.
-      range_header.append(std::to_string(remote_tft_file_size));
-      esp_err_t err = esp_http_client_set_header(http_client, "Range", range_header.c_str());
-      if (err != ESP_OK) {
-        ESP_LOGE("UpdateManager", "Failed to set range header will trying to download chunk of data! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-        esp_http_client_cleanup(http_client);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        continue;
-      }
-
-      err = esp_http_client_open(http_client, 0);
-      if (err != ESP_OK) {
-        ESP_LOGE("UpdateManager", "Failed to call esp_http_client_open! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-        esp_http_client_cleanup(http_client);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        continue;
-      }
-
-      int64_t err_code = esp_http_client_fetch_headers(http_client);
-      if (err_code > 0) {
-        ESP_LOGI("UpdateManager", "HTTP Client status: %d, remote file size: %lld", esp_http_client_get_status_code(http_client), esp_http_client_get_content_length(http_client));
-        break; // Client created successfully and header set.
-      } else {
-        ESP_LOGE("UpdateManager", "Failed to call esp_http_client_fetch_headers! Error: %lld. Will try again in 2 seconds", err_code);
-        esp_http_client_cleanup(http_client);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-      }
+    while (UpdateManager::_open_tft_stream(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
+      vTaskDelay(pdMS_TO_TICKS(2000));
     }
 
     // Update started. Wait for notifications and when they arrive, download data from offset into buffer and write to display.
@@ -134,11 +88,9 @@ void UpdateManager::update_gui(void *param) {
           ESP_LOGI("UpdateManager", "Will reset HTTP client. Waiting 2 seconds for cleanup before establishing a new HTTP client.");
           vTaskDelay(pdMS_TO_TICKS(2000));
 
-          while (UpdateManager::_setup_http_client(&http_client, &tft_data_buffer, tft_file_url.c_str(), UpdateManager::_nextion_update_current_offset, remote_tft_file_size - UpdateManager::_nextion_update_current_offset) != ESP_OK) {
-            ESP_LOGE("UpdateManager", "Failed to setup HTTP client. Will try again in 5 seconds.");
+          while (UpdateManager::_open_tft_stream(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
             vTaskDelay(pdMS_TO_TICKS(5000));
           }
-          ESP_LOGI("UpdateManager", "HTTP Client reset successfully. New range: %llu -> %llu.", UpdateManager::_nextion_update_current_offset, remote_tft_file_size - UpdateManager::_nextion_update_current_offset);
         }
 
         // Got event to send new data. Calculate next chunk size but a max of 4096 bytes:
@@ -163,46 +115,9 @@ void UpdateManager::update_gui(void *param) {
             esp_http_client_cleanup(http_client);
             vTaskDelay(pdMS_TO_TICKS(5000));
 
-            for (;;) { // Try forever to setup a valid HTTP client
-              http_client = esp_http_client_init(&http_client_config);
-              if (http_client == NULL) {
-                ESP_LOGE("UpdateManager", "Failed to init http_client. Got NULL! Will try again in 2 seconds.");
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
-              }
-
-              std::string range_header = "bytes=";
-              range_header.append(std::to_string(UpdateManager::_nextion_update_current_offset + downloaded_bytes));
-              range_header.append("-");
-              // See comment above: end is intentionally non-RFC-compliant to match server.
-              range_header.append(std::to_string(remote_tft_file_size));
-              esp_err_t err = esp_http_client_set_header(http_client, "Range", range_header.c_str());
-              if (err != ESP_OK) {
-                ESP_LOGE("UpdateManager", "Failed to set range header will trying to download chunk of data! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-                esp_http_client_cleanup(http_client);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
-              }
-
-              err = esp_http_client_open(http_client, 0);
-              if (err != ESP_OK) {
-                ESP_LOGE("UpdateManager", "Failed to call esp_http_client_open! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-                esp_http_client_cleanup(http_client);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
-              }
-
-              int64_t err_code = esp_http_client_fetch_headers(http_client);
-              if (err_code > 0) {
-                ESP_LOGI("UpdateManager", "HTTP Client status: %d, remote file size: %lld", esp_http_client_get_status_code(http_client), esp_http_client_get_content_length(http_client));
-                break; // Client created successfully and header set.
-              } else {
-                ESP_LOGE("UpdateManager", "Failed to call esp_http_client_fetch_headers! Error: %lld. Will try again in 2 seconds", err_code);
-                esp_http_client_cleanup(http_client);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-              }
+            while (UpdateManager::_open_tft_stream(tft_file_url, UpdateManager::_nextion_update_current_offset + downloaded_bytes, remote_tft_file_size, &http_client) != ESP_OK) {
+              vTaskDelay(pdMS_TO_TICKS(2000));
             }
-            ESP_LOGI("UpdateManager", "HTTP Client reset successfully. New range: %llu -> %zu.", UpdateManager::_nextion_update_current_offset, remote_tft_file_size);
           }
         }
 
@@ -412,9 +327,15 @@ esp_err_t UpdateManager::_download_data(std::vector<uint8_t> *return_data, const
   if (xSemaphoreTake(UpdateManager::_download_data_store_mutex, portMAX_DELAY) == pdPASS) {
     esp_http_client_handle_t client;
     UpdateManager::_download_data_max_bytes = 0;
+    return_data->clear(); // Callers retry with the same vector; a failed attempt must not leave its body in it.
     if (UpdateManager::_setup_http_client(&client, return_data, download_url, offset, length) == ESP_OK) {
       // Perform the actual HTTP request to get data
       esp_err_t err = esp_http_client_perform(client);
+      // perform() succeeds for any complete response, an error page included, and the caller stores
+      // what it gets (a checksum, for instance), so only a 200 counts.
+      if (err == ESP_OK && esp_http_client_get_status_code(client) != 200) {
+        err = ESP_ERR_INVALID_RESPONSE;
+      }
 
       if (err == ESP_OK) {
         esp_http_client_cleanup(client);
@@ -442,7 +363,6 @@ esp_err_t UpdateManager::_get_remote_file_size(std::string url, size_t *file_siz
   http_config.cert_pem = NULL;
   http_config.keep_alive_enable = true;
 
-  // Setup HTTP connection:
   esp_http_client_handle_t client = esp_http_client_init(&http_config);
   if (client == NULL) {
     ESP_LOGE("UpdateManager", "Failed to initialise HTTP connection");
@@ -455,10 +375,62 @@ esp_err_t UpdateManager::_get_remote_file_size(std::string url, size_t *file_siz
     return ESP_ERR_NOT_FINISHED;
   }
 
-  esp_http_client_fetch_headers(client);
-  *file_size = esp_http_client_get_content_length(client);
-
+  // Only the headers are read; the size is the Content-Length of a successful response. An error
+  // page has a length too, and a response without one (chunked, or a failed fetch) reports -1.
+  int64_t length = esp_http_client_fetch_headers(client);
+  int status = esp_http_client_get_status_code(client);
   esp_http_client_cleanup(client);
+  if (status != 200 || length <= 0) {
+    ESP_LOGE("UpdateManager", "Manager answered %s with status %d and Content-Length %lld.", url.c_str(), status, length);
+    return ESP_ERR_INVALID_RESPONSE;
+  }
+
+  *file_size = length;
+  return ESP_OK;
+}
+
+esp_err_t UpdateManager::_open_tft_stream(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client) {
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.cert_pem = NULL;
+  config.keep_alive_enable = true;
+
+  *client = esp_http_client_init(&config);
+  if (*client == NULL) {
+    ESP_LOGE("UpdateManager", "Failed to init HTTP client for %s.", url.c_str());
+    return ESP_ERR_NOT_FINISHED;
+  }
+
+  // NOTE: RFC 7233 byte ranges are inclusive, so the correct end would be
+  // (file_size - 1). However, the server-side implementation uses Python slice
+  // notation data[start:end] (exclusive end), so it interprets the range end as
+  // exclusive too. Both sides use the same non-standard convention and the
+  // protocol works correctly as a result. Do not change this without a
+  // coordinated fix to the server. See PR #12 for context.
+  std::string range_header = "bytes=" + std::to_string(offset) + "-" + std::to_string(file_size);
+  esp_err_t err = esp_http_client_set_header(*client, "Range", range_header.c_str());
+  if (err == ESP_OK) {
+    err = esp_http_client_open(*client, 0);
+  }
+  if (err != ESP_OK) {
+    ESP_LOGE("UpdateManager", "Failed to request TFT %s: %s.", range_header.c_str(), esp_err_to_name(err));
+    esp_http_client_cleanup(*client);
+    return ESP_ERR_NOT_FINISHED;
+  }
+
+  // Whatever comes back is written to the display as TFT data from `offset` on, so it must be
+  // exactly the rest of the file. The manager answers a range with 200 and just those bytes; a
+  // standard server would send 206. Anything else (an error page, or the whole file from a
+  // server that ignored Range) has the wrong status or length.
+  int64_t length = esp_http_client_fetch_headers(*client);
+  int status = esp_http_client_get_status_code(*client);
+  if ((status != 200 && status != 206) || length != (int64_t)(file_size - offset)) {
+    ESP_LOGE("UpdateManager", "Manager answered TFT %s with status %d and %lld bytes, expected %llu bytes.", range_header.c_str(), status, length, file_size - offset);
+    esp_http_client_cleanup(*client);
+    return ESP_ERR_INVALID_RESPONSE;
+  }
+
+  ESP_LOGI("UpdateManager", "Downloading TFT from offset %llu, %lld bytes.", offset, length);
   return ESP_OK;
 }
 
