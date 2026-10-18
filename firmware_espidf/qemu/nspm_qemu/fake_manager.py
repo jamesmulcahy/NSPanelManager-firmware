@@ -171,6 +171,10 @@ class FakeManager:
     def publish_entity_page(self, page_id: int) -> None:
         self.broker.publish("%s/entity_pages/%d/state" % (self.base, page_id), self.entity_pages[page_id].SerializeToString(), retain=True)
 
+    def send_command(self, command: str) -> None:
+        """A JSON command on the panel's MAC command topic, as the web UI's buttons send ("tft_update", "reboot", ...)."""
+        self.broker.publish("nspanel/%s/command" % self.panel_mac, json.dumps({"command": command}))
+
     def publish_everything(self) -> None:
         self.publish_online()
         for room_id in self.rooms:

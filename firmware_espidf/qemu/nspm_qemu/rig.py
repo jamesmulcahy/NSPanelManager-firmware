@@ -8,6 +8,8 @@ from typing import Optional
 from .broker import Broker
 from .fake_manager import QEMU_HOST_ADDRESS, FakeManager
 from .panel import QemuPanel
+from .proto import nspanel as pb
+from .tft_server import TftServer
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_BUILD_DIR = os.path.join(PROJECT_DIR, ".pio", "build", "qemu")
@@ -23,7 +25,9 @@ class Rig:
                  build_dir: Optional[str] = None, panel_config: Optional[dict] = None):
         os.makedirs(workdir, exist_ok=True)
         self.broker = Broker(log_path=os.path.join(workdir, "mosquitto.log"))
-        self.manager = FakeManager(self.broker)
+        # The manager's HTTP side (TFT downloads), on whatever port register_accept advertises.
+        self.tft_server = TftServer()
+        self.manager = FakeManager(self.broker, port=self.tft_server.port)
         self.hostname = hostname
         if panel_config is None:
             panel_config = self.default_panel_config()
@@ -31,7 +35,7 @@ class Rig:
                                PROJECT_DIR, mac, panel_config)
         self.nextion = self.panel.nextion
         # Any wait on a fake ends as soon as the firmware panics or QEMU exits.
-        for fake in (self.broker, self.manager, self.nextion):
+        for fake in (self.broker, self.manager, self.nextion, self.tft_server):
             fake.abort_check = self.panel.check_alive
 
     def default_panel_config(self) -> dict:
@@ -70,6 +74,18 @@ class Rig:
         # on first show; once it is there the page is fully rendered.
         self.nextion.wait_for(lambda n: n.get("home.room.txt") is not None, what="home page rendered")
 
+    def set_tft(self, data: bytes) -> None:
+        """Stage a TFT on the manager. The display will accept it as a valid GUI."""
+        self.tft_server.data = data
+        self.nextion.valid_md5s.add(self.tft_server.md5)
+
+    def status_report(self, since: int = 0, timeout: float = 60) -> "pb.NSPanelStatusReport":
+        """The first status report the panel publishes after broker message index `since`."""
+        msg = self.broker.wait_for_message("nspanel/%s/status_report" % self.mac, timeout=timeout, since=since)
+        report = pb.NSPanelStatusReport()
+        report.ParseFromString(msg.payload)
+        return report
+
     def http_get(self, path: str, timeout: float = 30):
         with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.panel.web_port, path), timeout=timeout) as r:
             body = r.read()
@@ -79,4 +95,5 @@ class Rig:
 
     def stop(self) -> None:
         self.panel.stop()
+        self.tft_server.close()
         self.broker.close()

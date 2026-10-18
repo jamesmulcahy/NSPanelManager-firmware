@@ -14,8 +14,9 @@ firmware_espidf/qemu/run_tests.sh            # build, install QEMU if needed, ru
 firmware_espidf/qemu/run_tests.sh -k touch   # extra args go to pytest
 ```
 
-CI runs the same script (`.github/workflows/qemu-tests.yml`). The suite takes about 6 minutes,
-because every test boots a fresh panel. Per-test console and mosquitto logs land in
+CI runs the same script (`.github/workflows/qemu-tests.yml`). The original suite takes about
+8 minutes, because every test boots a fresh panel. The GUI update fault tests
+(`tests/test_gui_update_faults.py`) take about 35 more. Per-test console and mosquitto logs land in
 `qemu/build/test-logs/`, and CI uploads them as an artifact.
 
 ## How it is wired
@@ -25,6 +26,7 @@ because every test boots a fresh panel. Per-test console and mosquitto logs land
    UART0 ──────────────► console: captured, crash-checked, saved per test
    UART2 ◄─────────────► FakeNextion       (TCP socket)
    open_eth ── slirp ──► host 10.0.2.2 ──► FaultProxy ──► mosquitto ◄── observer ◄──► FakeManager
+                                       └──► TftServer   (HTTP: /download_tft, /checksum_tft_file)
                          panel :80 forwarded to Rig.panel.web_port
 ```
 
@@ -34,6 +36,8 @@ because every test boots a fresh panel. Per-test console and mosquitto logs land
 | `QemuPanel` | `nspm_qemu/panel.py` | Builds the flash and eFuse images, runs QEMU, gives `wait_for_log()`, detects panics. |
 | `FakeNextion` | `nspm_qemu/fake_nextion.py` | Models the screen from the panel's commands and injects user input. |
 | `FakeManager` | `nspm_qemu/fake_manager.py` | Registration handshake, config, room and entity-page state, decoded commands. |
+| `TftServer` | `nspm_qemu/tft_server.py` | The manager's HTTP side of a GUI update, with Django's Range quirks (200 with `data[a:b]`, never 206). Records every request and injects faults at a file offset. |
+| `gui_update` | `nspm_qemu/gui_update.py` | Runs a GUI update on a `Rig` and checks the outcome against the invariants below. |
 | `Broker` | `nspm_qemu/broker.py` | A mosquitto per test. A paho client records all traffic, a TCP proxy in front of the panel lets tests cut its connection, and connects and subscriptions are read from mosquitto's log. |
 
 The panel boots already configured. The harness builds the LittleFS partition from `data/` plus
@@ -90,6 +94,36 @@ button checks `!pressed`, the ceiling and table buttons handle both, and next-ro
 act on any event, which means the TFT reports one edge for them. Send what the TFT sends. A full
 `press()` on next-room advances two rooms.
 
+## GUI update tests
+
+`run_gui_update(rig)` sends `tft_update`, waits for the panel to reboot and returns an
+`UpdateResult`: every upload the display saw, every download request, what the firmware
+logged and the md5 it stored afterwards. `check_invariants(result)` then checks that:
+
+- I1: a stored md5 matches the display's image byte for byte;
+- I2: "Nextion GUI update complete" is only logged for an image the manager served;
+- I3: the update ends (reboot) instead of hanging;
+- I4: every chunk is 4096 bytes except the last, and nothing is sent past the end.
+
+A failure says where the image goes wrong and where the wrong bytes came from in the file
+(for example "chunk 14 of 49 holds the file's bytes from offset 53248", which is what the #45
+bug looks like).
+
+`FakeNextion` switches to raw mode on `whmi-wri`/`whmi-wris`. It writes TFT bytes at its own
+cursor, acks each 4096-byte chunk (`0x05`, or `0x08 + u32` after the first chunk on v1.2), and
+accepts the image only if its md5 is one the manager served. It can misbehave on request:
+`ack_delay`, `jump_offset`, `split_jump`, `reject_upload`, `drop_ack_at`, `dup_ack_at` and
+`inject_at` fire once each, and `always_drop_ack_at` fires on every attempt. `TftServer` faults
+(`reset_at`, `fin_at`, `stall_at`, `swap_file_at`) fire when a ranged download reaches a file
+offset. Request faults (`drop_next`, `respond_next`, `ignore_range_next`,
+`no_content_length_next`) apply to the next requests, including the panel's first GET, which
+has no Range and is only used to read the file's size.
+
+`run_gui_update` gives up after 180 s, or after 60 s in which the display sees no new bytes and
+no new upload. The longest legitimate quiet spell is a 20 s ack timeout plus the 10 s display
+restart. Tests for bugs that are not fixed yet are marked `xfail(strict=True)`, so a fix
+shows up as a failure until its marker is removed.
+
 ## What differs from hardware
 
 The `qemu` PlatformIO env is `original_sonoff` with `-DNSPM_QEMU` and
@@ -125,6 +159,11 @@ Consequences:
   `~/.platformio/packages/tool-xtensa-esp-elf-gdb/bin/xtensa-esp32-elf-gdb .pio/build/qemu/firmware.elf -ex "target remote :3333"`.
   `thread apply all bt` shows both CPUs, which is how the ADC hang was found.
 - `NSPM_QEMU_SKIP_BUILD=1 qemu/run_tests.sh` reruns against the existing build.
+  `NSPM_QEMU_BUILD_DIR=<dir>` runs against another build, for example a tree with a fix
+  reverted to check that its test fails without it.
+- QEMU runs with `-no-reboot`, and `QemuPanel` starts a fresh QEMU on the same flash when the
+  firmware resets. QEMU's in-place reset leaves interrupt state behind, and the next boot can
+  then take an interrupt with no handler (InstrFetchProhibited at PC 0 in `esp_timer_init`).
 - QEMU comes from `install_qemu.sh`, pinned by release and SHA-256, into `~/.cache/nspm-qemu`.
   Set `QEMU_XTENSA` to use another binary.
 
