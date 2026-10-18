@@ -3,7 +3,10 @@
 
 # QEMU has no Wi-Fi radio; WiFiManager uses its OpenCores Ethernet MAC instead.
 CONFIG_ETH_USE_OPENETH=y
-CONFIG_ETH_OPENETH_DMA_RX_BUFFER_NUM=4
+# The driver's ISR logs "RX frame dropped" with format strings in flash. If
+# the RX ring overflows while flash cache is off (e.g. during a config save),
+# that log panics with a cache error. Give bursts of MQTT room to land.
+CONFIG_ETH_OPENETH_DMA_RX_BUFFER_NUM=16
 CONFIG_ETH_OPENETH_DMA_TX_BUFFER_NUM=1
 
 # partitions.csv spans 4 MB.

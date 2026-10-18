@@ -95,6 +95,8 @@ act on any event, which means the TFT reports one edge for them. Send what the T
 The `qemu` PlatformIO env is `original_sonoff` with `-DNSPM_QEMU` and
 `sdkconfig.qemu.defaults` overlaid on `sdkconfig.original_sonoff`. `sdkconfig.qemu` is generated
 (`gen_sdkconfig.py`). The overlay enables OpenCores Ethernet, sets 4 MB flash and halts on panic.
+It also enlarges the Ethernet RX ring: ESP-IDF's OpenCores ISR logs dropped frames with format
+strings in flash, which panics with a cache error if the ring overflows during a flash write.
 Each `NSPM_QEMU` block in the source exists because QEMU does not emulate something:
 
 | Where | Hardware | Under QEMU | Why |
