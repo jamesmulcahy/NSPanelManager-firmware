@@ -205,16 +205,14 @@ def test_checksum_unreachable_after_upload(staged):
 
 # ---- the display -----------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="H3: re-init after an ack timeout keeps the old offset and HTTP stream")
 def test_display_ack_timeout(staged):
     """H3: one lost ack forces the 20 s re-init; the retry must start the display from byte 0."""
     staged.nextion.drop_ack_at = {10}
     result = run_gui_update(staged)
-    check_invariants(result, expect_success=False)
-    assert result.rebooted, "update never finished\n" + result.summary()
+    check_invariants(result)
+    assert len(result.uploads) == 2, result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="the timeout counter is reset by the first ack after each re-init, so it never reaches 3")
 def test_display_keeps_stalling(staged):
     """The display stalls at the same chunk on every attempt: after three timeouts the panel must give up and reboot."""
     staged.nextion.always_drop_ack_at = {10}
@@ -246,7 +244,9 @@ def test_jump_offset(staged):
 def test_jump_reply_in_one_read(staged):
     """H5: the 0x08 and its offset arrive together, as one UART read."""
     staged.nextion.split_jump = False
-    check_invariants(run_gui_update(staged))
+    result = run_gui_update(staged)
+    check_invariants(result)
+    assert len(result.uploads) == 1, "the upload had to restart\n" + result.summary()
 
 
 def test_duplicate_ack(staged):
@@ -263,7 +263,10 @@ def test_frames_sharing_a_read_with_an_ack(staged):
     at its first byte, so the ack behind the touch is lost.
     """
     staged.nextion.inject_at = {10: bytes([0x65, 0x00, 0x01, 0x01, 0xFF, 0xFF, 0xFF])}
-    check_invariants(run_gui_update(staged))
+    result = run_gui_update(staged)
+    check_invariants(result)
+    # Restarting after the 20 s ack timeout recovers, but only because the ack was lost; it must not be.
+    assert len(result.uploads) == 1, "the upload had to restart\n" + result.summary()
 
 
 # ---- the rest of the system ------------------------------------------------

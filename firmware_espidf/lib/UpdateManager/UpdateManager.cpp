@@ -79,7 +79,7 @@ void UpdateManager::update_gui(void *param) {
       return;
     }
     UpdateManager::_nextion_update_file_size = remote_tft_file_size;
-    UpdateManager::_nextion_update_bad_jump = false;
+    UpdateManager::_reset_nextion_update_position();
 
     ESP_LOGI("UpdateManager", "Will start updating GUI. Remote file size: %zu bytes", remote_tft_file_size);
     // With LVGL as the UI the terminal holds the display's UART for good: end it first. The panel
@@ -95,7 +95,9 @@ void UpdateManager::update_gui(void *param) {
     esp_event_post(UPDATEMANAGER_EVENT, updatemanager_event_t::NEXTION_UPDATE_STARTED, NULL, 0, pdMS_TO_TICKS(500));
 
     std::vector<uint8_t> tft_data_buffer;
-    uint8_t consecutive_errors = 0;
+    // Upload restarts after the display stopped acknowledging. Only a whole update finishing resets
+    // this: an ack after a restart says the display is alive, not that the upload will get through.
+    uint8_t restarts = 0;
     esp_http_client_handle_t http_client;
     if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
       UpdateManager::_abandon_gui_update("could not start the TFT download");
@@ -105,7 +107,6 @@ void UpdateManager::update_gui(void *param) {
     float progress;
     for (;;) {
       if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20000)) == pdPASS) {
-        consecutive_errors = 0;
         if (UpdateManager::_nextion_update_bad_jump) {
           esp_http_client_cleanup(http_client);
           UpdateManager::_abandon_gui_update("the display asked to continue from past the end of the file");
@@ -163,16 +164,24 @@ void UpdateManager::update_gui(void *param) {
           break; // Update complete
         }
       } else {
-        consecutive_errors++;
-        ESP_LOGE("UpdateManager", "No Nextion update event in 20s (error %u/3). Will retry.", consecutive_errors);
-        if (consecutive_errors >= 3) {
-          ESP_LOGE("UpdateManager", "Too many consecutive update timeouts — rebooting.");
-          vTaskDelay(pdMS_TO_TICKS(2000));
-          StatusUpdateManager::reboot();
+        restarts++;
+        ESP_LOGE("UpdateManager", "No Nextion update event in 20s (%u/3). Will restart the upload from the beginning.", restarts);
+        if (restarts >= 3) {
+          esp_http_client_cleanup(http_client);
+          UpdateManager::_abandon_gui_update("the display stopped acknowledging the upload");
         }
+
+        // start_update() power-cycles the display, which then expects the file from byte 0, so the
+        // offset and the HTTP stream start over too. Reset before start_update(): an ack from the
+        // old upload landing late then advances the offset by 0.
+        esp_http_client_cleanup(http_client);
+        UpdateManager::_reset_nextion_update_position();
         while (Nextion::start_update(ConfigManager::nextion_upload_baudrate, ConfigManager::use_latest_nextion_upload_protocol, remote_tft_file_size) != ESP_OK) {
           ESP_LOGW("UpdateManager", "Failed to init update process with Nextion display. Will try again in 5000ms");
           vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+        if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, 0, remote_tft_file_size, &http_client) != ESP_OK) {
+          UpdateManager::_abandon_gui_update("could not restart the TFT download");
         }
       }
     }
@@ -437,6 +446,13 @@ esp_err_t UpdateManager::_open_tft_stream_with_retries(const std::string &url, u
     vTaskDelay(GUI_UPDATE_RETRY_DELAY);
   }
   return ESP_ERR_TIMEOUT;
+}
+
+void UpdateManager::_reset_nextion_update_position() {
+  UpdateManager::_nextion_update_current_offset = 0;
+  UpdateManager::_nextion_update_next_chunk_size = 0;
+  UpdateManager::_nextion_update_reset_http_client = false;
+  UpdateManager::_nextion_update_bad_jump = false;
 }
 
 void UpdateManager::_abandon_gui_update(const char *reason) {

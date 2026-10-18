@@ -114,6 +114,11 @@ private:
   static void _abandon_gui_update(const char *reason);
 
   /**
+   * @brief Put the upload position back to the start of the file, for a new upload or a restarted one.
+   */
+  static void _reset_nextion_update_position();
+
+  /**
    * Handle event from ESP HTTP client
    */
   static inline esp_err_t _http_event_handler(esp_http_client_event_t *event);
