@@ -58,6 +58,13 @@ void UpdateManager::update_gui(void *param) {
     tft_file_url.append("/download_tft/");
     tft_file_url.append(std::to_string(config->nspanel_id));
 
+    std::string gui_md5_checksum_url = "http://";
+    gui_md5_checksum_url.append(NSPM_ConfigManager::get_manager_address());
+    gui_md5_checksum_url.append(":");
+    gui_md5_checksum_url.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
+    gui_md5_checksum_url.append("/checksum_tft_file/");
+    gui_md5_checksum_url.append(std::to_string(config->nspanel_id));
+
     size_t remote_tft_file_size = 0;
     esp_err_t probe_result = ESP_FAIL;
     for (int attempt = 1; attempt <= GUI_UPDATE_PROBE_ATTEMPTS; attempt++) {
@@ -68,13 +75,20 @@ void UpdateManager::update_gui(void *param) {
       ESP_LOGW("UpdateManager", "Failed to get remote TFT file size (attempt %d/%d).", attempt, GUI_UPDATE_PROBE_ATTEMPTS);
       vTaskDelay(GUI_UPDATE_RETRY_DELAY);
     }
+    // The md5 of the file being uploaded, taken now and compared again when the upload is done. If
+    // the manager's file changes in between, the display may have parts of both, and neither md5
+    // describes what it holds.
+    std::string md5_before;
+    if (probe_result == ESP_OK) {
+      probe_result = UpdateManager::_get_gui_md5(gui_md5_checksum_url, GUI_UPDATE_PROBE_ATTEMPTS, &md5_before);
+    }
     if (probe_result != ESP_OK) {
       // Nothing has been sent to the display yet, so there is nothing to recover from: stay up and
       // let the manager ask again.
       // Ready for another update before saying so.
       esp_event_handler_unregister(NEXTION_EVENT, ESP_EVENT_ANY_ID, UpdateManager::_nextion_event_handler);
       UpdateManager::_current_update_task = NULL;
-      ESP_LOGE("UpdateManager", "Giving up on GUI update: could not get the TFT file size from the manager.");
+      ESP_LOGE("UpdateManager", "Giving up on GUI update: could not get the TFT file's size and checksum from the manager.");
       vTaskDelete(NULL);
       return;
     }
@@ -191,34 +205,21 @@ void UpdateManager::update_gui(void *param) {
     esp_http_client_cleanup(http_client);
 
     esp_event_post(UPDATEMANAGER_EVENT, updatemanager_event_t::NEXTION_UPDATE_FINISHED, NULL, 0, pdMS_TO_TICKS(500));
-    ESP_LOGI("UpdateManager", "Nextion GUI update complete. Updating stored GUI md5 checksum.");
-
-    std::string gui_md5_checksum_url = "http://";
-    gui_md5_checksum_url.append(NSPM_ConfigManager::get_manager_address());
-    gui_md5_checksum_url.append(":");
-    gui_md5_checksum_url.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
-    gui_md5_checksum_url.append("/checksum_tft_file/");
-    gui_md5_checksum_url.append(std::to_string(config->nspanel_id));
+    ESP_LOGI("UpdateManager", "Nextion GUI upload finished. Checking the TFT file did not change meanwhile.");
 
     ESP_LOGD("UpdateManager", "Will download md5 checksum from URL: %s", gui_md5_checksum_url.c_str());
-    std::vector<uint8_t> data;
-    esp_err_t checksum_result = ESP_FAIL;
-    for (int attempt = 1; attempt <= GUI_UPDATE_DOWNLOAD_ATTEMPTS; attempt++) {
-      checksum_result = UpdateManager::_download_data(&data, gui_md5_checksum_url.c_str(), -1, -1);
-      if (checksum_result == ESP_OK) {
-        break;
-      }
-      ESP_LOGE("UpdateManager", "Failed to get MD5 checksum from manager (attempt %d/%d).", attempt, GUI_UPDATE_DOWNLOAD_ATTEMPTS);
-      vTaskDelay(GUI_UPDATE_RETRY_DELAY);
-    }
-    if (checksum_result != ESP_OK) {
+    std::string gui_md5;
+    if (UpdateManager::_get_gui_md5(gui_md5_checksum_url, GUI_UPDATE_DOWNLOAD_ATTEMPTS, &gui_md5) != ESP_OK) {
       // The display has the new GUI, but without its checksum the panel cannot say so. Leaving the
       // old checksum in place only means the manager offers the update again.
       UpdateManager::_abandon_gui_update("could not get the new GUI's checksum from the manager");
     }
+    if (gui_md5 != md5_before) {
+      ESP_LOGE("UpdateManager", "TFT file changed during the update (md5 %s, now %s).", md5_before.c_str(), gui_md5.c_str());
+      UpdateManager::_abandon_gui_update("the TFT file on the manager changed during the update");
+    }
 
-    std::string gui_md5 = std::string((char *)data.data(), data.size());
-    ESP_LOGI("UpdateManager", "Got new GUI md5 checksum from manager: %s", gui_md5.c_str());
+    ESP_LOGI("UpdateManager", "Nextion GUI update complete. Storing GUI md5 checksum %s.", gui_md5.c_str());
     ConfigManager::md5_gui = gui_md5;
     ConfigManager::save_config();
 
@@ -443,6 +444,24 @@ esp_err_t UpdateManager::_open_tft_stream_with_retries(const std::string &url, u
       return ESP_OK;
     }
     ESP_LOGW("UpdateManager", "Could not open the TFT download (attempt %d/%d).", attempt, GUI_UPDATE_DOWNLOAD_ATTEMPTS);
+    vTaskDelay(GUI_UPDATE_RETRY_DELAY);
+  }
+  return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t UpdateManager::_get_gui_md5(const std::string &url, int attempts, std::string *md5) {
+  std::vector<uint8_t> data;
+  for (int attempt = 1; attempt <= attempts; attempt++) {
+    if (UpdateManager::_download_data(&data, url.c_str(), -1, -1) == ESP_OK) {
+      std::string text((char *)data.data(), data.size());
+      // A checksum is 32 hex digits; anything else is not one, whatever the status code said.
+      if (text.size() == 32 && text.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos) {
+        *md5 = text;
+        return ESP_OK;
+      }
+      ESP_LOGE("UpdateManager", "Manager sent %zu bytes that are not an md5 checksum.", text.size());
+    }
+    ESP_LOGE("UpdateManager", "Failed to get the GUI md5 checksum from the manager (attempt %d/%d).", attempt, attempts);
     vTaskDelay(GUI_UPDATE_RETRY_DELAY);
   }
   return ESP_ERR_TIMEOUT;

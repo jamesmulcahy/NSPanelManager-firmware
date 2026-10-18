@@ -107,9 +107,10 @@ def test_ignored_range_is_not_flashed(staged):
 
 
 def test_checksum_error_page_is_not_stored(staged):
-    """The manager answers the md5 request with an error page once; the page must not be stored as the md5."""
-    staged.update_server.checksum_respond_next(1, 500, ERROR_PAGE)
-    check_invariants(run_gui_update(staged))
+    """The manager answers the md5 request after the upload with an error page once; the page must not be stored as the md5."""
+    server = staged.update_server
+    check_invariants(run_gui_update(staged, during=lambda: (staged.nextion.wait_for_upload_start(),
+                                                            server.checksum_respond_next(1, 500, ERROR_PAGE))))
 
 
 def test_missing_content_length(staged):
@@ -121,16 +122,17 @@ def test_missing_content_length(staged):
     assert sizes <= {TFT_SIZE}, "panel announced upload size(s) %s for a %d-byte file\n%s" % (sizes, TFT_SIZE, result.summary())
 
 
-@pytest.mark.xfail(strict=True, reason="H6: the md5 is fetched after the upload, not before it")
 def test_tft_replaced_mid_update(staged):
     """H6: a new TFT staged mid-update; the md5 stored must be that of the image the display got."""
     new = make_tft(46)
     staged.nextion.valid_md5s.add(hashlib.md5(new).hexdigest())
     staged.update_server.swap_file_at(int(TFT_SIZE * 0.5), new)
-    check_invariants(run_gui_update(staged), expect_success=False)
+    result = run_gui_update(staged)
+    check_invariants(result, expect_success=False)
+    # Neither md5 describes "the old file, which the manager no longer serves", so none is stored.
+    assert result.rebooted and not result.completed, result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="H6: nothing notices the file changed, so a resume mixes two files and an md5 is stored")
 def test_tft_replaced_then_resumed(staged):
     """H6: a new TFT staged mid-update, then the download drops: the resume reads the new file.
 
@@ -144,7 +146,7 @@ def test_tft_replaced_then_resumed(staged):
     staged.update_server.reset_at(int(TFT_SIZE * 0.6))
     result = run_gui_update(staged)
     check_invariants(result, expect_success=False)
-    assert result.image_md5 in result.valid_md5s or not result.completed, result.summary()
+    assert result.rebooted and not result.completed, result.summary()
 
 
 # ---- retries that run out ----------------------------------------------------
@@ -172,6 +174,18 @@ def test_manager_unreachable_before_update(staged):
     check_invariants(run_gui_update(staged))
 
 
+def test_checksum_unreachable_before_update(staged):
+    """The md5 cannot be fetched before the upload: give up without touching the display."""
+    server = staged.tft_server
+    server.checksum_respond_next(1000, 500, ERROR_PAGE)
+    boots = staged.panel.boots
+    mark = staged.panel.mark()
+    start_gui_update(staged)
+    staged.panel.wait_for_log(ABANDONED, timeout=180, since=mark)
+    assert staged.nextion.uploads == [], "the display was put into upload mode"
+    assert staged.panel.boots == boots, "the panel rebooted although the display was never touched"
+
+
 def test_manager_goes_down_mid_update(staged):
     """The download drops and the manager never comes back: reboot, old GUI md5 kept."""
     server = staged.tft_server
@@ -195,8 +209,9 @@ def test_jump_past_end_of_file(staged):
 def test_checksum_unreachable_after_upload(staged):
     """The upload completes but the md5 never arrives: reboot without storing one (the manager will offer the update again)."""
     server = staged.tft_server
-    server.checksum_respond_next(1000, 500, ERROR_PAGE)
-    result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300)
+    result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300,
+                            during=lambda: (staged.nextion.wait_for_upload_start(),
+                                            server.checksum_respond_next(1000, 500, ERROR_PAGE)))
     check_invariants(result, expect_success=False)
     assert result.rebooted, result.summary()
     assert result.image == result.data, "the upload itself should have been fine\n" + result.summary()

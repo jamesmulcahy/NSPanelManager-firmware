@@ -119,6 +119,12 @@ private:
   static void _reset_nextion_update_position();
 
   /**
+   * @brief Fetch the GUI md5 checksum from `url`, trying up to `attempts` times.
+   * @return ESP_OK with `md5` set to a 32-digit hex checksum, otherwise ESP_ERR_TIMEOUT.
+   */
+  static esp_err_t _get_gui_md5(const std::string &url, int attempts, std::string *md5);
+
+  /**
    * Handle event from ESP HTTP client
    */
   static inline esp_err_t _http_event_handler(esp_http_client_event_t *event);
