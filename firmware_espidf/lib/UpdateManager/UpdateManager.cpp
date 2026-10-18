@@ -26,6 +26,14 @@
 
 ESP_EVENT_DEFINE_BASE(UPDATEMANAGER_EVENT);
 
+// How often a GUI update asks the manager for something before giving up. Before the display is
+// put into upload mode, giving up costs nothing (the panel carries on as it was), so the size
+// probe gives up sooner. After that, giving up means a reboot with a display that has no GUI, so
+// the download and the checksum are retried for longer, to ride out a manager restart.
+static constexpr int GUI_UPDATE_PROBE_ATTEMPTS = 10;
+static constexpr int GUI_UPDATE_DOWNLOAD_ATTEMPTS = 20;
+static constexpr TickType_t GUI_UPDATE_RETRY_DELAY = pdMS_TO_TICKS(2000);
+
 void UpdateManager::init() {
   esp_log_level_set("UpdateManager", ConfigManager::log_level);
   UpdateManager::_download_data_store_mutex = xSemaphoreCreateMutex();
@@ -50,11 +58,28 @@ void UpdateManager::update_gui(void *param) {
     tft_file_url.append("/download_tft/");
     tft_file_url.append(std::to_string(config->nspanel_id));
 
-    size_t remote_tft_file_size;
-    while (UpdateManager::_get_remote_file_size(tft_file_url, &remote_tft_file_size) != ESP_OK) {
-      ESP_LOGW("UpdateManager", "Failed to get remote TFT file size. Will try again in 500ms");
-      vTaskDelay(pdMS_TO_TICKS(500));
+    size_t remote_tft_file_size = 0;
+    esp_err_t probe_result = ESP_FAIL;
+    for (int attempt = 1; attempt <= GUI_UPDATE_PROBE_ATTEMPTS; attempt++) {
+      probe_result = UpdateManager::_get_remote_file_size(tft_file_url, &remote_tft_file_size);
+      if (probe_result == ESP_OK) {
+        break;
+      }
+      ESP_LOGW("UpdateManager", "Failed to get remote TFT file size (attempt %d/%d).", attempt, GUI_UPDATE_PROBE_ATTEMPTS);
+      vTaskDelay(GUI_UPDATE_RETRY_DELAY);
     }
+    if (probe_result != ESP_OK) {
+      // Nothing has been sent to the display yet, so there is nothing to recover from: stay up and
+      // let the manager ask again.
+      // Ready for another update before saying so.
+      esp_event_handler_unregister(NEXTION_EVENT, ESP_EVENT_ANY_ID, UpdateManager::_nextion_event_handler);
+      UpdateManager::_current_update_task = NULL;
+      ESP_LOGE("UpdateManager", "Giving up on GUI update: could not get the TFT file size from the manager.");
+      vTaskDelete(NULL);
+      return;
+    }
+    UpdateManager::_nextion_update_file_size = remote_tft_file_size;
+    UpdateManager::_nextion_update_bad_jump = false;
 
     ESP_LOGI("UpdateManager", "Will start updating GUI. Remote file size: %zu bytes", remote_tft_file_size);
     // With LVGL as the UI the terminal holds the display's UART for good: end it first. The panel
@@ -72,8 +97,8 @@ void UpdateManager::update_gui(void *param) {
     std::vector<uint8_t> tft_data_buffer;
     uint8_t consecutive_errors = 0;
     esp_http_client_handle_t http_client;
-    while (UpdateManager::_open_tft_stream(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
-      vTaskDelay(pdMS_TO_TICKS(2000));
+    if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
+      UpdateManager::_abandon_gui_update("could not start the TFT download");
     }
 
     // Update started. Wait for notifications and when they arrive, download data from offset into buffer and write to display.
@@ -81,6 +106,10 @@ void UpdateManager::update_gui(void *param) {
     for (;;) {
       if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20000)) == pdPASS) {
         consecutive_errors = 0;
+        if (UpdateManager::_nextion_update_bad_jump) {
+          esp_http_client_cleanup(http_client);
+          UpdateManager::_abandon_gui_update("the display asked to continue from past the end of the file");
+        }
         if (UpdateManager::_nextion_update_reset_http_client) {
           esp_http_client_cleanup(http_client);
           UpdateManager::_nextion_update_reset_http_client = false;
@@ -88,8 +117,8 @@ void UpdateManager::update_gui(void *param) {
           ESP_LOGI("UpdateManager", "Will reset HTTP client. Waiting 2 seconds for cleanup before establishing a new HTTP client.");
           vTaskDelay(pdMS_TO_TICKS(2000));
 
-          while (UpdateManager::_open_tft_stream(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
-            vTaskDelay(pdMS_TO_TICKS(5000));
+          if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
+            UpdateManager::_abandon_gui_update("could not continue the TFT download after the display jumped");
           }
         }
 
@@ -115,8 +144,8 @@ void UpdateManager::update_gui(void *param) {
             esp_http_client_cleanup(http_client);
             vTaskDelay(pdMS_TO_TICKS(5000));
 
-            while (UpdateManager::_open_tft_stream(tft_file_url, UpdateManager::_nextion_update_current_offset + downloaded_bytes, remote_tft_file_size, &http_client) != ESP_OK) {
-              vTaskDelay(pdMS_TO_TICKS(2000));
+            if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, UpdateManager::_nextion_update_current_offset + downloaded_bytes, remote_tft_file_size, &http_client) != ESP_OK) {
+              UpdateManager::_abandon_gui_update("could not resume the TFT download");
             }
           }
         }
@@ -164,9 +193,19 @@ void UpdateManager::update_gui(void *param) {
 
     ESP_LOGD("UpdateManager", "Will download md5 checksum from URL: %s", gui_md5_checksum_url.c_str());
     std::vector<uint8_t> data;
-    while (UpdateManager::_download_data(&data, gui_md5_checksum_url.c_str(), -1, -1) != ESP_OK) {
-      ESP_LOGE("UpdateManager", "Failed to get MD5 checksum from manager. Will try again in 1 second.");
-      vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_err_t checksum_result = ESP_FAIL;
+    for (int attempt = 1; attempt <= GUI_UPDATE_DOWNLOAD_ATTEMPTS; attempt++) {
+      checksum_result = UpdateManager::_download_data(&data, gui_md5_checksum_url.c_str(), -1, -1);
+      if (checksum_result == ESP_OK) {
+        break;
+      }
+      ESP_LOGE("UpdateManager", "Failed to get MD5 checksum from manager (attempt %d/%d).", attempt, GUI_UPDATE_DOWNLOAD_ATTEMPTS);
+      vTaskDelay(GUI_UPDATE_RETRY_DELAY);
+    }
+    if (checksum_result != ESP_OK) {
+      // The display has the new GUI, but without its checksum the panel cannot say so. Leaving the
+      // old checksum in place only means the manager offers the update again.
+      UpdateManager::_abandon_gui_update("could not get the new GUI's checksum from the manager");
     }
 
     std::string gui_md5 = std::string((char *)data.data(), data.size());
@@ -389,6 +428,26 @@ esp_err_t UpdateManager::_get_remote_file_size(std::string url, size_t *file_siz
   return ESP_OK;
 }
 
+esp_err_t UpdateManager::_open_tft_stream_with_retries(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client) {
+  for (int attempt = 1; attempt <= GUI_UPDATE_DOWNLOAD_ATTEMPTS; attempt++) {
+    if (UpdateManager::_open_tft_stream(url, offset, file_size, client) == ESP_OK) {
+      return ESP_OK;
+    }
+    ESP_LOGW("UpdateManager", "Could not open the TFT download (attempt %d/%d).", attempt, GUI_UPDATE_DOWNLOAD_ATTEMPTS);
+    vTaskDelay(GUI_UPDATE_RETRY_DELAY);
+  }
+  return ESP_ERR_TIMEOUT;
+}
+
+void UpdateManager::_abandon_gui_update(const char *reason) {
+  // The display is in upload mode and will not show a GUI until it is power-cycled, and the stored
+  // checksum is still the old one, so the manager will offer the update again.
+  ESP_LOGE("UpdateManager", "Giving up on GUI update: %s. Rebooting without storing a new GUI checksum.", reason);
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  StatusUpdateManager::reboot();
+  vTaskDelete(NULL);
+}
+
 esp_err_t UpdateManager::_open_tft_stream(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client) {
   esp_http_client_config_t config = {};
   config.url = url.c_str();
@@ -589,7 +648,11 @@ void UpdateManager::_nextion_event_handler(void *arg, esp_event_base_t event_bas
 
   case nextion_event_t::UPDATE_JUMP_TO_OFFSET: {
     size_t *jump_offset = (size_t *)event_data;
-    if (*jump_offset > 0) { // If set to zero, continue and treat it as a 0x05 as 0 means "continue and do not jump"
+    if (*jump_offset >= UpdateManager::_nextion_update_file_size) {
+      // Nothing to send from there. update_gui() gives up when it wakes.
+      ESP_LOGE("UpdateManager", "Nextion display asked to jump to %zu, past the end of the %llu-byte TFT file.", *jump_offset, UpdateManager::_nextion_update_file_size);
+      UpdateManager::_nextion_update_bad_jump = true;
+    } else if (*jump_offset > 0) { // If set to zero, continue and treat it as a 0x05 as 0 means "continue and do not jump"
       UpdateManager::_nextion_update_current_offset = *jump_offset;
       UpdateManager::_nextion_update_reset_http_client = true; // We jumped in file. Reset HTTP client and reconnect with correct "Range"-header set.
     } else {

@@ -9,7 +9,7 @@ import hashlib
 
 import pytest
 
-from nspm_qemu.gui_update import check_invariants, run_gui_update
+from nspm_qemu.gui_update import check_invariants, run_gui_update, start_gui_update
 from test_gui_update import TFT_SIZE, make_tft
 from nspm_qemu.fake_nextion import TERMINAL
 
@@ -145,6 +145,62 @@ def test_tft_replaced_then_resumed(staged):
     result = run_gui_update(staged)
     check_invariants(result, expect_success=False)
     assert result.image_md5 in result.valid_md5s or not result.completed, result.summary()
+
+
+# ---- retries that run out ----------------------------------------------------
+# A correct panel gives up instead of retrying forever. Before the display is in
+# upload mode it just carries on; after that it reboots, keeping the old GUI md5.
+
+ABANDONED = r"Giving up on GUI update"
+# Twenty download attempts two seconds apart, plus connect time: longer than the
+# usual no-progress cutoff, so these tests allow more.
+OUTAGE_IDLE_TIMEOUT = 150
+
+
+def test_manager_unreachable_before_update(staged):
+    """The size probe never succeeds: the panel gives up without touching the display, and a later update works."""
+    server = staged.tft_server
+    server.drop_next(1000)
+    boots = staged.panel.boots
+    mark = staged.panel.mark()
+    start_gui_update(staged)
+    staged.panel.wait_for_log(ABANDONED, timeout=180, since=mark)
+    assert staged.nextion.uploads == [], "the display was put into upload mode"
+    assert staged.panel.boots == boots, "the panel rebooted although the display was never touched"
+
+    server.clear_faults()
+    check_invariants(run_gui_update(staged))
+
+
+def test_manager_goes_down_mid_update(staged):
+    """The download drops and the manager never comes back: reboot, old GUI md5 kept."""
+    server = staged.tft_server
+    server.reset_at(int(TFT_SIZE * 0.5))
+    result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300,
+                            during=after_reset(server, lambda: server.drop_next(1000)))
+    check_invariants(result, expect_success=False)
+    assert result.rebooted and not result.completed, result.summary()
+    assert result.stored_md5 != server.md5, result.summary()
+
+
+def test_jump_past_end_of_file(staged):
+    """The display asks to continue from beyond the end of the file: give up, do not loop."""
+    staged.nextion.jump_offset = TFT_SIZE + 8 * CHUNK
+    result = run_gui_update(staged)
+    check_invariants(result, expect_success=False)
+    assert result.rebooted and not result.completed, result.summary()
+    assert result.stored_md5 != staged.tft_server.md5, result.summary()
+
+
+def test_checksum_unreachable_after_upload(staged):
+    """The upload completes but the md5 never arrives: reboot without storing one (the manager will offer the update again)."""
+    server = staged.tft_server
+    server.checksum_respond_next(1000, 500, ERROR_PAGE)
+    result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300)
+    check_invariants(result, expect_success=False)
+    assert result.rebooted, result.summary()
+    assert result.image == result.data, "the upload itself should have been fine\n" + result.summary()
+    assert result.stored_md5 != server.md5, result.summary()
 
 
 # ---- the display -----------------------------------------------------------

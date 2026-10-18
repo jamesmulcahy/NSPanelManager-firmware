@@ -102,6 +102,18 @@ private:
   static esp_err_t _open_tft_stream(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client);
 
   /**
+   * @brief _open_tft_stream, retried GUI_UPDATE_DOWNLOAD_ATTEMPTS times.
+   * @return ESP_OK on success, ESP_ERR_TIMEOUT if every attempt failed.
+   */
+  static esp_err_t _open_tft_stream_with_retries(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client);
+
+  /**
+   * @brief Give up on a GUI update that has already put the display into upload mode: log why, keep the old GUI checksum, reboot.
+   * Does not return.
+   */
+  static void _abandon_gui_update(const char *reason);
+
+  /**
    * Handle event from ESP HTTP client
    */
   static inline esp_err_t _http_event_handler(esp_http_client_event_t *event);
@@ -121,6 +133,12 @@ private:
 
   // Next Nextion update TFT update offset.
   static inline uint64_t _nextion_update_current_offset = 0;
+
+  // Size of the TFT file being uploaded.
+  static inline uint64_t _nextion_update_file_size = 0;
+
+  // Set by the Nextion event handler when the display asks to jump past the end of the file.
+  static inline bool _nextion_update_bad_jump = false;
 
   // How many bytes were last written to the Nextion display
   static inline uint64_t _nextion_update_next_chunk_size = 0;
