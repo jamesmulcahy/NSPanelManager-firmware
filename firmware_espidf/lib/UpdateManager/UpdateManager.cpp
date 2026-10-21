@@ -138,11 +138,12 @@ void UpdateManager::update_gui(void *param) {
         tft_data_buffer.resize(UpdateManager::_download_data_max_bytes);
         size_t downloaded_bytes = 0;
         while (downloaded_bytes < UpdateManager::_nextion_update_next_chunk_size) {
-          size_t chunk_size = esp_http_client_read(http_client, (char *)tft_data_buffer.data() + downloaded_bytes, UpdateManager::_nextion_update_next_chunk_size - downloaded_bytes);
+          // esp_http_client_read() returns -1 on error, so this must stay signed for the check below to catch it.
+          int chunk_size = esp_http_client_read(http_client, (char *)tft_data_buffer.data() + downloaded_bytes, UpdateManager::_nextion_update_next_chunk_size - downloaded_bytes);
           if (chunk_size > 0) {
             downloaded_bytes += chunk_size;
             if (downloaded_bytes < UpdateManager::_nextion_update_next_chunk_size) {
-              ESP_LOGD("UpdateManager", "Read %zu bytes. Expected %llu bytes. Will try again.", chunk_size, UpdateManager::_nextion_update_next_chunk_size - downloaded_bytes);
+              ESP_LOGD("UpdateManager", "Read %d bytes. Expected %llu bytes. Will try again.", chunk_size, UpdateManager::_nextion_update_next_chunk_size - downloaded_bytes);
             }
           } else {
             ESP_LOGE("UpdateManager", "Failed to download data via HTTP client. Will cleanup old client and create new. Will try again in 5 seconds.");

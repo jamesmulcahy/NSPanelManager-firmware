@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <driver/gpio.h>
 #include <driver/ledc.h>
@@ -18,19 +19,20 @@ struct buzzer_tone_step_t {
   uint32_t duration_ms;
 };
 
-// Panel events that can have a sound attached to them
-// TODO: Add more events as NSPanelManager gains sounds for them.
+// Panel events that can have a sound attached to them. NSPanelManager configures the sound for each event,
+// see NSPanelConfig.sounds. Keep COUNT last.
 enum class buzzer_event_t {
   TOUCH,           // The screen was touched
   SCENE_ACTIVATED, // A scene was triggered from the panel
   SCENE_SAVED,     // A scene was saved from the panel
+  COUNT,
 };
 
 class BuzzerManager {
 public:
   /**
-   * @brief Configure the buzzer output and register for Nextion touch events so that
-   * screen touches are tracked as buzzer events.
+   * @brief Configure the buzzer output, register for Nextion touch events so that screen touches are
+   * tracked as buzzer events, and register for config updates to load the sound for each event.
    */
   static void init();
 
@@ -62,6 +64,7 @@ public:
   /**
    * @brief Raise an event for the screen touch being handled, in place of the TOUCH event it would otherwise
    * raise, so a touch that does something specific can get its own sound instead of the generic touch sound.
+   * If the event has no sound the TOUCH event is raised as usual.
    * Call from a NEXTION_EVENT handler registered with ESP_EVENT_ANY_ID, ie. a page's touch handler. ESP-IDF runs
    * those before handlers registered for a specific event id, like BuzzerManager's TOUCH_EVENT handler, which
    * then skips the TOUCH event for this touch.
@@ -82,9 +85,15 @@ private:
   static void _nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
-   * @brief Handle a panel event that may have a sound attached to it. Called from any task, see raise_event().
+   * @brief Load the sound for each event from the NSPanelConfig when a new config is loaded.
    */
-  static void _handle_event(buzzer_event_t event);
+  static void _config_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+
+  /**
+   * @brief Handle a panel event that may have a sound attached to it. Called from any task, see raise_event().
+   * @return true if the event has a sound, which is now playing
+   */
+  static bool _handle_event(buzzer_event_t event);
 
   /**
    * @brief esp_timer callback that advances to the next step once the current one has finished.
@@ -110,6 +119,11 @@ private:
   static inline std::shared_ptr<const std::vector<buzzer_tone_step_t>> _steps;
   static inline size_t _current_step = 0;
   static inline int64_t _current_step_end_us = 0; // Lets a callback that raced with play() detect it is stale
+
+  // Sound for each event, indexed by buzzer_event_t. nullptr if the event has no sound. Replaced as a whole when a
+  // new config is loaded, playback keeps its own reference to the steps. Only accessed while holding _sounds_mutex.
+  static inline SemaphoreHandle_t _sounds_mutex = NULL;
+  static inline std::array<std::shared_ptr<const std::vector<buzzer_tone_step_t>>, static_cast<size_t>(buzzer_event_t::COUNT)> _sounds;
 
   // Component that last raised a TOUCH event on press and has not yet been released. Only accessed
   // from the default event loop task.

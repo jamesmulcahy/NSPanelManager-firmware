@@ -87,7 +87,12 @@ void EntityPage::_handle_mqtt_event(void *arg, esp_event_base_t event_base, int3
 
 void EntityPage::_update_display() {
   ESP_LOGD("EntityPage", "Updating displayed value via delegator.");
-  switch (EntityPage::_current_state->entity_case) {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr) [[unlikely]] {
+    return;
+  }
+
+  switch (state->entity_case) {
   case NSPANEL_ENTITY_STATE__ENTITY_LIGHT:
     EntityPage::_update_display_light();
     break;
@@ -103,16 +108,23 @@ void EntityPage::_update_display() {
 }
 
 void EntityPage::_handle_nextion_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  // Take our own reference for the whole event. If we went through _current_state directly, nothing would
+  // keep the state alive when a new state arrives on the MQTT task and replaces it mid-handler.
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr) { // No state received yet. Nothing to act on.
+    return;
+  }
+
   if (event_id == nextion_event_t::TOUCH_EVENT) {
     nextion_event_touch_t *touch_data = (nextion_event_touch_t *)event_data;
-    EntityPage::_handle_touch_event(touch_data->component_id, touch_data->pressed);
+    EntityPage::_handle_touch_event(state, touch_data->component_id, touch_data->pressed);
   } else if (event_id == nextion_event_t::STRING_EVENT) {
-    switch (EntityPage::_current_state->entity_case) {
+    switch (state->entity_case) {
     case NSPANEL_ENTITY_STATE__ENTITY_LIGHT:
       break;
 
     case NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT:
-      EntityPage::_handle_string_event_thermostat((char *)event_data);
+      EntityPage::_handle_string_event_thermostat(state, (char *)event_data);
       break;
 
     default:
@@ -125,10 +137,10 @@ void EntityPage::_handle_nextion_event(void *arg, esp_event_base_t event_base, i
 void EntityPage::_handle_config_update(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
 }
 
-void EntityPage::_handle_touch_event(uint16_t component_id, bool pressed) {
-  switch (EntityPage::_current_state->entity_case) {
+void EntityPage::_handle_touch_event(const std::shared_ptr<NSPanelEntityState> &state, uint16_t component_id, bool pressed) {
+  switch (state->entity_case) {
   case NSPANEL_ENTITY_STATE__ENTITY_LIGHT:
-    EntityPage::_handle_touch_event_light(component_id, pressed);
+    EntityPage::_handle_touch_event_light(state, component_id, pressed);
     break;
 
   case NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT:
@@ -236,7 +248,7 @@ void EntityPage::_update_display_light() {
   }
 }
 
-void EntityPage::_handle_touch_event_light(uint16_t component_id, bool pressed) {
+void EntityPage::_handle_touch_event_light(const std::shared_ptr<NSPanelEntityState> &state, uint16_t component_id, bool pressed) {
   ESP_LOGD("EntityPage", "Touch component %d, pressed %s", component_id, pressed ? "Yes" : "No");
   switch (component_id) {
   case GUI_LIGHT_CONTROL_PAGE::back_button_id:
@@ -256,7 +268,7 @@ void EntityPage::_handle_touch_event_light(uint16_t component_id, bool pressed) 
 
   case GUI_LIGHT_CONTROL_PAGE::brightness_slider_id: {
     int32_t new_brightness;
-    int32_t light_id = EntityPage::_current_state->light->light_id;
+    int32_t light_id = state->light->light_id;
     if (Nextion::get_component_integer_value(GUI_LIGHT_CONTROL_PAGE::brightness_slider_name, &new_brightness, 250, 250) == ESP_OK) [[likely]] {
       NSPanelMQTTManagerCommand__LightCommand light_command = NSPANEL_MQTTMANAGER_COMMAND__LIGHT_COMMAND__INIT;
       light_command.light_ids = &light_id;
@@ -293,7 +305,7 @@ void EntityPage::_handle_touch_event_light(uint16_t component_id, bool pressed) 
 
   case GUI_LIGHT_CONTROL_PAGE::kelvin_saturation_slider_id: {
     int32_t new_kelvin_saturation;
-    int32_t light_id = EntityPage::_current_state->light->light_id;
+    int32_t light_id = state->light->light_id;
     if (Nextion::get_component_integer_value(GUI_LIGHT_CONTROL_PAGE::kelvin_saturation_slider_name, &new_kelvin_saturation, 250, 250) == ESP_OK) [[likely]] {
       NSPanelMQTTManagerCommand__LightCommand light_command = NSPANEL_MQTTMANAGER_COMMAND__LIGHT_COMMAND__INIT;
       light_command.light_ids = &light_id;
@@ -339,7 +351,7 @@ void EntityPage::_handle_touch_event_light(uint16_t component_id, bool pressed) 
 
   case GUI_LIGHT_CONTROL_PAGE::hue_slider_id: {
     int32_t new_hue;
-    int32_t light_id = EntityPage::_current_state->light->light_id;
+    int32_t light_id = state->light->light_id;
     if (Nextion::get_component_integer_value(GUI_LIGHT_CONTROL_PAGE::hue_slider_name, &new_hue, 250, 250) == ESP_OK) [[likely]] {
       NSPanelMQTTManagerCommand__LightCommand light_command = NSPANEL_MQTTMANAGER_COMMAND__LIGHT_COMMAND__INIT;
       light_command.light_ids = &light_id;
@@ -436,48 +448,48 @@ void EntityPage::_update_display_thermostat() {
   }
 }
 
-void EntityPage::_handle_string_event_thermostat(char *data) {
+void EntityPage::_handle_string_event_thermostat(const std::shared_ptr<NSPanelEntityState> &state, char *data) {
   ESP_LOGD("EntityPage", "Thermostat page received string event data: %s", data);
 
   if (strcmp(data, "activate:set1") == 0) {
-    if (EntityPage::_current_state->thermostat->n_options >= 1) {
+    if (state->thermostat->n_options >= 1) {
       EntityPage::_send_thermostat_option_command();
       ESP_LOGD("EntityPage", "Activating thermostat options set1");
       EntityPage::_is_currently_editing = true;
       EntityPage::_selected_thermostat_option_index = 0;
-      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, EntityPage::_current_state->thermostat->options[0]->current_value, 1000);
+      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, state->thermostat->options[0]->current_value, 1000);
     }
   } else if (strcmp(data, "activate:set2") == 0) {
-    if (EntityPage::_current_state->thermostat->n_options >= 2) {
+    if (state->thermostat->n_options >= 2) {
       EntityPage::_send_thermostat_option_command();
       ESP_LOGD("EntityPage", "Activating thermostat options set2");
       EntityPage::_is_currently_editing = true;
       EntityPage::_selected_thermostat_option_index = 1;
-      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, EntityPage::_current_state->thermostat->options[1]->current_value, 1000);
+      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, state->thermostat->options[1]->current_value, 1000);
     }
   } else if (strcmp(data, "activate:set3") == 0) {
-    if (EntityPage::_current_state->thermostat->n_options >= 3) {
+    if (state->thermostat->n_options >= 3) {
       EntityPage::_send_thermostat_option_command();
       ESP_LOGD("EntityPage", "Activating thermostat options set3");
       EntityPage::_is_currently_editing = true;
       EntityPage::_selected_thermostat_option_index = 2;
-      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, EntityPage::_current_state->thermostat->options[2]->current_value, 1000);
+      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, state->thermostat->options[2]->current_value, 1000);
     }
   } else if (strcmp(data, "activate:set4") == 0) {
-    if (EntityPage::_current_state->thermostat->n_options >= 4) {
+    if (state->thermostat->n_options >= 4) {
       EntityPage::_send_thermostat_option_command();
       ESP_LOGD("EntityPage", "Activating thermostat options set4");
       EntityPage::_is_currently_editing = true;
       EntityPage::_selected_thermostat_option_index = 3;
-      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, EntityPage::_current_state->thermostat->options[3]->current_value, 1000);
+      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, state->thermostat->options[3]->current_value, 1000);
     }
   } else if (strcmp(data, "activate:set5") == 0) {
-    if (EntityPage::_current_state->thermostat->n_options >= 5) {
+    if (state->thermostat->n_options >= 5) {
       EntityPage::_send_thermostat_option_command();
       ESP_LOGD("EntityPage", "Activating thermostat options set5");
       EntityPage::_is_currently_editing = true;
       EntityPage::_selected_thermostat_option_index = 4;
-      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, EntityPage::_current_state->thermostat->options[4]->current_value, 1000);
+      Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::set_label_name, state->thermostat->options[4]->current_value, 1000);
     }
   } else if (strcmp(data, "deactivate") == 0) { // We've edited an option. Send updated state to manager.
     EntityPage::_send_thermostat_option_command();
@@ -495,7 +507,6 @@ void EntityPage::_handle_string_event_thermostat(char *data) {
     }
   } else if (strcmp(data, "tempup") == 0) {
     if (EntityPage::_is_currently_editing) {
-      std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
       if (EntityPage::_selected_thermostat_option_index < state->thermostat->n_options) {
         if (state->thermostat->options[EntityPage::_selected_thermostat_option_index]->n_options <= 0) {
           return; // Do nothing, there is no options available.
@@ -559,13 +570,11 @@ void EntityPage::_handle_string_event_thermostat(char *data) {
         Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::options[EntityPage::_selected_thermostat_option_index].icon_name, state->thermostat->options[EntityPage::_selected_thermostat_option_index]->current_icon, 1000);
       }
     } else {
-      std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
       state->thermostat->set_temperature += state->thermostat->step_size;
       EntityPage::_update_display_thermostat();
     }
   } else if (strcmp(data, "tempdown") == 0) {
     if (EntityPage::_is_currently_editing) {
-      std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
       if (EntityPage::_selected_thermostat_option_index < state->thermostat->n_options) {
         if (state->thermostat->options[EntityPage::_selected_thermostat_option_index]->n_options <= 0) {
           return; // Do nothing, there is no options available.
@@ -625,7 +634,6 @@ void EntityPage::_handle_string_event_thermostat(char *data) {
         Nextion::set_component_text(GUI_THERMOSTAT_CONTROL_PAGE::options[EntityPage::_selected_thermostat_option_index].icon_name, state->thermostat->options[EntityPage::_selected_thermostat_option_index]->current_icon, 1000);
       }
     } else {
-      std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
       state->thermostat->set_temperature -= state->thermostat->step_size;
       EntityPage::_update_display_thermostat();
     }

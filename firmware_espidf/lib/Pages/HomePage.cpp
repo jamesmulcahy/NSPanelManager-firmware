@@ -24,7 +24,7 @@ void HomePage::show() {
 
   std::shared_ptr<NSPanelConfig> config;
   if (NSPM_ConfigManager::get_config(&config) == ESP_OK) {
-    HomePage::_nspm_cur_config = config;
+    HomePage::_last_default_room.set(config->default_room);
   } else {
     ESP_LOGW("HomePage", "Failed to get new config. Can not update HomePage local 'cur config'.");
   }
@@ -273,13 +273,14 @@ void HomePage::_handle_nextion_event(void *arg, esp_event_base_t event_base, int
 void HomePage::_handle_config_update(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
   std::shared_ptr<NSPanelConfig> config;
   if (NSPM_ConfigManager::get_config(&config) == ESP_OK) {
-    if (HomePage::_nspm_cur_config != nullptr && config->default_room != HomePage::_nspm_cur_config->default_room) { // Has the default page changed
-      if (RoomManager::get_current_room_id() == HomePage::_nspm_cur_config->default_room) {                          // Are we currently displaying the 'default page'? If so, go to new default page.
+    std::optional<int32_t> last_default_room = HomePage::_last_default_room.get();
+    if (last_default_room.has_value() && config->default_room != *last_default_room) { // Has the default page changed
+      if (RoomManager::get_current_room_id() == *last_default_room) {                  // Are we currently displaying the 'default page'? If so, go to new default page.
         ESP_LOGD("HomePage", "Default room page changed. Navigating to new default room.");
         RoomManager::go_to_room_id(config->default_room);
       }
     }
-    HomePage::_nspm_cur_config = config;
+    HomePage::_last_default_room.set(config->default_room);
   } else {
     ESP_LOGW("HomePage", "Failed to get new config. Can not determine if 'default page' has changed.");
   }

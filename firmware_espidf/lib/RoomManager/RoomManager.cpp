@@ -97,7 +97,7 @@ esp_err_t RoomManager::get_home_page_status_mutable(std::shared_ptr<NSPanelRoomS
 
 esp_err_t RoomManager::get_home_page_status_mutable_all_rooms(std::shared_ptr<NSPanelRoomStatus> *status) {
   if (xSemaphoreTake(RoomManager::_home_page_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
-    if (RoomManager::_home_page == nullptr) [[unlikely]] {
+    if (RoomManager::_home_page_all_rooms == nullptr) [[unlikely]] {
       xSemaphoreGive(RoomManager::_home_page_mutex);
       return ESP_ERR_NOT_FINISHED;
     }

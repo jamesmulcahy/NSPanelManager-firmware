@@ -5,6 +5,7 @@
 #include <esp_event.h>
 #include <esp_timer.h>
 #include <memory>
+#include <optional>
 #include <protobuf_nspanel.pb-c.h>
 #include <string>
 
@@ -154,6 +155,9 @@ private:
   // The actual handle to access the ESP timer that handles special mode deactivation
   static inline esp_timer_handle_t _special_mode_timeout_timer_handle = NULL;
 
-  // The current config from manager. This is primarily used to check if the "default page" has changed when a new config is received.
-  static inline std::shared_ptr<NSPanelConfig> _nspm_cur_config;
+  // The default room from the last config this page saw, used to check if the "default room" has changed when a new config is received.
+  // Written from whichever task calls show() (default loop, MQTT task, RoomManager loop) and from the config handler on the default
+  // loop, so it must be guarded. It used to hold the whole config as a shared_ptr, which raced when one task reassigned it while
+  // another was dereferencing it.
+  static inline MutexWrapped<std::optional<int32_t>> _last_default_room;
 };
