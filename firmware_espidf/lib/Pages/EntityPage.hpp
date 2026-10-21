@@ -44,7 +44,7 @@ private:
   /**
    * Delegate to the correct touch method
    */
-  static void _handle_touch_event(uint16_t component_id, bool pressed);
+  static void _handle_touch_event(const std::shared_ptr<NSPanelEntityState> &state, uint16_t component_id, bool pressed);
 
   /*
    * Update displayed page and value of "Light" page.
@@ -54,7 +54,7 @@ private:
   /*
    * Handle touch event for "Light" page.
    */
-  static void _handle_touch_event_light(uint16_t component_id, bool pressed);
+  static void _handle_touch_event_light(const std::shared_ptr<NSPanelEntityState> &state, uint16_t component_id, bool pressed);
 
   /*
    * Update displayed page and value of "Thermostat" page.
@@ -64,7 +64,7 @@ private:
   /*
    * Handle Nextion string event.
    */
-  static void _handle_string_event_thermostat(char *data);
+  static void _handle_string_event_thermostat(const std::shared_ptr<NSPanelEntityState> &state, char *data);
 
   /**
    * properly delete pointer and clear old data when shared_ptr expires
@@ -108,6 +108,10 @@ private:
   static inline std::atomic<bool> _is_currently_editing = false;
   static inline uint8_t _selected_thermostat_option_index = 0;
 
+  // Written by the MQTT handler, read by the Nextion event loop. Never dereference _current_state directly:
+  // `->` on a shared_ptr returns a raw pointer and holds no reference, so a new state arriving mid-read can
+  // free the one you are reading. Call _get_current_state() once per entry point, keep that copy for the
+  // whole operation, and pass it down by const&. It returns nullptr until the first state has arrived.
   static inline SemaphoreHandle_t _current_state_mutex = NULL;
   static inline std::shared_ptr<NSPanelEntityState> _current_state;
 

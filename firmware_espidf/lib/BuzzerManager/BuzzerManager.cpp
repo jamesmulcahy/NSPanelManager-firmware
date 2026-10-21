@@ -1,6 +1,8 @@
 #include <BuzzerManager.hpp>
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <NSPM_ConfigManager.hpp>
+#include <NSPM_ConfigManager_event.hpp>
 #include <Nextion_event.hpp>
 #include <RtttlParser.hpp>
 #include <WiFiManager.hpp>
@@ -13,6 +15,12 @@ void BuzzerManager::init() {
   BuzzerManager::_playback_mutex = xSemaphoreCreateMutex();
   if (BuzzerManager::_playback_mutex == NULL) [[unlikely]] {
     ESP_LOGE("BuzzerManager", "Failed to create buzzer playback mutex.");
+    return;
+  }
+
+  BuzzerManager::_sounds_mutex = xSemaphoreCreateMutex();
+  if (BuzzerManager::_sounds_mutex == NULL) [[unlikely]] {
+    ESP_LOGE("BuzzerManager", "Failed to create buzzer sounds mutex.");
     return;
   }
 
@@ -54,6 +62,7 @@ void BuzzerManager::init() {
 
   BuzzerManager::_initialized = true;
   esp_event_handler_register(NEXTION_EVENT, nextion_event_t::TOUCH_EVENT, BuzzerManager::_nextion_event_handler, NULL);
+  esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, BuzzerManager::_config_event_handler, NULL);
   ESP_LOGI("BuzzerManager", "Buzzer initialized on GPIO %d.", BuzzerManager::_buzzer_pin);
 #else
   // TODO: Enable once it is known whether the custom PCB has a buzzer, see _buzzer_pin in BuzzerManager.hpp
@@ -143,8 +152,7 @@ void BuzzerManager::raise_event_for_touch(buzzer_event_t event) {
     return; // The TOUCH_EVENT handler that clears _touch_event_replaced is not registered
   }
 
-  BuzzerManager::_touch_event_replaced = true;
-  BuzzerManager::_handle_event(event);
+  BuzzerManager::_touch_event_replaced = BuzzerManager::_handle_event(event);
 }
 
 void BuzzerManager::_nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
@@ -170,7 +178,7 @@ void BuzzerManager::_nextion_event_handler(void *arg, esp_event_base_t event_bas
   BuzzerManager::_touch_event_replaced = false;
 }
 
-void BuzzerManager::_handle_event(buzzer_event_t event) {
+bool BuzzerManager::_handle_event(buzzer_event_t event) {
   switch (event) {
   case buzzer_event_t::TOUCH:
     ESP_LOGD("BuzzerManager", "Got TOUCH event.");
@@ -181,11 +189,78 @@ void BuzzerManager::_handle_event(buzzer_event_t event) {
   case buzzer_event_t::SCENE_SAVED:
     ESP_LOGD("BuzzerManager", "Got SCENE_SAVED event.");
     break;
+  default:
+    return false;
   }
 
-  // TODO: Play the sound NSPanelManager configured for this event, once NSPanelConfig carries event to RTTTL
-  // mappings. Parse the RTTTL when the config is loaded, not here, and play() the result. Events are raised from
-  // several tasks, so guard the event to sound lookup against a config reload replacing it.
+  std::shared_ptr<const std::vector<buzzer_tone_step_t>> steps;
+  if (xSemaphoreTake(BuzzerManager::_sounds_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+    steps = BuzzerManager::_sounds[static_cast<size_t>(event)];
+    xSemaphoreGive(BuzzerManager::_sounds_mutex);
+  } else {
+    ESP_LOGW("BuzzerManager", "Failed to take sounds mutex, skipping sound.");
+    return false;
+  }
+
+  if (!steps) {
+    return false;
+  }
+  BuzzerManager::play(std::move(steps));
+  return true;
+}
+
+void BuzzerManager::_config_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  std::shared_ptr<NSPanelConfig> config;
+  if (NSPM_ConfigManager::get_config(&config) != ESP_OK) {
+    ESP_LOGE("BuzzerManager", "Failed to get config, keeping the current sounds.");
+    return;
+  }
+
+  // Parse into a new table outside the mutex so events raised meanwhile still find the current sounds
+  decltype(BuzzerManager::_sounds) sounds;
+  for (size_t i = 0; i < config->n_sounds; i++) {
+    const NSPanelConfig__Sound *sound = config->sounds[i];
+    buzzer_event_t event;
+    switch (sound->event) {
+    case NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TOUCH:
+      event = buzzer_event_t::TOUCH;
+      break;
+    case NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_ACTIVATED:
+      event = buzzer_event_t::SCENE_ACTIVATED;
+      break;
+    case NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_SAVED:
+      event = buzzer_event_t::SCENE_SAVED;
+      break;
+    default:
+      ESP_LOGD("BuzzerManager", "Ignoring sound for unknown event %d.", sound->event);
+      continue;
+    }
+
+    if (sound->rtttl == NULL || sound->rtttl[0] == '\0') {
+      sounds[static_cast<size_t>(event)].reset(); // No sound for this event
+      continue;
+    }
+
+    auto steps = std::make_shared<std::vector<buzzer_tone_step_t>>();
+    esp_err_t result = RtttlParser::parse(sound->rtttl, steps.get());
+    if (result == ESP_OK) {
+      sounds[static_cast<size_t>(event)] = std::move(steps);
+    } else if (result == ESP_ERR_INVALID_SIZE) {
+      ESP_LOGW("BuzzerManager", "RTTTL string for event %d is longer than %zu steps or %lu ms, it will have no sound: %s", sound->event, RtttlParser::max_steps, RtttlParser::max_total_duration_ms, sound->rtttl);
+      sounds[static_cast<size_t>(event)].reset();
+    } else {
+      ESP_LOGW("BuzzerManager", "Failed to parse RTTTL string for event %d, it will have no sound: %s", sound->event, sound->rtttl);
+      sounds[static_cast<size_t>(event)].reset();
+    }
+  }
+
+  if (xSemaphoreTake(BuzzerManager::_sounds_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    BuzzerManager::_sounds = std::move(sounds);
+    xSemaphoreGive(BuzzerManager::_sounds_mutex);
+    ESP_LOGI("BuzzerManager", "Updated buzzer sounds, config has %zu sound entries.", config->n_sounds);
+  } else {
+    ESP_LOGE("BuzzerManager", "Failed to take sounds mutex, keeping the current sounds.");
+  }
 }
 
 void BuzzerManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {

@@ -1,6 +1,7 @@
 #pragma once
 #include <esp_event.h> // Included for base definitions like portMAX_DELAY and such
 #include <freertos/semphr.h>
+#include <utility>
 
 template <typename T>
 class MutexWrapped {
@@ -23,8 +24,11 @@ public:
 
   void set(T new_value) {
     portENTER_CRITICAL(&this->_mutex);
-    this->_value = new_value;
+    std::swap(this->_value, new_value);
     portEXIT_CRITICAL(&this->_mutex);
+    // new_value now holds the previous value and is destroyed here, outside the critical section. If T is
+    // a shared_ptr holding the last reference, its deleter (e.g. freeing a protobuf tree) does not run
+    // with interrupts disabled.
   }
 
 private:
