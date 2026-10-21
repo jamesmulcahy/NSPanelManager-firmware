@@ -20,8 +20,8 @@ import os
 import sys
 import urllib.request
 
-# NSPManager/NSPanelManager devel, "Home Assistant media players and album art for NSPanels (#385)".
-PROTO_REF = "ca00441aff1da8f4d2c70189887eca439e43d477"
+# NSPManager/NSPanelManager devel, "Send NSPanels the POSIX TZ rule for the manager's timezone (#405)".
+PROTO_REF = "253cb2755726f7083e25448efe9ba23e66f5e4d1"
 PROTO_URL = "https://raw.githubusercontent.com/NSPManager/NSPanelManager/{ref}/docker/protobuf/{name}"
 PROTOS = ["protobuf_nspanel.proto", "protobuf_nspanel_entity.proto"]
 
