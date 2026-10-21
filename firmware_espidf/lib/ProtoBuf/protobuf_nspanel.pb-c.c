@@ -637,7 +637,7 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_sound_event__descriptor =
   nspanel_config__nspanel_sound_event__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[37] =
+static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[38] =
 {
   {
     "name",
@@ -1083,6 +1083,18 @@ static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[37] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "tz_posix",
+    46,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelConfig, tz_posix),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_config__field_indices_by_name[] = {
   32,   /* field[32] = button1_lower_temperature */
@@ -1121,6 +1133,7 @@ static const unsigned nspanel_config__field_indices_by_name[] = {
   7,   /* field[7] = special_mode_release_time */
   6,   /* field[6] = special_mode_trigger_time */
   20,   /* field[20] = temperature_calibration */
+  37,   /* field[37] = tz_posix */
   14,   /* field[14] = use_fahrenheit */
 };
 static const ProtobufCIntRange nspanel_config__number_ranges[5 + 1] =
@@ -1130,7 +1143,7 @@ static const ProtobufCIntRange nspanel_config__number_ranges[5 + 1] =
   { 30, 23 },
   { 35, 27 },
   { 37, 28 },
-  { 0, 37 }
+  { 0, 38 }
 };
 const ProtobufCMessageDescriptor nspanel_config__descriptor =
 {
@@ -1140,7 +1153,7 @@ const ProtobufCMessageDescriptor nspanel_config__descriptor =
   "NSPanelConfig",
   "",
   sizeof(NSPanelConfig),
-  37,
+  38,
   nspanel_config__field_descriptors,
   nspanel_config__field_indices_by_name,
   5,  nspanel_config__number_ranges,

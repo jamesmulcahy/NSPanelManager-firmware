@@ -7,6 +7,7 @@
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_version.hpp>
 #include <Nextion.hpp>
+#include <PanelClock.hpp>
 #include <RoomManager.hpp>
 #include <StatusUpdateManager.hpp>
 #include <UpdateManager.hpp>
@@ -156,6 +157,9 @@ extern "C" void app_main() {
     // Now that we have created the MQTT client we can register callbacks from it, register ButtonManager
     ButtonManager::init_mqtt();
     BuzzerManager::init_mqtt();
+
+    // Set the wall clock and timezone from what the manager sends
+    PanelClock::init();
 
     // MQTT is now setup, enable custom logging through MQTT
     publish_mqtt_log_messages_queue = xQueueCreate(16, sizeof(char *));
