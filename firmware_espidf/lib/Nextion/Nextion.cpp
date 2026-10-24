@@ -22,6 +22,7 @@ esp_err_t Nextion::init() {
   Nextion::_uart_write_mutex = xSemaphoreCreateMutex();
   Nextion::_event_wait_mutex = xSemaphoreCreateMutex();
   Nextion::_event_wait_integer_mutex = xSemaphoreCreateMutex();
+  Nextion::_get_integer_mutex = xSemaphoreCreateMutex();
 
   Nextion::_current_nextion_state = nextion_state_t::INITIALIZING;
 
@@ -572,6 +573,17 @@ esp_err_t Nextion::get_component_integer_value(const char *component_id, int32_t
     xSemaphoreGive(Nextion::_nextion_state_mutex);
   }
 
+  // There is one slot for the task waiting on a value, so a second caller waits its turn instead of failing.
+  if (xSemaphoreTake(Nextion::_get_integer_mutex, pdMS_TO_TICKS(mutex_timeout)) != pdTRUE) {
+    ESP_LOGE("Nextion", "Timed out waiting for another integer fetch to finish.");
+    return ESP_ERR_TIMEOUT;
+  }
+  esp_err_t fetch_result = Nextion::_get_component_integer_value(component_id, result, timeout, mutex_timeout);
+  xSemaphoreGive(Nextion::_get_integer_mutex);
+  return fetch_result;
+}
+
+esp_err_t Nextion::_get_component_integer_value(const char *component_id, int32_t *result, uint16_t timeout, uint16_t mutex_timeout) {
   if (xSemaphoreTake(Nextion::_event_wait_integer_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
     if (Nextion::_event_wait_integer == NULL) {
       Nextion::_event_wait_integer = xTaskGetCurrentTaskHandle();

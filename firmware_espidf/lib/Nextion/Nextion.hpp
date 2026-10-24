@@ -241,6 +241,11 @@ private:
    */
   static void _write_locked(const std::string &command);
 
+  /**
+   * @brief get_component_integer_value() for one caller at a time. The caller holds _get_integer_mutex.
+   */
+  static esp_err_t _get_component_integer_value(const char *component_id, int32_t *result, uint16_t timeout, uint16_t mutex_timeout);
+
 private:
   // VARIABLES:
   // Event loop handle for custom events that happens from UART read -> handle mqtt message
@@ -260,6 +265,9 @@ private:
 
   // Mutex to only allow one task at the time to access the variables for "event_wait_integer"
   static inline SemaphoreHandle_t _event_wait_integer_mutex;
+
+  // Held for the whole of an integer fetch, so only one runs at a time
+  static inline SemaphoreHandle_t _get_integer_mutex;
 
   // The task that requested an integer value from the Nextion display and is currently waiting
   static inline TaskHandle_t _event_wait_integer;
