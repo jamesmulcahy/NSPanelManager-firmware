@@ -22,6 +22,8 @@ static constexpr uint16_t NEXTION_UART_EVENT_LOOP_STACK_SIZE = 3096;
 static constexpr uint16_t NEXTION_UART_EVENT_LOOP_QUEUE_SIZE = 6;
 
 class Nextion {
+  friend class NextionWindow;
+
 public:
   /**
    * Initialize the Nextion display and gather any facts about it.
