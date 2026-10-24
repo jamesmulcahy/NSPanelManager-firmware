@@ -153,5 +153,5 @@ direct_dependencies:
 - joltwallet/littlefs
 - mittelab/nlohmann-json
 manifest_hash: e9a132248988cd1e38104fb1bffa75bc2c6c0314a3cf6b94424fe7fec224197a
-target: esp32s3
+target: esp32
 version: 3.0.0

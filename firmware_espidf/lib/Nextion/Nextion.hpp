@@ -5,6 +5,7 @@
 #include <esp_err.h>
 #include <esp_event.h>
 #include <freertos/semphr.h>
+#include <string>
 #include <vector>
 
 /**
@@ -226,20 +227,17 @@ private:
   static esp_err_t _write_command(const char *data);
 
   /**
-   * @brief Write data to Nextion display
+   * @brief Send one command, if the display is running. Every public command goes through here.
+   * @param command: The command, without its 0xFF 0xFF 0xFF terminator.
+   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
+   * @return ESP_OK or ESP_ERR_TIMEOUT
    */
-  static int nextion_write(const void *src, size_t size);
+  static esp_err_t _send_command(const std::string &command, uint16_t mutex_timeout);
 
   /**
-   * @brief write end 0xff,0xff,0xff to Nextion display
+   * @brief Write one command and its terminator. The caller holds _uart_write_mutex.
    */
-  static void nextion_write_end();
-
-public:
-  /**
-   * @brief works in the same way as _write_command, but handles buffer overflow,
-   */
-  static esp_err_t write_command(const char *data);
+  static void _write_locked(const std::string &command);
 
 private:
   // VARIABLES:
@@ -281,10 +279,4 @@ private:
 
   // When starting the Nextion display, did we receive the "NSPM" flag indicating that our NSPanel Manager firmware is running on the Nextion display?
   static inline bool _has_received_nspm_flag;
-
-  // Buffer overflow protection, used in nextion_write_end
-  static inline SemaphoreHandle_t _cmd_finished_bin_sem;
-
-  // buffer overlow protection, keep track of how many bytes currently waiting.
-  static inline int _nextion_buffer_out;
 };
