@@ -7,3 +7,5 @@ firmware_espidf/qemu/build/
 # by version and hash in dependencies.lock. The other managed components are small and committed.
 firmware_espidf/managed_components/lvgl__lvgl/
 __pycache__/
+firmware_espidf/provision.env
+firmware_espidf/provisioned-flash*.bin
