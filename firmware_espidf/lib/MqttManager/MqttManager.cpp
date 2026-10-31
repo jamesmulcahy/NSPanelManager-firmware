@@ -33,6 +33,9 @@ static_assert(SUBACK_TIMEOUT_MS > SUBSCRIBE_MAX_IN_FLIGHT * MQTT_WRITE_TIMEOUT_M
 // Number of unmatched SUBACKs to remember, see _early_subacks. Never needs to hold more than
 // SUBSCRIBE_MAX_IN_FLIGHT of them, with room to spare.
 #define EARLY_SUBACKS_MAX 32
+// Retained values that take at least this long to arrive after subscribe() are logged at INFO rather than DEBUG,
+// so panels that only log INFO and above still report slow page switches.
+#define SUBSCRIBE_LATENCY_INFO_MS 250
 
 static int64_t millis() {
   return esp_timer_get_time() / 1000;
@@ -183,11 +186,20 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
     // Sessions are clean (disable_clean_session is not set), so the broker has dropped all
     // our subscriptions: subscribe to everything again, and there is nothing left to unsubscribe from.
     xSemaphoreTake(MqttManager::_subscriptions_mutex, portMAX_DELAY);
-    for (Subscription &subscription : MqttManager::_subscriptions) {
-      subscription.state = SubscriptionState::PENDING;
-      subscription.msg_id = -1;
-      subscription.failures = 0;
-      subscription.next_attempt_ms = 0;
+    {
+      int64_t now = millis();
+      for (Subscription &subscription : MqttManager::_subscriptions) {
+        subscription.state = SubscriptionState::PENDING;
+        subscription.msg_id = -1;
+        subscription.failures = 0;
+        subscription.next_attempt_ms = 0;
+        // The broker replays every retained value again, so time those from the reconnect.
+        subscription.requested_ms = now;
+        subscription.suback_ms = 0;
+        subscription.attempts = 0;
+        subscription.after_reconnect = true;
+        subscription.retained_seen = false;
+      }
     }
     MqttManager::_pending_unsubscribes.clear();
     MqttManager::_early_subacks.clear();
@@ -199,7 +211,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
 
   case MQTT_EVENT_SUBSCRIBED:
     xSemaphoreTake(MqttManager::_subscriptions_mutex, portMAX_DELAY);
-    MqttManager::_handle_suback(event->msg_id, event->error_handle->error_type == MQTT_ERROR_TYPE_SUBSCRIBE_FAILED);
+    MqttManager::_handle_suback(event->msg_id, event->error_handle->error_type == MQTT_ERROR_TYPE_SUBSCRIBE_FAILED, millis());
     xSemaphoreGive(MqttManager::_subscriptions_mutex);
     break;
 
@@ -212,6 +224,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
       ESP_LOGE("MqttManager", "Dropping %d byte message on %.*s, larger than the %d byte MQTT buffer.",
                event->total_data_len, event->topic_len, event->topic, MqttManager::_mqtt_config.buffer.size);
     }
+    MqttManager::_log_subscribe_latency(event);
     break;
 
   case MQTT_EVENT_DISCONNECTED:
@@ -290,6 +303,7 @@ esp_err_t MqttManager::subscribe(std::string topic) {
   ESP_LOGD("MqttManager", "Subscribing to '%s'", topic.c_str());
   Subscription subscription;
   subscription.topic = topic;
+  subscription.requested_ms = millis();
   MqttManager::_subscriptions.push_back(subscription);
   xSemaphoreGive(MqttManager::_subscriptions_mutex);
 
@@ -319,7 +333,7 @@ esp_err_t MqttManager::unsubscribe(std::string topic) {
   return ESP_OK;
 }
 
-void MqttManager::_handle_suback(int msg_id, bool failed) {
+void MqttManager::_handle_suback(int msg_id, bool failed, int64_t received_ms) {
   for (Subscription &subscription : MqttManager::_subscriptions) {
     if (subscription.state == SubscriptionState::IN_FLIGHT && subscription.msg_id == msg_id) {
       if (failed) {
@@ -335,6 +349,7 @@ void MqttManager::_handle_suback(int msg_id, bool failed) {
       } else {
         subscription.state = SubscriptionState::SUBSCRIBED;
         subscription.failures = 0;
+        subscription.suback_ms = received_ms;
         ESP_LOGD("MqttManager", "Subscribed to '%s'.", subscription.topic.c_str());
       }
       // A slot just freed up: let the subscription task send the next batch straight away
@@ -348,14 +363,13 @@ void MqttManager::_handle_suback(int msg_id, bool failed) {
 
   // No match: either the subscription task has not recorded this message id yet, or the
   // subscription was removed or reset in the meantime. Remember it briefly for the first case.
-  int64_t now = millis();
-  std::erase_if(MqttManager::_early_subacks, [now](const EarlySuback &early_suback) {
-    return now - early_suback.received_ms > SUBACK_TIMEOUT_MS;
+  std::erase_if(MqttManager::_early_subacks, [received_ms](const EarlySuback &early_suback) {
+    return received_ms - early_suback.received_ms > SUBACK_TIMEOUT_MS;
   });
   if (MqttManager::_early_subacks.size() >= EARLY_SUBACKS_MAX) {
     MqttManager::_early_subacks.erase(MqttManager::_early_subacks.begin());
   }
-  MqttManager::_early_subacks.push_back({msg_id, failed, now});
+  MqttManager::_early_subacks.push_back({msg_id, failed, received_ms});
 }
 
 void MqttManager::_task_manage_subscriptions(void *param) {
@@ -426,6 +440,9 @@ void MqttManager::_task_manage_subscriptions(void *param) {
       subscription.state = SubscriptionState::IN_FLIGHT;
       subscription.msg_id = -1;
       subscription.sent_ms = now;
+      if (subscription.attempts < UINT8_MAX) [[likely]] {
+        subscription.attempts++;
+      }
       topics_to_subscribe.push_back(subscription.topic);
     }
     xSemaphoreGive(MqttManager::_subscriptions_mutex);
@@ -448,8 +465,9 @@ void MqttManager::_task_manage_subscriptions(void *param) {
             // ids wrap at 65535, so a stale entry can collide with a freshly issued id.
             if (it->msg_id == result_code && subscription.sent_ms - it->received_ms <= SUBACK_TIMEOUT_MS) {
               bool failed = it->failed;
+              int64_t received_ms = it->received_ms;
               MqttManager::_early_subacks.erase(it);
-              MqttManager::_handle_suback(result_code, failed);
+              MqttManager::_handle_suback(result_code, failed, received_ms);
               break;
             }
           }
@@ -466,6 +484,52 @@ void MqttManager::_task_manage_subscriptions(void *param) {
       }
       xSemaphoreGive(MqttManager::_subscriptions_mutex);
     }
+  }
+}
+
+void MqttManager::_log_subscribe_latency(esp_mqtt_event_handle_t event) {
+  // Only the first fragment of a message carries its topic. A broker sets the retain flag only on the
+  // replay a new SUBSCRIBE triggers, never on live updates, so a topic with no retained value logs nothing.
+  if (event->current_data_offset != 0 || event->topic_len <= 0 || !event->retain) {
+    return;
+  }
+  int64_t now = millis();
+  std::string topic(event->topic, event->topic_len);
+
+  Subscription found;
+  bool log = false;
+  xSemaphoreTake(MqttManager::_subscriptions_mutex, portMAX_DELAY);
+  for (Subscription &subscription : MqttManager::_subscriptions) {
+    if (subscription.topic == topic) {
+      if (!subscription.retained_seen && subscription.requested_ms > 0) {
+        subscription.retained_seen = true;
+        found = subscription;
+        log = true;
+      }
+      break;
+    }
+  }
+  xSemaphoreGive(MqttManager::_subscriptions_mutex);
+  if (!log) {
+    return;
+  }
+
+  int64_t total_ms = now - found.requested_ms;
+  // sent_ms is the latest SUBSCRIBE, so with several attempts the queue figure includes the earlier ones.
+  int64_t queued_ms = found.sent_ms - found.requested_ms;
+  // sent_ms is stamped once esp_mqtt_client_subscribe_single() has returned, and a quick SUBACK can be
+  // received on the MQTT task before then, so this can come out a millisecond or so negative.
+  int64_t suback_ms = std::max<int64_t>(found.suback_ms - found.sent_ms, 0);
+  const char *cause = found.after_reconnect ? "reconnect" : "subscribe()";
+  // Reconnects replay every topic at once, so only a slow subscribe() is worth an INFO line.
+  esp_log_level_t level = (!found.after_reconnect && total_ms >= SUBSCRIBE_LATENCY_INFO_MS) ? ESP_LOG_INFO : ESP_LOG_DEBUG;
+  if (found.suback_ms > 0) {
+    ESP_LOG_LEVEL_LOCAL(level, "MqttManager", "Retained value for '%s' arrived %lldms after %s (SUBSCRIBE sent +%lldms, SUBACK +%lldms, data +%lldms, %u attempt(s)).",
+                        topic.c_str(), total_ms, cause, queued_ms, suback_ms, now - found.suback_ms, found.attempts);
+  } else {
+    // The SUBACK has not been matched to this subscription yet (see _early_subacks).
+    ESP_LOG_LEVEL_LOCAL(level, "MqttManager", "Retained value for '%s' arrived %lldms after %s (SUBSCRIBE sent +%lldms, data +%lldms, SUBACK not yet matched, %u attempt(s)).",
+                        topic.c_str(), total_ms, cause, queued_ms, now - found.sent_ms, found.attempts);
   }
 }
 

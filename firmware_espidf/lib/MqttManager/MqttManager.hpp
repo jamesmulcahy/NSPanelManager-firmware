@@ -95,9 +95,15 @@ private:
   static void _task_manage_subscriptions(void *param);
 
   /**
-   * Handle a SUBACK (MQTT_EVENT_SUBSCRIBED) for the given message id. Must be called with _subscriptions_mutex held.
+   * Handle a SUBACK (MQTT_EVENT_SUBSCRIBED) for the given message id, received at received_ms. Must be called with _subscriptions_mutex held.
    */
-  static void _handle_suback(int msg_id, bool failed);
+  static void _handle_suback(int msg_id, bool failed, int64_t received_ms);
+
+  /**
+   * Log how long the broker took to deliver the retained value of a newly subscribed topic, the first time
+   * one arrives after subscribe() or a reconnect. Called on the MQTT client task for every MQTT_EVENT_DATA.
+   */
+  static void _log_subscribe_latency(esp_mqtt_event_handle_t event);
 
   enum class SubscriptionState {
     PENDING,   // Needs a SUBSCRIBE sent (new, after reconnect, or after a failure).
@@ -112,6 +118,13 @@ private:
     int64_t sent_ms = 0;          // When the in-flight SUBSCRIBE was sent.
     int64_t next_attempt_ms = 0;  // Earliest time to send the next SUBSCRIBE (backoff after failures).
     uint8_t failures = 0;         // Consecutive failed attempts, used for backoff.
+
+    // Latency bookkeeping for _log_subscribe_latency(). Reset by subscribe() and on every reconnect.
+    int64_t requested_ms = 0;     // When subscribe() was called, or when the reconnect happened.
+    int64_t suback_ms = 0;        // When the SUBACK was received, 0 until then.
+    uint8_t attempts = 0;         // SUBSCRIBEs sent since requested_ms.
+    bool after_reconnect = false; // Resubscribed by a reconnect rather than asked for by subscribe().
+    bool retained_seen = false;   // A retained value has arrived since requested_ms, so there is nothing more to log.
   };
 
   /**
