@@ -26,10 +26,15 @@ public:
 
   /**
    * Update LittleFS OTA from manager.
-   * @param force_update: Force an update even though the stored checksum is the same.
    * Will compare stored MD5 checksum of installed LittleFS with the checksum in the manager.
+   * The panel's settings (config.json) live on the LittleFS partition, so an update that fails
+   * after the partition was erased is retried, and if it still fails the partition is formatted
+   * and the settings written back before rebooting. Reboots after a successful update.
+   * @param force_update: Force an update even though the stored checksum is the same.
+   * @return ESP_OK if the settings are on flash, so a reboot is safe. ESP_FAIL if they could not
+   *         be written back and only the copy in RAM remains: the caller must not reboot.
    */
-  static void update_littlefs(void *param, bool force_update);
+  static esp_err_t update_littlefs(void *param, bool force_update);
 
   /*
    * When updating the ESP32 firmware it will update one of the partitions and switch to that partition for the next boot.
@@ -60,9 +65,20 @@ private:
   static esp_err_t _update_firmware_ota();
 
   /**
-   * Update the firmware of the ESP32 chip OTA from manager
+   * Download the LittleFS image from the manager straight into the LittleFS partition.
+   * @param erased: Set to true once the partition has been erased, i.e. once the old filesystem,
+   *                and the settings in it, are gone. Left untouched if the attempt failed before that.
+   * @return ESP_OK if the whole image was written.
    */
-  static esp_err_t _update_littlefs_ota();
+  static esp_err_t _update_littlefs_ota(bool *erased);
+
+  /**
+   * After a LittleFS update failed with the partition already erased: format it and write the
+   * settings held in RAM back, so the panel keeps its Wi-Fi and MQTT settings across the reboot.
+   * The web UI files are lost until the next successful LittleFS update; the stored LittleFS
+   * checksum is cleared so that the manager offers one.
+   */
+  static esp_err_t _restore_config_after_failed_littlefs_update();
 
   /**
    * Setup an HTTP Client with the correct headers. esp_http_client_cleanup is handled in case of errors but not in case of ESP_OK.
@@ -119,6 +135,9 @@ private:
 
   // After the next interrupt, should we reset the HTTP client?
   static inline bool _nextion_update_reset_http_client = false;
+
+  // How many times to try the LittleFS download once the partition has been erased.
+  static constexpr uint8_t LITTLEFS_UPDATE_ATTEMPTS = 5;
 
   // When performing an update, should we force the update, ie. skip the check for if we are already up to date? If true, then yes, skip check.
   static inline bool _force_update = false;

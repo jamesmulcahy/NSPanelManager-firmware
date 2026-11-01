@@ -33,6 +33,14 @@ esp_err_t LittleFS::unmount() {
   return esp_vfs_littlefs_unregister("spiffs");
 }
 
+esp_err_t LittleFS::format() {
+  esp_err_t result = esp_littlefs_format("spiffs");
+  if (result != ESP_OK) {
+    ESP_LOGE("LittleFS", "Failed to format LittleFS: %s", esp_err_to_name(result));
+  }
+  return result;
+}
+
 bool LittleFS::is_mounted() {
   return LittleFS::_is_mounted;
 }
