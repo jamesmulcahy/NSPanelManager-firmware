@@ -1,12 +1,16 @@
-"""The manager's HTTP side of a GUI update, with hooks to break it.
+"""The manager's HTTP side of an update (GUI, firmware, LittleFS), with hooks to break it.
 
-The panel fetches the TFT from NSPanelManager's Django views
+The panel fetches its update files from NSPanelManager's Django views
 (docker/web/nspanelmanager/web/views.py):
 
   GET /download_tft/<id>         the whole file, or with `Range: bytes=a-b`
                                  the slice data[a:b] (exclusive end) with
                                  status 200, never 206
   GET /checksum_tft_file/<id>    md5 hex digest of the same file, no newline
+  GET /download_firmware?model=  the firmware .bin, whole
+  GET /checksum_firmware?model=  its md5
+  GET /download_data_file?model= the LittleFS image, whole
+  GET /checksum_data_file?model= its md5
 
 TftServer reproduces exactly that, quirks included, so the firmware sees what
 it sees in the house. Every request is recorded, and faults are armed against
@@ -23,14 +27,32 @@ import threading
 import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .waiting import wait_for
 
 log = logging.getLogger("tft-server")
 
-_DOWNLOAD = re.compile(r"^/download_tft/(\d+)$")
-_CHECKSUM = re.compile(r"^/checksum_tft_file/(\d+)$")
+# Which file each path serves ("tft", "firmware" or "littlefs"), for downloads and checksums.
+_DOWNLOADS = [
+    (re.compile(r"^/download_tft/(\d+)$"), "tft"),
+    (re.compile(r"^/download_firmware(\?.*)?$"), "firmware"),
+    (re.compile(r"^/download_data_file(\?.*)?$"), "littlefs"),
+]
+_CHECKSUMS = [
+    (re.compile(r"^/checksum_tft_file/(\d+)$"), "tft"),
+    (re.compile(r"^/checksum_firmware(\?.*)?$"), "firmware"),
+    (re.compile(r"^/checksum_data_file(\?.*)?$"), "littlefs"),
+]
+_DOWNLOAD_PREFIX = {"tft": "/download_tft/", "firmware": "/download_firmware", "littlefs": "/download_data_file"}
+TARGETS = tuple(_DOWNLOAD_PREFIX)
+
+
+def _target(table, path: str) -> Optional[str]:
+    for rx, target in table:
+        if rx.match(path):
+            return target
+    return None
 
 # How much of the body is written per send(). Small enough that a fault armed
 # at an offset lands close to it, large enough not to slow the download.
@@ -47,6 +69,7 @@ class Request:
     length: int = 0  # Content-Length announced (-1 when none)
     outcome: str = "open"  # "complete", "reset", "fin", "client-closed", "refused", "injected"
     time: float = field(default_factory=time.monotonic)
+    target: str = ""  # "tft", "firmware" or "littlefs" for downloads; "" otherwise
 
     @property
     def end(self) -> int:
@@ -59,22 +82,29 @@ class _OffsetFault:
     offset: int
     seconds: float = 0.0
     data: bytes = b""
+    target: str = "tft"
 
 
 class TftServer:
-    """Serves one TFT image to one panel on 127.0.0.1; QEMU reaches it as 10.0.2.2:<port>."""
+    """Serves one panel's update files on 127.0.0.1; QEMU reaches it as 10.0.2.2:<port>.
+
+    Named for the TFT, which it served first; it also serves the firmware and
+    LittleFS images. Every fault takes a `target` naming the file it hits.
+    """
 
     def __init__(self, data: bytes = b""):
         self._lock = threading.Condition()
-        self._data = data
+        self._files: Dict[str, bytes] = {"tft": data, "firmware": b"", "littlefs": b""}
+        # What /checksum_<target> answers instead of the file's md5, if set.
+        self._checksum_override: Dict[str, Optional[str]] = {t: None for t in TARGETS}
         self.requests: List[Request] = []
         self.abort_check: Optional[Callable[[], None]] = None
 
         self._offset_faults: List[_OffsetFault] = []
-        self._drop_next = 0
-        self._respond_next: List[Tuple[int, bytes]] = []
+        self._drop_next = {t: 0 for t in TARGETS}
+        self._respond_next: Dict[str, List[Tuple[int, bytes]]] = {t: [] for t in TARGETS}
         self._ignore_range_next = 0
-        self._no_length_next = 0
+        self._no_length_next = {t: 0 for t in TARGETS}
         self._segment = SEGMENT
         self._segment_delay = 0.0
 
@@ -103,69 +133,90 @@ class TftServer:
 
     @property
     def data(self) -> bytes:
-        with self._lock:
-            return self._data
+        """The TFT."""
+        return self.file("tft")
 
     @data.setter
     def data(self, value: bytes) -> None:
-        with self._lock:
-            self._data = value
+        self.set_file("tft", value)
 
     @property
     def md5(self) -> str:
-        return hashlib.md5(self.data).hexdigest()
+        return self.checksum("tft")
+
+    def file(self, target: str) -> bytes:
+        with self._lock:
+            return self._files[target]
+
+    def set_file(self, target: str, data: bytes) -> None:
+        with self._lock:
+            self._files[target] = data
+
+    def checksum(self, target: str) -> str:
+        """What /checksum_<target> answers: the file's md5, unless overridden."""
+        with self._lock:
+            override = self._checksum_override[target]
+            data = self._files[target]
+        return override if override is not None else hashlib.md5(data).hexdigest()
+
+    def override_checksum(self, target: str, md5: Optional[str]) -> None:
+        """Answer /checksum_<target> with `md5` whatever the file is (None: back to the real md5)."""
+        with self._lock:
+            self._checksum_override[target] = md5
 
     # ---- faults ------------------------------------------------------------
-    # Offset faults fire once, the first time a ranged download's body reaches
-    # `offset` (an absolute position in the file). The panel's first GET has no
-    # Range and only reads the headers (to learn the size), so it is never the
-    # target. Request faults apply to the next n download requests, whatever
-    # their range.
+    # Offset faults fire once, the first time a download of `target` reaches
+    # `offset` (an absolute position in the file). For the TFT only ranged
+    # downloads count: the panel's first GET has no Range and only reads the
+    # headers (to learn the size), so it is never the target. The firmware and
+    # LittleFS are fetched whole, so any of their downloads counts.
+    # Request faults apply to the next n download requests of `target`,
+    # whatever their range.
 
-    def reset_at(self, offset: int) -> None:
+    def reset_at(self, offset: int, target: str = "tft") -> None:
         """Abort the connection with a TCP RST once the body reaches `offset`."""
-        self._arm(_OffsetFault("reset", offset))
+        self._arm(_OffsetFault("reset", offset, target=target))
 
-    def fin_at(self, offset: int) -> None:
+    def fin_at(self, offset: int, target: str = "tft") -> None:
         """Close the connection cleanly at `offset`, short of the announced Content-Length."""
-        self._arm(_OffsetFault("fin", offset))
+        self._arm(_OffsetFault("fin", offset, target=target))
 
-    def stall_at(self, offset: int, seconds: float) -> None:
+    def stall_at(self, offset: int, seconds: float, target: str = "tft") -> None:
         """Stop sending at `offset` for `seconds`, keeping the connection open, then carry on."""
-        self._arm(_OffsetFault("stall", offset, seconds=seconds))
+        self._arm(_OffsetFault("stall", offset, seconds=seconds, target=target))
 
-    def swap_file_at(self, offset: int, data: bytes) -> None:
+    def swap_file_at(self, offset: int, data: bytes, target: str = "tft") -> None:
         """Replace the file once the stream reaches `offset`, as an upload in the web UI would.
 
         Django reads the file per request, so the response in progress carries on
         with the old bytes; later requests (resumes, the checksum) see the new one.
         """
-        self._arm(_OffsetFault("swap", offset, data=data))
+        self._arm(_OffsetFault("swap", offset, data=data, target=target))
 
     def trickle(self, segment: int, delay: float) -> None:
         """Write the body `segment` bytes at a time with `delay` between, forcing partial reads."""
         with self._lock:
             self._segment, self._segment_delay = segment, delay
 
-    def drop_next(self, n: int) -> None:
+    def drop_next(self, n: int, target: str = "tft") -> None:
         """Reset the next n download connections before answering, like a manager that is down."""
         with self._lock:
-            self._drop_next += n
+            self._drop_next[target] += n
 
-    def respond_next(self, n: int, status: int, body: bytes) -> None:
+    def respond_next(self, n: int, status: int, body: bytes, target: str = "tft") -> None:
         """Answer the next n downloads with `status` and `body` instead of the file."""
         with self._lock:
-            self._respond_next += [(status, body)] * n
+            self._respond_next[target] += [(status, body)] * n
 
     def ignore_range_next(self, n: int) -> None:
         """Answer the next n downloads with the whole file, whatever Range asked for."""
         with self._lock:
             self._ignore_range_next += n
 
-    def no_content_length_next(self, n: int) -> None:
+    def no_content_length_next(self, n: int, target: str = "tft") -> None:
         """Answer the next n downloads without a Content-Length (closing to end the body)."""
         with self._lock:
-            self._no_length_next += n
+            self._no_length_next[target] += n
 
     def _arm(self, fault: _OffsetFault) -> None:
         with self._lock:
@@ -174,9 +225,9 @@ class TftServer:
 
     # ---- observation -------------------------------------------------------
 
-    def downloads(self) -> List[Request]:
+    def downloads(self, target: str = "tft") -> List[Request]:
         with self._lock:
-            return [r for r in self.requests if r.path.startswith("/download_tft/")]
+            return [r for r in self.requests if r.target == target]
 
     def wait_for_request(self, predicate: Callable[[Request], bool], timeout: float = 60,
                          what: str = "request", since: int = 0) -> Request:
@@ -217,10 +268,13 @@ class TftServer:
             self._lock.notify_all()
         log.info("GET %s Range=%s", h.path, header)
 
-        if _CHECKSUM.match(h.path):
-            self._send_simple(h, req, 200, self.md5.encode())
-        elif _DOWNLOAD.match(h.path):
-            self._serve_download(h, req)
+        checksum = _target(_CHECKSUMS, h.path)
+        download = _target(_DOWNLOADS, h.path)
+        if checksum is not None:
+            self._send_simple(h, req, 200, self.checksum(checksum).encode())
+        elif download is not None:
+            req.target = download
+            self._serve_download(h, req, download)
         else:
             self._send_simple(h, req, 404, b"Not found")
 
@@ -233,22 +287,24 @@ class TftServer:
         h.wfile.flush()
         self._finish(req, status, len(body), len(body), "complete" if status == 200 else "injected")
 
-    def _serve_download(self, h: BaseHTTPRequestHandler, req: Request) -> None:
+    def _serve_download(self, h: BaseHTTPRequestHandler, req: Request, target: str) -> None:
         with self._lock:
-            data = self._data
-            if self._drop_next:
-                self._drop_next -= 1
+            data = self._files[target]
+            if self._drop_next[target]:
+                self._drop_next[target] -= 1
                 drop = True
             else:
                 drop = False
-            injected = self._respond_next.pop(0) if self._respond_next else None
-            ignore_range = self._ignore_range_next > 0
+            injected = self._respond_next[target].pop(0) if self._respond_next[target] else None
+            ignore_range = target == "tft" and self._ignore_range_next > 0
             if ignore_range:
                 self._ignore_range_next -= 1
-            no_length = self._no_length_next > 0
+            no_length = self._no_length_next[target] > 0
             if no_length:
-                self._no_length_next -= 1
+                self._no_length_next[target] -= 1
             segment, delay = self._segment, self._segment_delay
+        # The TFT's first, unranged GET only reads the size; the others are fetched whole.
+        faultable = target != "tft" or req.range is not None
 
         if drop:
             self._reset(h)
@@ -279,7 +335,7 @@ class TftServer:
         pos = 0
         try:
             while pos < len(body):
-                fault = self._next_fault(start + pos, start + len(body)) if req.range is not None else None
+                fault = self._next_fault(start + pos, start + len(body), target) if faultable else None
                 limit = len(body) if fault is None else fault.offset - start
                 n = min(segment, limit - pos)
                 if n > 0:
@@ -305,7 +361,7 @@ class TftServer:
                 if fault.kind == "stall":
                     time.sleep(fault.seconds)
                 elif fault.kind == "swap":
-                    self.data = fault.data
+                    self.set_file(target, fault.data)
         except (BrokenPipeError, ConnectionResetError):
             self._finish(req, 200, req.length, pos, "client-closed")
             h.close_connection = True
@@ -314,10 +370,10 @@ class TftServer:
             h.close_connection = True
         self._finish(req, 200, req.length, pos, "complete")
 
-    def _next_fault(self, pos: int, end: int) -> Optional[_OffsetFault]:
+    def _next_fault(self, pos: int, end: int, target: str) -> Optional[_OffsetFault]:
         with self._lock:
             for f in self._offset_faults:
-                if pos <= f.offset < end:
+                if f.target == target and pos <= f.offset < end:
                     return f
         return None
 

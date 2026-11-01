@@ -26,7 +26,7 @@ CI runs the same script (`.github/workflows/qemu-tests.yml`). The original suite
    UART0 ──────────────► console: captured, crash-checked, saved per test
    UART2 ◄─────────────► FakeNextion       (TCP socket)
    open_eth ── slirp ──► host 10.0.2.2 ──► FaultProxy ──► mosquitto ◄── observer ◄──► FakeManager
-                                       └──► TftServer   (HTTP: /download_tft, /checksum_tft_file)
+                                       └──► TftServer   (HTTP: TFT, firmware and LittleFS downloads and checksums)
                          panel :80 forwarded to Rig.panel.web_port
 ```
 
@@ -36,8 +36,9 @@ CI runs the same script (`.github/workflows/qemu-tests.yml`). The original suite
 | `QemuPanel` | `nspm_qemu/panel.py` | Builds the flash and eFuse images, runs QEMU, gives `wait_for_log()`, detects panics. |
 | `FakeNextion` | `nspm_qemu/fake_nextion.py` | Models the screen from the panel's commands and injects user input. |
 | `FakeManager` | `nspm_qemu/fake_manager.py` | Registration handshake, config, room and entity-page state, decoded commands. |
-| `TftServer` | `nspm_qemu/tft_server.py` | The manager's HTTP side of a GUI update, with Django's Range quirks (200 with `data[a:b]`, never 206). Records every request and injects faults at a file offset. |
+| `TftServer` | `nspm_qemu/tft_server.py` | The manager's HTTP side of an update: the TFT (with Django's Range quirks: 200 with `data[a:b]`, never 206), the firmware and the LittleFS image. Records every request and injects faults at a file offset, aimed at one file with `target=`. |
 | `gui_update` | `nspm_qemu/gui_update.py` | Runs a GUI update on a `Rig` and checks the outcome against the invariants below. |
+| `ota_update` | `nspm_qemu/ota_update.py` | Runs a firmware/LittleFS update on a `Rig`, then reads LittleFS back out of the flash image to check what survived. |
 | `Broker` | `nspm_qemu/broker.py` | A mosquitto per test. A paho client records all traffic, a TCP proxy in front of the panel lets tests cut its connection, and connects and subscriptions are read from mosquitto's log. |
 
 The panel boots already configured. The harness builds the LittleFS partition from `data/` plus
@@ -123,6 +124,33 @@ has no Range and is only used to read the file's size.
 no new upload. The longest legitimate quiet spell is a 20 s ack timeout plus the 10 s display
 restart. Tests for bugs that are not fixed yet are marked `xfail(strict=True)`, so a fix
 shows up as a failure until its marker is removed.
+
+## LittleFS update tests
+
+The panel's settings live in `/littlefs/config.json`, on the partition a LittleFS update
+replaces, and the update erases that partition before it downloads anything.
+`tests/test_littlefs_update.py` breaks the download in every way `TftServer` can (a reset or a
+clean close mid-body, a refused connection, an error page, no `Content-Length`, an image that
+does not fit) and checks that the panel never comes back without its settings.
+
+Most tests update LittleFS only: `stage_littlefs_only(rig)` stores a firmware md5 in the
+panel's config.json and serves the same md5 from `/checksum_firmware`, so "update firmware" goes
+straight to the LittleFS step. The last two run the whole update, flashing the QEMU build's own
+`firmware.bin`, which reboots the panel twice.
+
+`run_update(rig)` sends `firmware_update` and waits for the panel to reboot and register again.
+The registration carries the panel's name and stored checksums. After the reboot it unpacks the
+LittleFS partition from the flash file with `mklittlefs -u`. The checks:
+
+- `check_settings_kept`: the panel registers under its own name, and config.json still holds
+  its Wi-Fi and MQTT settings (L1), within the time budget (L3);
+- `check_new_image`: the served image is on flash (a marker in its index.html) and its md5 is
+  stored (L2);
+- `check_fallback`: after every attempt failed, LittleFS holds only the settings, and the
+  stored LittleFS md5 is empty so that the manager offers the image again.
+
+A fault that hits before the erase must leave the panel up on its current LittleFS, without
+rebooting; those tests check that the web UI still serves the old `index.html`.
 
 ## What differs from hardware
 
