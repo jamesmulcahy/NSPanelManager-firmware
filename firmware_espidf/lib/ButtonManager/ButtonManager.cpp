@@ -1,6 +1,7 @@
 
 #include <ButtonManager.hpp>
 #include <ConfigManager.hpp>
+#include <InterfaceManager.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -136,6 +137,10 @@ void ButtonManager::_button1_press(void) {
   case NSPanelConfig__NSPanelButtonMode::NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__FOLLOW:
     break; // Simply do nothing, this is handled in "key down" and "key up" events.
 
+  case NSPanelConfig__NSPanelButtonMode::NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__OPEN_ENTITY_PAGE:
+    ButtonManager::_open_entity_page(1);
+    break;
+
   default:
     ESP_LOGE("ButtonManager", "Unknown button action. Will not perform any action.");
     break;
@@ -179,10 +184,30 @@ void ButtonManager::_button2_press(void) {
   case NSPanelConfig__NSPanelButtonMode::NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__FOLLOW:
     break; // Simply do nothing, this is handled in "key down" and "key up" events.
 
+  case NSPanelConfig__NSPanelButtonMode::NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__OPEN_ENTITY_PAGE:
+    ButtonManager::_open_entity_page(2);
+    break;
+
   default:
     ESP_LOGE("ButtonManager", "Unknown button action. Will not perform any action.");
     break;
   }
+}
+
+void ButtonManager::_open_entity_page(uint8_t button) {
+  // Copy the topic out of the config at press time, as a new config may replace it at any moment.
+  std::shared_ptr<NSPanelConfig> config;
+  if (NSPM_ConfigManager::get_config(&config) != ESP_OK) [[unlikely]] {
+    ESP_LOGE("ButtonManager", "Failed to get config while trying to open the entity page for button %d.", button);
+    return;
+  }
+  const char *topic = button == 1 ? config->button1_entity_page_topic : config->button2_entity_page_topic;
+  if (topic == NULL || topic[0] == '\0') [[unlikely]] {
+    ESP_LOGE("ButtonManager", "Button %d opens an entity page, but the config gives no entity for it.", button);
+    return;
+  }
+  ESP_LOGD("ButtonManager", "Button %d opens the entity page for %s.", button, topic);
+  InterfaceManager::request_show_entity_page(topic);
 }
 
 void ButtonManager::_set_relay_state(uint8_t relay, bool state, bool send_mqtt_update) {

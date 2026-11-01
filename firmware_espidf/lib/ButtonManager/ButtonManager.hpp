@@ -50,6 +50,11 @@ private:
   static void _button2_press(void);
 
   /**
+   * Open the entity page that the config gives for a button in OPEN_ENTITY_PAGE mode.
+   */
+  static void _open_entity_page(uint8_t button);
+
+  /**
    * Set the state of a relay and send state update to MQTT
    */
   static void _set_relay_state(uint8_t relay, bool state, bool send_mqtt_update);

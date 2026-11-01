@@ -51,6 +51,12 @@ public:
    */
   static void request_show_home_page();
 
+  /**
+   * @brief Open the entity page for an entity's state topic, from the page-transition task.
+   * Wakes the screen first if the screensaver is showing. Safe to call from any task.
+   */
+  static void request_show_entity_page(const std::string &state_topic);
+
 private:
   // Pages that can be requested from the page-transition task. Only the latest
   // request is shown, so a quick "screen off, screen on" ends with the screen on.
@@ -59,9 +65,13 @@ private:
     HOME,
     SCREEN_ON, // Screen brightness, then the default page
     SCREENSAVER,
+    ENTITY_PAGE, // The entity page for _requested_entity_page_topic
   };
 
   static void _request_page(PageRequest page);
+
+  // Show the entity page for _requested_entity_page_topic. Runs on the page-transition task.
+  static void _show_requested_entity_page();
 
   /**
    * @brief Handle any event trigger from the Nextion display
@@ -128,6 +138,8 @@ private:
   static void _associate_with_manager_if_ready();
   static inline TaskHandle_t _page_transitions_task = NULL;
   static inline std::atomic<PageRequest> _requested_page = PageRequest::NONE;
+  // Held by shared_ptr so that MutexWrapped copies it inside its critical section without allocating.
+  static inline MutexWrapped<std::shared_ptr<const std::string>> _requested_entity_page_topic;
   static constexpr uint32_t PAGE_TRANSITION_ASSOCIATE = 1 << 0;
   static constexpr uint32_t PAGE_TRANSITION_SHOW_PAGE = 1 << 1;
 

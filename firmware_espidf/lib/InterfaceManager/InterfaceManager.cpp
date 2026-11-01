@@ -1,5 +1,6 @@
 #include <ConfigManager.hpp>
 #include <EntitiesPage.hpp>
+#include <EntityPage.hpp>
 #include <GUI_data.hpp>
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
@@ -208,6 +209,46 @@ void InterfaceManager::request_show_home_page() {
   InterfaceManager::_request_page(PageRequest::HOME);
 }
 
+void InterfaceManager::request_show_entity_page(const std::string &state_topic) {
+  // Set before the request, so the page-transition task always sees the topic of the latest request.
+  InterfaceManager::_requested_entity_page_topic.set(std::make_shared<const std::string>(state_topic));
+  InterfaceManager::_request_page(PageRequest::ENTITY_PAGE);
+}
+
+void InterfaceManager::_show_requested_entity_page() {
+  std::shared_ptr<const std::string> topic = InterfaceManager::_requested_entity_page_topic.get();
+  if (topic == nullptr || topic->empty()) [[unlikely]] {
+    ESP_LOGE("InterfaceManager", "Entity page requested without a state topic.");
+    return;
+  }
+  if (LoadingPage::showing()) {
+    // Still loading, updating, or waiting for the manager to come back: the loading page must stay.
+    ESP_LOGW("InterfaceManager", "Not opening the entity page for %s while the loading page is shown.", topic->c_str());
+    return;
+  }
+
+  if (ScreensaverPage::showing()) {
+    std::shared_ptr<NSPanelConfig> config;
+    if (NSPM_ConfigManager::get_config(&config) == ESP_OK) [[likely]] {
+      Nextion::set_brightness_level(config->screen_dim_level, 1000);
+    } else {
+      ESP_LOGE("InterfaceManager", "Failed to get config while waking the screen for an entity page.");
+    }
+    MqttManager::publish(InterfaceManager::_screen_on_off_state_topic, "1", strlen("1"), true);
+  }
+
+  if (InterfaceManager::is_current_page(EntityPage::unshow)) {
+    if (EntityPage::get_current_state_topic() == *topic) {
+      ESP_LOGD("InterfaceManager", "Entity page for %s is already showing.", topic->c_str());
+      return;
+    }
+    // EntityPage only calls begin_page() when the new entity's state arrives. The page is still current
+    // then, so begin_page() would skip the old entity's unshow: unshow it here instead.
+    EntityPage::unshow();
+  }
+  EntityPage::show(*topic);
+}
+
 void InterfaceManager::_request_page(PageRequest page) {
   InterfaceManager::_requested_page = page;
   xTaskNotify(InterfaceManager::_page_transitions_task, PAGE_TRANSITION_SHOW_PAGE, eSetBits);
@@ -239,6 +280,10 @@ void InterfaceManager::_task_page_transitions(void *param) {
 
       case PageRequest::SCREENSAVER:
         ScreensaverPage::show();
+        break;
+
+      case PageRequest::ENTITY_PAGE:
+        InterfaceManager::_show_requested_entity_page();
         break;
 
       case PageRequest::NONE:
