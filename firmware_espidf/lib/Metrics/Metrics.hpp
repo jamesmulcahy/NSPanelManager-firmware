@@ -91,13 +91,17 @@ struct MetricDesc {
   const char *name;
   MetricType type;
   MetricLabel labels[METRICS_MAX_LABELS];
-  const void *state;         // Counter, Gauge or Histogram; nullptr for a sampled gauge.
-  Gauge::Sampler sampler;    // Sampled gauges only.
+  const void *state;         // Counter, Gauge or Histogram; nullptr when sampled.
+  Gauge::Sampler sampler;    // Sampled gauges and counters only.  A sampled counter's sampler returns
+                             // the full 64-bit total itself, which must never go down.
   const uint32_t *bounds_us; // Histograms only.
 
-  // Values the scrape keeps a 64-bit total for: a counter's value, or a histogram's buckets and sum.
+  // Values the scrape keeps a 64-bit total for: a recorded counter's value, or a histogram's buckets and sum.
   constexpr size_t n_totals() const {
-    return type == MetricType::COUNTER ? 1 : (type == MetricType::HISTOGRAM ? METRICS_MAX_BUCKETS + 2 : 0);
+    if (type == MetricType::COUNTER) {
+      return sampler == nullptr ? 1 : 0;
+    }
+    return type == MetricType::HISTOGRAM ? METRICS_MAX_BUCKETS + 2 : 0;
   }
 };
 
@@ -110,6 +114,10 @@ constexpr MetricDesc metric(const char *name, const Gauge &gauge, MetricLabel la
 }
 constexpr MetricDesc metric(const char *name, Gauge::Sampler sampler, MetricLabel label_1 = {}, MetricLabel label_2 = {}) {
   return {name, MetricType::GAUGE, {label_1, label_2}, nullptr, sampler, nullptr};
+}
+// A counter whose total is computed at scrape time rather than recorded, e.g. time spent in a state.
+constexpr MetricDesc sampled_counter(const char *name, Gauge::Sampler sampler, MetricLabel label_1 = {}, MetricLabel label_2 = {}) {
+  return {name, MetricType::COUNTER, {label_1, label_2}, nullptr, sampler, nullptr};
 }
 template <const uint32_t *Bounds>
 constexpr MetricDesc metric(const char *name, const BoundedHistogram<Bounds> &histogram, MetricLabel label_1 = {}, MetricLabel label_2 = {}) {

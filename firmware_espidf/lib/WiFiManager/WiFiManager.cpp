@@ -412,9 +412,11 @@ void WiFiManager::_apply_power_save() {
     esp_err_t result = esp_wifi_set_ps(low_latency ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
     if (result == ESP_OK) {
       WiFiManager::_applied_low_latency = wanted;
+      PanelMetrics::wifi_power_save_applied(low_latency);
       ESP_LOGD("WiFiManager", "Wi-Fi power save set to %s.", low_latency ? "none (low latency)" : "modem sleep (power saving)");
     } else {
       WiFiManager::_applied_low_latency = -1; // Try again on the next call.
+      PanelMetrics::wifi_power_save_failed();
       ESP_LOGW("WiFiManager", "Failed to set Wi-Fi power save to %s: %s", low_latency ? "none" : "modem sleep", esp_err_to_name(result));
     }
   }

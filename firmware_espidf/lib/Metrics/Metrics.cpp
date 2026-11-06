@@ -160,13 +160,24 @@ bool Metrics::write_text(const MetricDesc *registry, size_t n_metrics, uint64_t 
     }
 
     switch (desc.type) {
-    case MetricType::COUNTER:
+    case MetricType::COUNTER: {
+      uint64_t value;
+      if (desc.sampler != nullptr) {
+        int64_t sampled;
+        if (!desc.sampler(&sampled)) {
+          break;
+        }
+        value = sampled < 0 ? 0 : sampled;
+      } else {
+        value = accumulate(totals, static_cast<const Counter *>(desc.state)->value());
+      }
       out.put(desc.name);
       out.put_labels(desc);
       out.put(' ');
-      out.put_u64(accumulate(totals, static_cast<const Counter *>(desc.state)->value()));
+      out.put_u64(value);
       out.put('\n');
       break;
+    }
 
     case MetricType::GAUGE: {
       int64_t value;

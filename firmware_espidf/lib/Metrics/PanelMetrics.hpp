@@ -70,6 +70,13 @@ enum WifiDisconnectReason { WIFI_DISCONNECT_BEACON_TIMEOUT,
                             WIFI_DISCONNECT_COUNT };
 extern Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 
+// Wi-Fi power save, recorded by WiFiManager::_apply_power_save() (under its _power_save_mutex):
+// nspanel_wifi_power_save_mode (0 none, 1 modem sleep; absent until a mode has been applied, and
+// after a failed esp_wifi_set_ps()), nspanel_wifi_power_save_seconds_total{mode} and
+// nspanel_wifi_power_save_set_failures_total.
+void wifi_power_save_applied(bool low_latency);
+void wifi_power_save_failed();
+
 /**
  * Create the lock that serialises scrapes. Call once, before the web server starts.
  */

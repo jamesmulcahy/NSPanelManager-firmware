@@ -22,6 +22,58 @@ FastHistogram mqtt_handler_duration[HANDLER_COUNT];
 Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 
 namespace {
+// Wi-Fi power save time keeping. Indexed by mode: 0 WIFI_PS_NONE, 1 WIFI_PS_MIN_MODEM. Counted from
+// boot as modem sleep, the driver's default until esp_wifi_set_ps() first succeeds. A failed set
+// leaves the time with the mode last applied, as the driver keeps it. The 64-bit values are guarded by
+// a spinlock held only for a few loads and stores, so the scrape never waits on _apply_power_save().
+portMUX_TYPE power_save_lock = portMUX_INITIALIZER_UNLOCKED;
+int64_t power_save_us[2] = {0, 0};
+int64_t power_save_since_us = 0;
+uint8_t power_save_mode = 1;
+bool power_save_mode_known = false;
+Counter power_save_set_failures;
+
+void power_save_switch(int64_t now_us, uint8_t mode, bool known) {
+  taskENTER_CRITICAL(&power_save_lock);
+  power_save_us[power_save_mode] += now_us - power_save_since_us;
+  power_save_since_us = now_us;
+  power_save_mode = mode;
+  power_save_mode_known = known;
+  taskEXIT_CRITICAL(&power_save_lock);
+}
+
+bool sample_power_save_mode(int64_t *value) {
+  taskENTER_CRITICAL(&power_save_lock);
+  bool known = power_save_mode_known;
+  *value = power_save_mode;
+  taskEXIT_CRITICAL(&power_save_lock);
+  return known;
+}
+
+// Stored total plus the part of the current period so far, without changing what is stored.
+template <uint8_t Mode>
+bool sample_power_save_seconds(int64_t *value) {
+  int64_t now_us = esp_timer_get_time();
+  taskENTER_CRITICAL(&power_save_lock);
+  int64_t total_us = power_save_us[Mode] + (power_save_mode == Mode ? now_us - power_save_since_us : 0);
+  taskEXIT_CRITICAL(&power_save_lock);
+  *value = total_us / 1000000;
+  return true;
+}
+} // namespace
+
+void wifi_power_save_applied(bool low_latency) {
+  power_save_switch(esp_timer_get_time(), low_latency ? 0 : 1, true);
+}
+
+void wifi_power_save_failed() {
+  power_save_set_failures.add();
+  taskENTER_CRITICAL(&power_save_lock);
+  power_save_mode_known = false;
+  taskEXIT_CRITICAL(&power_save_lock);
+}
+
+namespace {
 
 bool sample_heap_free(int64_t *value) {
   *value = esp_get_free_heap_size();
@@ -73,6 +125,10 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_AP_DISASSOC], {"reason", "ap_disassoc"}),
     metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_CONNECTION_FAIL], {"reason", "connection_fail"}),
     metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_OTHER], {"reason", "other"}),
+    metric("nspanel_wifi_power_save_mode", sample_power_save_mode),
+    sampled_counter("nspanel_wifi_power_save_seconds_total", sample_power_save_seconds<0>, {"mode", "none"}),
+    sampled_counter("nspanel_wifi_power_save_seconds_total", sample_power_save_seconds<1>, {"mode", "modem_sleep"}),
+    metric("nspanel_wifi_power_save_set_failures_total", power_save_set_failures),
     metric("nspanel_mqtt_connects_total", mqtt_connects),
     metric("nspanel_mqtt_disconnects_total", mqtt_disconnects),
     // Time spent in esp_mqtt_client_publish(), which waits for esp-mqtt's lock and the socket.
