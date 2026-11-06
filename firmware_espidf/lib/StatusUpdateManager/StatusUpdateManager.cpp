@@ -10,6 +10,7 @@
 #include <StatusUpdateManager_events.hpp>
 #include <TimedEspTimer.hpp>
 #include <UpdateManager_event.hpp>
+#include <WebManager.hpp>
 #include <WiFiManager.hpp>
 #include <cmath>
 #include <esp_adc/adc_cali.h>
@@ -52,6 +53,9 @@ void StatusUpdateManager::init() {
   StatusUpdateManager::_status_report.md5_tft_gui = (char *)ConfigManager::md5_gui.c_str();
   nspanel_warning__init(&StatusUpdateManager::_link_baud_warning);
   StatusUpdateManager::_link_baud_warning.level = NSPANEL_WARNING_LEVEL__WARNING;
+  // Constant, so set once here rather than in _send_status_update. Repeated from register_request
+  // so a restarted manager relearns it from the next report.
+  StatusUpdateManager::_status_report.metrics_port = WebManager::HTTP_PORT;
 #if defined(BOARD_CUSTOM)
   StatusUpdateManager::_status_report.has_humidity = true;
   StatusUpdateManager::_status_report.has_pressure = true;

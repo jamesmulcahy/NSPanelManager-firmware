@@ -4,6 +4,10 @@
 
 class WebManager {
 public:
+  // TCP port the web server, and so GET /metrics, listens on. Advertised to the manager as
+  // metrics_port in register_request and in every status report.
+  static constexpr uint16_t HTTP_PORT = 80;
+
   /**
    * @brief Start the webserver task and register all URI endpoints
    */

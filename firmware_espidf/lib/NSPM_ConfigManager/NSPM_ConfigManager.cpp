@@ -4,6 +4,7 @@
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <NSPM_version.hpp>
+#include <WebManager.hpp>
 #include <WiFiManager.hpp>
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -324,7 +325,7 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   json["features"] = nlohmann::json::array({"lvgl_look"});
   // WebManager serves GET /metrics (Prometheus text) on this port. The manager lists only panels
   // that send this in its Prometheus service discovery.
-  json["metrics_port"] = 80;
+  json["metrics_port"] = WebManager::HTTP_PORT;
 #if defined(BOARD_SONOFF)
   json["model"] = "sonoff";
 #elif defined(BOARD_CUSTOM)

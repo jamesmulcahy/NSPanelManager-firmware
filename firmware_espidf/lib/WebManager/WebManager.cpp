@@ -84,6 +84,7 @@ private:
 void WebManager::start() {
   if (WebManager::_server == NULL) {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
+    WebManager::_config.server_port = WebManager::HTTP_PORT;
     WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included), with room to spare
     // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
     // chunked send, and 8 KB left only 412 bytes unused on a panel (PNG). See the
