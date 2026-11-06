@@ -19,6 +19,7 @@ Counter log_lines_dropped;
 Gauge log_queue_high_water;
 FastHistogram esp_timer_callback_duration[TIMER_COUNT];
 FastHistogram mqtt_handler_duration[HANDLER_COUNT];
+Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 
 namespace {
 
@@ -65,6 +66,13 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_PANEL_CLOCK], {"handler", "panel_clock"}),
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_SCREENSAVER_PAGE], {"handler", "screensaver_page"}),
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_ENTITY_PAGE], {"handler", "entity_page"}),
+    metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_BEACON_TIMEOUT], {"reason", "beacon_timeout"}),
+    metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_NO_AP_FOUND], {"reason", "no_ap_found"}),
+    metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_AUTH_FAIL], {"reason", "auth_fail"}),
+    metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_ASSOC_FAIL], {"reason", "assoc_fail"}),
+    metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_AP_DISASSOC], {"reason", "ap_disassoc"}),
+    metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_CONNECTION_FAIL], {"reason", "connection_fail"}),
+    metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_OTHER], {"reason", "other"}),
     metric("nspanel_mqtt_connects_total", mqtt_connects),
     metric("nspanel_mqtt_disconnects_total", mqtt_disconnects),
     // Time spent in esp_mqtt_client_publish(), which waits for esp-mqtt's lock and the socket.

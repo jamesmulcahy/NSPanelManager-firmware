@@ -58,6 +58,18 @@ enum MqttHandler { HANDLER_MQTT_MANAGER,
                    HANDLER_COUNT };
 extern FastHistogram mqtt_handler_duration[HANDLER_COUNT];
 
+// nspanel_wifi_disconnects_total{reason}: WIFI_EVENT_STA_DISCONNECTED by reason, bucketed by
+// wifi_disconnect_reason() in WiFiManager.cpp.
+enum WifiDisconnectReason { WIFI_DISCONNECT_BEACON_TIMEOUT,
+                            WIFI_DISCONNECT_NO_AP_FOUND,
+                            WIFI_DISCONNECT_AUTH_FAIL,
+                            WIFI_DISCONNECT_ASSOC_FAIL,
+                            WIFI_DISCONNECT_AP_DISASSOC,
+                            WIFI_DISCONNECT_CONNECTION_FAIL,
+                            WIFI_DISCONNECT_OTHER,
+                            WIFI_DISCONNECT_COUNT };
+extern Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
+
 /**
  * Create the lock that serialises scrapes. Call once, before the web server starts.
  */
