@@ -1,3 +1,4 @@
+#include <PanelMetrics.hpp>
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
 #include <LvglRenderer.hpp>
@@ -83,7 +84,7 @@ private:
 void WebManager::start() {
   if (WebManager::_server == NULL) {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
-    WebManager::_config.max_uri_handlers = 12;
+    WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included), with room to spare
     // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
     // chunked send, and 8 KB left only 412 bytes unused on a panel (PNG). See the
     // "Screenshot ..." log line for what is left unused.
@@ -102,6 +103,7 @@ void WebManager::start() {
     WebManager::_config.keep_alive_idle = 15;
     WebManager::_config.keep_alive_interval = 5;
     WebManager::_config.keep_alive_count = 3;
+    PanelMetrics::init();
 
     if (httpd_start(&WebManager::_server, &WebManager::_config) == ESP_OK) {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_index);                  // Register index view
@@ -115,6 +117,7 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_handle_generate_204);    // Handle /generate_204 for Android captive portal popup
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_handle_generate204);     // Handle /generate204 for Android captive portal popup
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_screenshot);             // The LVGL screen as an image
+      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_metrics);                // Prometheus scrape endpoint
     } else {
       ESP_LOGE("Web", "Failed to start web server!");
     }
@@ -401,6 +404,24 @@ esp_err_t WebManager::_handle_uri_status_data(httpd_req_t *req) {
   httpd_resp_send_chunk(req, NULL, 0);
 
   return ESP_OK;
+}
+
+static bool send_metrics_chunk(void *req, const char *data, size_t length) {
+  return httpd_resp_send_chunk(static_cast<httpd_req_t *>(req), data, length) == ESP_OK;
+}
+
+esp_err_t WebManager::_handle_uri_metrics(httpd_req_t *req) {
+  httpd_resp_set_type(req, "text/plain; version=0.0.4; charset=utf-8");
+  esp_err_t result = PanelMetrics::write(send_metrics_chunk, req);
+  if (result == ESP_ERR_TIMEOUT) {
+    // Nothing has been sent yet, so the status can still be set.
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_send(req, NULL, 0);
+  }
+  if (result != ESP_OK) {
+    return ESP_FAIL; // The client went away mid-response: have the server close the socket.
+  }
+  return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 esp_err_t WebManager::_handle_uri_main_css(httpd_req_t *req) {

@@ -20,6 +20,8 @@ private:
   static esp_err_t _handle_uri_main_css(httpd_req_t *req);
   static esp_err_t _handle_uri_generate_204(httpd_req_t *req);
   static esp_err_t _handle_uri_screenshot(httpd_req_t *req);
+  // Panel metrics in Prometheus text format, see PanelMetrics.hpp.
+  static esp_err_t _handle_uri_metrics(httpd_req_t *req);
 
   /**
    * @brief Read a file from LittleFS and send response
@@ -96,5 +98,10 @@ private:
       .uri = "/screenshot",
       .method = HTTP_GET,
       .handler = _handle_uri_screenshot,
+      .user_ctx = NULL};
+  static inline httpd_uri_t _uri_metrics = {
+      .uri = "/metrics",
+      .method = HTTP_GET,
+      .handler = _handle_uri_metrics,
       .user_ctx = NULL};
 };

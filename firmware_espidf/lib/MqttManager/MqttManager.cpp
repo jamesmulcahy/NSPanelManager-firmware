@@ -1,6 +1,7 @@
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <WiFiManager.hpp>
 #include <esp_log.h>
@@ -160,6 +161,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
   switch ((esp_mqtt_event_id_t)event_id) {
   case MQTT_EVENT_CONNECTED:
     MqttManager::_connected = true;
+    PanelMetrics::mqtt_connects.add();
     {
       // Turn off Nagle's algorithm on the broker connection. With it on, a small packet such as a
       // SUBSCRIBE is held back until everything sent before it has been acknowledged, and the panel
@@ -229,6 +231,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
 
   case MQTT_EVENT_DISCONNECTED:
     MqttManager::_connected = false;
+    PanelMetrics::mqtt_disconnects.add();
     // Stop any online-status retry still running for the connection that just dropped. This
     // handler can be running on that very task — esp_mqtt_client_publish() dispatches
     // MQTT_EVENT_DISCONNECTED inline when its write fails — so it must never delete it.
@@ -520,6 +523,13 @@ void MqttManager::_log_subscribe_latency(esp_mqtt_event_handle_t event) {
   // sent_ms is stamped once esp_mqtt_client_subscribe_single() has returned, and a quick SUBACK can be
   // received on the MQTT task before then, so this can come out a millisecond or so negative.
   int64_t suback_ms = std::max<int64_t>(found.suback_ms - found.sent_ms, 0);
+  LatencyHistogram *latency = PanelMetrics::subscribe_latency[found.after_reconnect ? PanelMetrics::CAUSE_RECONNECT : PanelMetrics::CAUSE_SUBSCRIBE];
+  latency[PanelMetrics::STAGE_TOTAL].observe_ms(total_ms);
+  latency[PanelMetrics::STAGE_QUEUED].observe_ms(queued_ms);
+  if (found.suback_ms > 0) {
+    latency[PanelMetrics::STAGE_SUBACK].observe_ms(suback_ms);
+    latency[PanelMetrics::STAGE_DATA].observe_ms(now - found.suback_ms);
+  }
   const char *cause = found.after_reconnect ? "reconnect" : "subscribe()";
   // Reconnects replay every topic at once, so only a slow subscribe() is worth an INFO line.
   esp_log_level_t level = (!found.after_reconnect && total_ms >= SUBSCRIBE_LATENCY_INFO_MS) ? ESP_LOG_INFO : ESP_LOG_DEBUG;
@@ -535,13 +545,17 @@ void MqttManager::_log_subscribe_latency(esp_mqtt_event_handle_t event) {
 
 esp_err_t MqttManager::publish(std::string topic, const char *data, size_t length, bool retain) {
   if (MqttManager::connected()) {
+    int64_t start_us = esp_timer_get_time();
     int result_code = esp_mqtt_client_publish(MqttManager::_mqtt_client, topic.c_str(), data, length, 0, retain);
+    PanelMetrics::publish_duration.observe_us(esp_timer_get_time() - start_us);
     if (result_code >= 0) {
       return ESP_OK;
     } else {
+      PanelMetrics::publish_failures_error.add();
       ESP_LOGE("MqttManager", "Failed to publish to '%s'. Got return code: %d", topic.c_str(), result_code);
     }
   } else {
+    PanelMetrics::publish_failures_disconnected.add();
     ESP_LOGE("MqttManager", "Failed to publish to MQTT topic. Not connected to MQTT server.");
   }
   return ESP_ERR_NOT_FINISHED;
