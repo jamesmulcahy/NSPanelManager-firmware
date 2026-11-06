@@ -1,6 +1,6 @@
 #include <PanelMetrics.hpp>
 #include <esp_err.h>
-#include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -75,14 +75,36 @@ void wifi_power_save_failed() {
 
 namespace {
 
-bool sample_heap_free(int64_t *value) {
-  *value = esp_get_free_heap_size();
-  return true;
+// Heap pools, by capability. Internal RAM is the scarce one: with CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL
+// every allocation under 16 KB comes from it. Same caps as the status report's heap_used_pct, so the
+// two agree. A pool the board does not have (no PSRAM) is left out of the scrape.
+constexpr uint32_t HEAP_INTERNAL = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+constexpr uint32_t HEAP_PSRAM = MALLOC_CAP_SPIRAM;
+
+template <uint32_t Caps>
+bool sample_heap_size(int64_t *value) {
+  *value = heap_caps_get_total_size(Caps);
+  return *value > 0;
 }
 
+template <uint32_t Caps>
+bool sample_heap_free(int64_t *value) {
+  *value = heap_caps_get_free_size(Caps);
+  return heap_caps_get_total_size(Caps) > 0;
+}
+
+template <uint32_t Caps>
 bool sample_heap_min_free(int64_t *value) {
-  *value = esp_get_minimum_free_heap_size();
-  return true;
+  *value = heap_caps_get_minimum_free_size(Caps);
+  return heap_caps_get_total_size(Caps) > 0;
+}
+
+// Largest single allocation that would succeed now: fragmentation, not total free, is what makes
+// an allocation fail.
+template <uint32_t Caps>
+bool sample_heap_largest_free_block(int64_t *value) {
+  *value = heap_caps_get_largest_free_block(Caps);
+  return heap_caps_get_total_size(Caps) > 0;
 }
 
 bool sample_uptime(int64_t *value) {
@@ -148,8 +170,13 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_BUTTON], {"callback", "button"}),
     metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_SPECIAL_MODE], {"callback", "special_mode"}),
     metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_SPECIAL_MODE_TIMEOUT], {"callback", "special_mode_timeout"}),
-    metric("nspanel_heap_free_bytes", sample_heap_free),
-    metric("nspanel_heap_min_free_bytes", sample_heap_min_free),
+    metric("nspanel_heap_size_bytes", sample_heap_size<HEAP_INTERNAL>, {"pool", "internal"}),
+    metric("nspanel_heap_size_bytes", sample_heap_size<HEAP_PSRAM>, {"pool", "psram"}),
+    metric("nspanel_heap_free_bytes", sample_heap_free<HEAP_INTERNAL>, {"pool", "internal"}),
+    metric("nspanel_heap_free_bytes", sample_heap_free<HEAP_PSRAM>, {"pool", "psram"}),
+    metric("nspanel_heap_min_free_bytes", sample_heap_min_free<HEAP_INTERNAL>, {"pool", "internal"}),
+    metric("nspanel_heap_min_free_bytes", sample_heap_min_free<HEAP_PSRAM>, {"pool", "psram"}),
+    metric("nspanel_heap_largest_free_block_bytes", sample_heap_largest_free_block<HEAP_INTERNAL>, {"pool", "internal"}),
     metric("nspanel_uptime_seconds", sample_uptime),
 };
 static_assert(metrics_names_grouped(registry), "List every series of a metric next to each other in the registry");
