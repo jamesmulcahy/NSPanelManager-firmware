@@ -321,6 +321,9 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   // nspanel/<MAC>/lvgl_look (LvglLook), so the manager need not send the lvgl_theme and
   // lvgl_background commands. Older managers ignore keys they do not know.
   json["features"] = nlohmann::json::array({"lvgl_look"});
+  // WebManager serves GET /metrics (Prometheus text) on this port. The manager lists only panels
+  // that send this in its Prometheus service discovery.
+  json["metrics_port"] = 80;
 #if defined(BOARD_SONOFF)
   json["model"] = "sonoff";
 #elif defined(BOARD_CUSTOM)
