@@ -1,5 +1,6 @@
 // Original source: https://github.com/rwmingis/InterruptButton/blob/main/InterruptButton.cpp v2.0.2
 #include "InterruptButton.h"
+#include <TimedEspTimer.hpp>
 
 // Include reference req'd for debugging and warnings across serial port.
 #ifdef ARDUINO
@@ -265,13 +266,27 @@ void InterruptButton::doubleClickTimeout(void *arg) {
                                                                    // Note, this timer is never started if previous press was a longpress
 }
 
+//-- Wrap a timer callback so its duration is recorded (nspanel_esp_timer_callback_duration_seconds) --------
+esp_timer_cb_t IRAM_ATTR InterruptButton::timedCallback(esp_timer_cb_t callBack) {
+  using PanelMetrics::TIMER_BUTTON;
+  if (callBack == &readButton)
+    return &timed_esp_timer_callback<&readButton, TIMER_BUTTON>;
+  if (callBack == &longPressEvent)
+    return &timed_esp_timer_callback<&longPressEvent, TIMER_BUTTON>;
+  if (callBack == &autoRepeatPressEvent)
+    return &timed_esp_timer_callback<&autoRepeatPressEvent, TIMER_BUTTON>;
+  if (callBack == &doubleClickTimeout)
+    return &timed_esp_timer_callback<&doubleClickTimeout, TIMER_BUTTON>;
+  return callBack; // Not one of ours: run it untimed.
+}
+
 //-- Helper method to simplify starting a timer ----------------------------------------------------------
 void IRAM_ATTR InterruptButton::startTimer(esp_timer_handle_t &timer, uint32_t duration_US, void (*callBack)(void *arg), InterruptButton *btn, const char *msg) {
   if (m_deleteInProgress)
     return;
   esp_timer_create_args_t tmrConfig;
   tmrConfig.arg = reinterpret_cast<void *>(btn);
-  tmrConfig.callback = callBack;
+  tmrConfig.callback = timedCallback(callBack);
   tmrConfig.dispatch_method = ESP_TIMER_TASK;
   tmrConfig.name = msg;
   // this line crashes the esp if button was created dynamically.

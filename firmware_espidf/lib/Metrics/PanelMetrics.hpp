@@ -33,6 +33,16 @@ extern FastHistogram log_serial_write_duration;
 extern Counter log_lines_dropped;
 extern Gauge log_queue_high_water;
 
+// nspanel_esp_timer_callback_duration_seconds{callback}: time spent in our own esp_timer callbacks,
+// which all run one after another on the esp_timer task (see TimedEspTimer.hpp).
+enum EspTimerCallback { TIMER_STATUS_UPDATE,
+                        TIMER_BUZZER_STEP,
+                        TIMER_BUTTON, // Every InterruptButton timer: debounce, long press, repeat, double click.
+                        TIMER_SPECIAL_MODE,
+                        TIMER_SPECIAL_MODE_TIMEOUT,
+                        TIMER_COUNT };
+extern FastHistogram esp_timer_callback_duration[TIMER_COUNT];
+
 /**
  * Create the lock that serialises scrapes. Call once, before the web server starts.
  */

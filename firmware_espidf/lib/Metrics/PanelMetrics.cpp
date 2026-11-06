@@ -17,6 +17,7 @@ FastHistogram log_call_duration;
 FastHistogram log_serial_write_duration;
 Counter log_lines_dropped;
 Gauge log_queue_high_water;
+FastHistogram esp_timer_callback_duration[TIMER_COUNT];
 
 namespace {
 
@@ -62,6 +63,13 @@ constexpr MetricDesc registry[] = {
     // Lines lost because the queue to the MQTT log publisher was full.
     metric("nspanel_log_lines_dropped_total", log_lines_dropped),
     metric("nspanel_log_queue_high_water", log_queue_high_water),
+    // Time spent in each of our esp_timer callbacks. They share one task with every other timer,
+    // Wi-Fi's included, so a slow one delays them all.
+    metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_STATUS_UPDATE], {"callback", "status_update"}),
+    metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_BUZZER_STEP], {"callback", "buzzer_step"}),
+    metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_BUTTON], {"callback", "button"}),
+    metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_SPECIAL_MODE], {"callback", "special_mode"}),
+    metric("nspanel_esp_timer_callback_duration_seconds", esp_timer_callback_duration[TIMER_SPECIAL_MODE_TIMEOUT], {"callback", "special_mode_timeout"}),
     metric("nspanel_heap_free_bytes", sample_heap_free),
     metric("nspanel_heap_min_free_bytes", sample_heap_min_free),
     metric("nspanel_uptime_seconds", sample_uptime),

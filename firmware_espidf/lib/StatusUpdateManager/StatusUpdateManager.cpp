@@ -8,6 +8,7 @@
 #include <NSPM_ConfigManager_event.hpp>
 #include <StatusUpdateManager.hpp>
 #include <StatusUpdateManager_events.hpp>
+#include <TimedEspTimer.hpp>
 #include <UpdateManager_event.hpp>
 #include <WiFiManager.hpp>
 #include <cmath>
@@ -62,9 +63,8 @@ void StatusUpdateManager::init() {
   // Create status update timer
 
   esp_timer_create_args_t status_update_timer_args = {};
-  status_update_timer_args.callback = StatusUpdateManager::_send_status_update;
   status_update_timer_args.name = "status_update_timer";
-  esp_err_t err = esp_timer_create(&status_update_timer_args, &StatusUpdateManager::_status_update_timer);
+  esp_err_t err = timed_esp_timer_create<StatusUpdateManager::_send_status_update, PanelMetrics::TIMER_STATUS_UPDATE>(status_update_timer_args, &StatusUpdateManager::_status_update_timer);
   if (err != ESP_OK) {
     ESP_LOGE("StatusUpdateManager", "Failed to start ESP timer to periodically send status updates! Error: %s", esp_err_to_name(err));
   }

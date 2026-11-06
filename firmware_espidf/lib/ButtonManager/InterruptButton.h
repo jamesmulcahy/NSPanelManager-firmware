@@ -62,6 +62,7 @@ private:
                          InterruptButton *btn,
                          const char *msg);
   static void killTimer(esp_timer_handle_t &timer); // Helper function to kill a timer
+  static esp_timer_cb_t timedCallback(esp_timer_cb_t callBack); // The timer callback that runs callBack and records its duration
 
   static void action(InterruptButton *btn, // Helper function to simplify calling actions at specified menulevel
                      events event,
