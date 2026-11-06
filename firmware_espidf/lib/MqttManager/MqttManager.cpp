@@ -38,6 +38,10 @@ static_assert(SUBACK_TIMEOUT_MS > SUBSCRIBE_MAX_IN_FLIGHT * MQTT_WRITE_TIMEOUT_M
 // so panels that only log INFO and above still report slow page switches.
 #define SUBSCRIBE_LATENCY_INFO_MS 250
 
+void MqttManager::_record_handler_duration(int id, int64_t elapsed_us) {
+  PanelMetrics::mqtt_handler_duration[id].observe_us(elapsed_us);
+}
+
 static int64_t millis() {
   return esp_timer_get_time() / 1000;
 }
@@ -115,7 +119,7 @@ void MqttManager::start(std::string *server, uint16_t *port, std::string *userna
   }
 
   // Register event handler for MQTT events
-  esp_err_t result = esp_mqtt_client_register_event(MqttManager::_mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_ANY, MqttManager::_mqtt_event_handler, NULL);
+  esp_err_t result = MqttManager::register_handler<MqttManager::_mqtt_event_handler, PanelMetrics::HANDLER_MQTT_MANAGER>(esp_mqtt_event_id_t::MQTT_EVENT_ANY, NULL);
   switch (result) {
   case ESP_ERR_NO_MEM:
     ESP_LOGE("MqttManager", "Failed to allocate MQTT event handler!");
@@ -561,10 +565,3 @@ esp_err_t MqttManager::publish(std::string topic, const char *data, size_t lengt
   return ESP_ERR_NOT_FINISHED;
 }
 
-esp_err_t MqttManager::register_handler(esp_mqtt_event_id_t event_id, esp_event_handler_t event_handler, void *event_handler_arg) {
-  return esp_mqtt_client_register_event(MqttManager::_mqtt_client, event_id, event_handler, event_handler_arg);
-}
-
-esp_err_t MqttManager::unregister_handler(esp_mqtt_event_id_t event_id, esp_event_handler_t event_handler) {
-  return esp_mqtt_client_unregister_event(MqttManager::_mqtt_client, event_id, event_handler);
-}

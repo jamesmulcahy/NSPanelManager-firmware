@@ -1,6 +1,7 @@
 #include <BuzzerManager.hpp>
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <Nextion_event.hpp>
@@ -76,7 +77,7 @@ void BuzzerManager::init_mqtt() {
   }
 
   BuzzerManager::_raw_command_topic = std::string("nspanel/") + WiFiManager::mac_string() + "/buzzer_raw_command";
-  MqttManager::register_handler(MQTT_EVENT_DATA, &BuzzerManager::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<&BuzzerManager::_mqtt_event_handler, PanelMetrics::HANDLER_BUZZER_MANAGER>(MQTT_EVENT_DATA, NULL);
   MqttManager::subscribe(BuzzerManager::_raw_command_topic);
 }
 

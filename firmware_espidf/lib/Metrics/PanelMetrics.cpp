@@ -18,6 +18,7 @@ FastHistogram log_serial_write_duration;
 Counter log_lines_dropped;
 Gauge log_queue_high_water;
 FastHistogram esp_timer_callback_duration[TIMER_COUNT];
+FastHistogram mqtt_handler_duration[HANDLER_COUNT];
 
 namespace {
 
@@ -51,6 +52,19 @@ constexpr MetricDesc registry[] = {
     SUBSCRIBE_LATENCY(CAUSE_RECONNECT, "reconnect", STAGE_QUEUED, "queued"),
     SUBSCRIBE_LATENCY(CAUSE_RECONNECT, "reconnect", STAGE_SUBACK, "suback"),
     SUBSCRIBE_LATENCY(CAUSE_RECONNECT, "reconnect", STAGE_DATA, "data"),
+    // Time each MQTT event handler holds the MQTT client task, per call. Every handler is called for
+    // every event it registered for and returns early for topics it does not own, so _count is calls
+    // and the slow buckets show which handler holds the task up, and for how long.
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_MQTT_MANAGER], {"handler", "mqtt_manager"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_NSPM_CONFIG_MANAGER], {"handler", "nspm_config_manager"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_ROOM_MANAGER], {"handler", "room_manager"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_INTERFACE_MANAGER], {"handler", "interface_manager"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_BUTTON_MANAGER], {"handler", "button_manager"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_UPDATE_MANAGER], {"handler", "update_manager"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_BUZZER_MANAGER], {"handler", "buzzer_manager"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_PANEL_CLOCK], {"handler", "panel_clock"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_SCREENSAVER_PAGE], {"handler", "screensaver_page"}),
+    metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_ENTITY_PAGE], {"handler", "entity_page"}),
     metric("nspanel_mqtt_connects_total", mqtt_connects),
     metric("nspanel_mqtt_disconnects_total", mqtt_disconnects),
     // Time spent in esp_mqtt_client_publish(), which waits for esp-mqtt's lock and the socket.

@@ -3,6 +3,7 @@
 #include <ConfigManager.hpp>
 #include <InterfaceManager.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <StatusUpdateManager_events.hpp>
@@ -71,7 +72,7 @@ void ButtonManager::init() {
 
 void ButtonManager::init_mqtt() {
   // Setup and subscribe to MQTT
-  MqttManager::register_handler(MQTT_EVENT_ANY, &ButtonManager::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<&ButtonManager::_mqtt_event_handler, PanelMetrics::HANDLER_BUTTON_MANAGER>(MQTT_EVENT_ANY, NULL);
 
   MqttManager::subscribe(ButtonManager::_relay1_cmd_topic);
   MqttManager::subscribe(ButtonManager::_relay2_cmd_topic);

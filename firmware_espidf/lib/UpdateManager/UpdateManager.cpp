@@ -9,6 +9,7 @@
 #include <LvglRenderer.hpp>
 #include <LoadingPage.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <Nextion.hpp>
 #include <Nextion_event.hpp>
@@ -29,7 +30,7 @@ void UpdateManager::init() {
   esp_log_level_set("UpdateManager", ConfigManager::log_level);
   UpdateManager::_download_data_store_mutex = xSemaphoreCreateMutex();
 
-  MqttManager::register_handler(MQTT_EVENT_ANY, UpdateManager::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<UpdateManager::_mqtt_event_handler, PanelMetrics::HANDLER_UPDATE_MANAGER>(MQTT_EVENT_ANY, NULL);
 
   std::string command_topic = "nspanel/";
   command_topic.append(WiFiManager::mac_string());

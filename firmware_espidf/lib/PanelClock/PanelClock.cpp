@@ -1,6 +1,7 @@
 #include <ConfigManager.hpp>
 #include <EpochParser.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <PanelClock.hpp>
@@ -18,7 +19,7 @@ void PanelClock::init() {
     return;
   }
 
-  MqttManager::register_handler(MQTT_EVENT_DATA, &PanelClock::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<&PanelClock::_mqtt_event_handler, PanelMetrics::HANDLER_PANEL_CLOCK>(MQTT_EVENT_DATA, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, PanelClock::_config_event_handler, NULL);
 }
 

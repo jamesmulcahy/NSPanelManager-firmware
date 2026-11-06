@@ -43,6 +43,21 @@ enum EspTimerCallback { TIMER_STATUS_UPDATE,
                         TIMER_COUNT };
 extern FastHistogram esp_timer_callback_duration[TIMER_COUNT];
 
+// nspanel_mqtt_handler_duration_seconds{handler}: time each MQTT event handler holds the MQTT
+// client task, per call, for every event it is called with (see MqttManager::register_handler()).
+enum MqttHandler { HANDLER_MQTT_MANAGER,
+                   HANDLER_NSPM_CONFIG_MANAGER,
+                   HANDLER_ROOM_MANAGER,
+                   HANDLER_INTERFACE_MANAGER,
+                   HANDLER_BUTTON_MANAGER,
+                   HANDLER_UPDATE_MANAGER,
+                   HANDLER_BUZZER_MANAGER,
+                   HANDLER_PANEL_CLOCK,
+                   HANDLER_SCREENSAVER_PAGE,
+                   HANDLER_ENTITY_PAGE,
+                   HANDLER_COUNT };
+extern FastHistogram mqtt_handler_duration[HANDLER_COUNT];
+
 /**
  * Create the lock that serialises scrapes. Call once, before the web server starts.
  */

@@ -1,6 +1,7 @@
 #include "NSPM_ConfigManager.hpp"
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <NSPM_version.hpp>
 #include <WiFiManager.hpp>
@@ -21,7 +22,7 @@ void NSPM_ConfigManager::init() {
     ESP_LOGE("NSPM_ConfigManager", "Failed to create task to post CONFIG_LOADED. Will post inline instead.");
     NSPM_ConfigManager::_task_post_config_loaded_handle = NULL;
   }
-  MqttManager::register_handler(MQTT_EVENT_ANY, &NSPM_ConfigManager::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<&NSPM_ConfigManager::_mqtt_event_handler, PanelMetrics::HANDLER_NSPM_CONFIG_MANAGER>(MQTT_EVENT_ANY, NULL);
 
   // Subscribe to the topic the manager answers register_request on. It is keyed on the MAC,
   // so it survives the manager renaming the panel.
