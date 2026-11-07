@@ -58,6 +58,13 @@ enum MqttHandler { HANDLER_MQTT_MANAGER,
                    HANDLER_COUNT };
 extern FastHistogram mqtt_handler_duration[HANDLER_COUNT];
 
+// nspanel_nextion_window_wait_seconds{class}: time each write to the display waited for room in
+// its buffer, recorded by NextionWindow::wait_for_room(). Bulk writes are album art fills.
+enum NextionWriteClass { NEXTION_WRITE_NORMAL,
+                         NEXTION_WRITE_BULK,
+                         NEXTION_WRITE_COUNT };
+extern FastHistogram nextion_window_wait[NEXTION_WRITE_COUNT];
+
 // nspanel_wifi_disconnects_total{reason}: WIFI_EVENT_STA_DISCONNECTED by reason, bucketed by
 // wifi_disconnect_reason() in WiFiManager.cpp.
 enum WifiDisconnectReason { WIFI_DISCONNECT_BEACON_TIMEOUT,

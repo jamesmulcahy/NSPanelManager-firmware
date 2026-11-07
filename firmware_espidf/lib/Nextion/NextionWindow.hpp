@@ -69,6 +69,34 @@ public:
    */
   static bool on_frame(const uint8_t *data, size_t size);
 
+  // Counts since boot. Starting over (a display restart, a TFT update) does not reset them.
+  struct stats_t {
+    uint32_t commands;         // Commands written while accounting, markers excluded.
+    uint32_t errors;           // Answered with an error code.
+    uint32_t missing;          // Never answered, found when a later marker was echoed.
+    uint32_t lost_in_overflow; // Never answered, and sent while the display's buffer had overflowed.
+    uint32_t unsolicited;      // Replies to no command we know of.
+    uint32_t resets;           // Times accounting started over after a restart or an unechoed marker.
+    uint32_t waits;            // Writes that had to wait for room.
+    uint32_t wait_timeouts;    // Writes that gave up waiting and went ahead anyway.
+    uint32_t wait_max_ms;      // Longest wait.
+  };
+
+  /**
+   * @brief A consistent copy of the counts, for the metrics scrape.
+   */
+  static stats_t stats();
+
+  /**
+   * @brief Bytes sent and not yet answered.
+   */
+  static uint32_t inflight_bytes();
+
+  /**
+   * @brief The window a write of this class waits for, in bytes.
+   */
+  static uint32_t window_bytes(write_class kind) { return kind == write_class::BULK ? _bulk_window_bytes.load() : _window_bytes.load(); }
+
 private:
   enum class entry_kind : uint8_t {
     COMMAND,
@@ -84,18 +112,6 @@ private:
     // sent during the stall is still waiting at that moment, and some of it was dropped.
     bool overflowed;
     char prefix[16];
-  };
-
-  struct stats_t {
-    uint32_t commands;
-    uint32_t errors;
-    uint32_t missing;
-    uint32_t lost_in_overflow;
-    uint32_t unsolicited;
-    uint32_t resets;
-    uint32_t waits;
-    uint32_t wait_timeouts;
-    uint32_t wait_max_ms;
   };
 
   static void _task_monitor(void *param);

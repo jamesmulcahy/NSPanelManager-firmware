@@ -1,3 +1,4 @@
+#include <NextionWindow.hpp>
 #include <PanelMetrics.hpp>
 #include <esp_err.h>
 #include <esp_heap_caps.h>
@@ -19,6 +20,7 @@ Counter log_lines_dropped;
 Gauge log_queue_high_water;
 FastHistogram esp_timer_callback_duration[TIMER_COUNT];
 FastHistogram mqtt_handler_duration[HANDLER_COUNT];
+FastHistogram nextion_window_wait[NEXTION_WRITE_COUNT];
 Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 
 namespace {
@@ -107,6 +109,24 @@ bool sample_heap_largest_free_block(int64_t *value) {
   return heap_caps_get_total_size(Caps) > 0;
 }
 
+// NextionWindow's counts. They only ever go up, so they are served as counters.
+template <uint32_t NextionWindow::stats_t::*Field>
+bool sample_nextion_window_stat(int64_t *value) {
+  *value = NextionWindow::stats().*Field;
+  return true;
+}
+
+template <NextionWindow::write_class Kind>
+bool sample_nextion_window_bytes(int64_t *value) {
+  *value = NextionWindow::window_bytes(Kind);
+  return true;
+}
+
+bool sample_nextion_window_inflight(int64_t *value) {
+  *value = NextionWindow::inflight_bytes();
+  return true;
+}
+
 bool sample_uptime(int64_t *value) {
   *value = esp_timer_get_time() / 1000000;
   return true;
@@ -140,6 +160,24 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_PANEL_CLOCK], {"handler", "panel_clock"}),
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_SCREENSAVER_PAGE], {"handler", "screensaver_page"}),
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_ENTITY_PAGE], {"handler", "entity_page"}),
+    // Writes to the display, paced by NextionWindow so they never overflow its serial buffer. Every
+    // write is in the wait histogram, so its _count is writes by class and its buckets how long they
+    // waited for room. Bulk writes may use only half the window, keeping the rest for normal ones.
+    metric("nspanel_nextion_window_wait_seconds", nextion_window_wait[NEXTION_WRITE_NORMAL], {"class", "normal"}),
+    metric("nspanel_nextion_window_wait_seconds", nextion_window_wait[NEXTION_WRITE_BULK], {"class", "bulk"}),
+    sampled_counter("nspanel_nextion_window_waits_total", sample_nextion_window_stat<&NextionWindow::stats_t::waits>),
+    sampled_counter("nspanel_nextion_window_wait_timeouts_total", sample_nextion_window_stat<&NextionWindow::stats_t::wait_timeouts>),
+    metric("nspanel_nextion_window_wait_max_milliseconds", sample_nextion_window_stat<&NextionWindow::stats_t::wait_max_ms>),
+    metric("nspanel_nextion_window_bytes", sample_nextion_window_bytes<NextionWindow::write_class::NORMAL>, {"class", "normal"}),
+    metric("nspanel_nextion_window_bytes", sample_nextion_window_bytes<NextionWindow::write_class::BULK>, {"class", "bulk"}),
+    metric("nspanel_nextion_window_inflight_bytes", sample_nextion_window_inflight),
+    sampled_counter("nspanel_nextion_commands_total", sample_nextion_window_stat<&NextionWindow::stats_t::commands>),
+    sampled_counter("nspanel_nextion_command_errors_total", sample_nextion_window_stat<&NextionWindow::stats_t::errors>),
+    // Commands the display never answered: dropped in an overflow it reported, or for no known reason.
+    sampled_counter("nspanel_nextion_commands_unanswered_total", sample_nextion_window_stat<&NextionWindow::stats_t::lost_in_overflow>, {"reason", "overflow"}),
+    sampled_counter("nspanel_nextion_commands_unanswered_total", sample_nextion_window_stat<&NextionWindow::stats_t::missing>, {"reason", "missing"}),
+    sampled_counter("nspanel_nextion_unsolicited_replies_total", sample_nextion_window_stat<&NextionWindow::stats_t::unsolicited>),
+    sampled_counter("nspanel_nextion_window_resets_total", sample_nextion_window_stat<&NextionWindow::stats_t::resets>),
     metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_BEACON_TIMEOUT], {"reason", "beacon_timeout"}),
     metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_NO_AP_FOUND], {"reason", "no_ap_found"}),
     metric("nspanel_wifi_disconnects_total", wifi_disconnects[WIFI_DISCONNECT_AUTH_FAIL], {"reason", "auth_fail"}),
