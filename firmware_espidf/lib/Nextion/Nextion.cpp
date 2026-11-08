@@ -85,6 +85,7 @@ esp_err_t Nextion::init() {
     ESP_LOGE("Nextion", "Failed to set UART pins! Error: %s", esp_err_to_name(cmd_err));
   }
 
+#if !defined(NSPM_QEMU)
   cmd_err = uart_enable_pattern_det_baud_intr(UART_NUM_2, 0xFF, 3, 9, 0, 0); // Setup pattern detection to trigger interrupt when 3 consecutive 0xFF has been received.
   if (cmd_err != ESP_OK) {
     ESP_LOGE("Nextion", "Failed to enable pattern detection on UART! Error: %s", esp_err_to_name(cmd_err));
@@ -94,6 +95,12 @@ esp_err_t Nextion::init() {
   if (cmd_err != ESP_OK) {
     ESP_LOGE("Nextion", "Failed to reset UART pattern queue! Error: %s", esp_err_to_name(cmd_err));
   }
+#else
+  // QEMU emulates no pattern detection (frames are split on UART_DATA in
+  // _task_uart_event instead). Its DPORT model also does not reflect the UART
+  // clock-enable bits, so the IDF 6 driver's uart_get_baudrate() fails in
+  // pattern setup and the baud divisor is zero: IntegerDivideByZero.
+#endif
 
   // Register event handler for when uart data is fully read and processed into an Nextion event
   esp_err_t reg_handler_result = esp_event_handler_register_with(Nextion::_handle_uart_data_event_loop, NEXTION_EVENT, nextion_event_t::RECEIVED_DATA, &Nextion::_uart_data_handler, NULL);
@@ -340,6 +347,22 @@ void Nextion::_task_uart_event(void *param) {
 
               Nextion::_post_received_data(uart_buffer);
             }
+#if defined(NSPM_QEMU)
+            else {
+              // QEMU emulates no pattern detection, so UART_PATTERN_DET never fires and the display's frames arrive
+              // here. Split them as that path does. Read what is buffered, not what the event reports: if an
+              // earlier event was lost (queue full) its bytes are still buffered, and later events then describe
+              // bytes already read.
+              size_t buffered = 0;
+              if (uart_get_buffered_data_len(UART_NUM_2, &buffered) == ESP_OK && buffered > 0) {
+                size_t kept = pending_frames.size();
+                pending_frames.resize(kept + buffered);
+                int read = uart_read_bytes(UART_NUM_2, pending_frames.data() + kept, buffered, 0);
+                pending_frames.resize(kept + (read > 0 ? read : 0));
+                Nextion::_post_received_frames(pending_frames);
+              }
+            }
+#endif
             xSemaphoreGive(Nextion::_nextion_state_mutex);
           } else {
             ESP_LOGE("Nextion", "Failed to take _nextion_state_mutex while checking current state!");
