@@ -1,0 +1,9 @@
+pytest>=8
+grpcio-tools>=1.66
+paho-mqtt>=2.1
+# Merges the flash image (nspm_qemu/image.py), as build_image.sh does.
+esptool==5.6.0
+# The display emulator and HMI reader, with numpy and Pillow for screenshots. Pinned to a release,
+# as the HMI and the .proto files are pinned to a commit (nspanelmanager.ref), so a change there
+# cannot break these tests until someone bumps it. NEXTION_TOOLS=<checkout> in run_tests.sh uses a local one instead.
+nextion-tools[images]==0.1.1

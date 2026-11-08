@@ -1,0 +1,12 @@
+# The NSPanelManager commit the tests take the TFT's Nextion project (gui.HMI) and the .proto
+# files from. Both belong to NSPanelManager, which builds the TFTs and owns the schema, so the
+# firmware repo carries neither. Pinned, so a change upstream cannot break these tests until
+# someone bumps this line; bumping it moves the HMI and the schema together.
+#
+# NSPManager/NSPanelManager devel, "Home Assistant media players and album art for NSPanels
+# (#385)". Its HMIs are the same as 38f74e2b, the last before #419, which replaced screensaver2
+# with the cover page in both HMIs (NSPManager/NSPanelManager#427). Bump past it once the US HMI
+# has screensaver2 back, as the EU one already does.
+#
+# NSPM_NSPANELMANAGER_REF=<commit or branch> uses another revision for one run (see README.md).
+ca00441aff1da8f4d2c70189887eca439e43d477
