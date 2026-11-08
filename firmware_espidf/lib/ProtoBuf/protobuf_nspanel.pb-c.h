@@ -328,10 +328,15 @@ struct  NSPanelStatusReport
    * The page background in use in LVGL mode, empty otherwise
    */
   char *lvgl_background;
+  /*
+   * TCP port of the panel's Prometheus /metrics endpoint, 0 if it has none. Also sent in
+   * register_request, but repeated here so a restarted manager relearns it from the next report.
+   */
+  int32_t metrics_port;
 };
 #define NSPANEL_STATUS_REPORT__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_status_report__descriptor) \
-    , NSPANEL_STATUS_REPORT__STATE__ONLINE, 0, 0, 0, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, 0, 0, NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
+    , NSPANEL_STATUS_REPORT__STATE__ONLINE, 0, 0, 0, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, 0, 0, NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0 }
 
 
 struct  NSPanelRoomEntitiesPage__EntitySlot
