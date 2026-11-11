@@ -11,6 +11,7 @@ from . import fake_nextion
 from .broker import Broker
 from .fake_manager import QEMU_HOST_ADDRESS, FakeManager
 from .panel import QemuPanel
+from .proto import nspanel as pb
 from .stack_manager import Stack, StackManager
 from .update_server import UpdateServer
 
@@ -124,6 +125,18 @@ class Rig:
         # The room label is the last thing HomePage::_update_display() writes
         # on first show; once it is there the page is fully rendered.
         self.nextion.wait_for(lambda n: n.get("home.room.txt") is not None, what="home page rendered")
+
+    def set_tft(self, data: bytes) -> None:
+        """Stage a TFT on the manager, and have the display accept it as a valid GUI."""
+        self.update_server.data = data
+        self.nextion.valid_md5s.add(self.update_server.md5)
+
+    def status_report(self, since: int = 0, timeout: float = 60) -> "pb.NSPanelStatusReport":
+        """The first status report the panel publishes after broker message index `since`."""
+        msg = self.broker.wait_for_message("nspanel/%s/status_report" % self.mac, timeout=timeout, since=since)
+        report = pb.NSPanelStatusReport()
+        report.ParseFromString(msg.payload)
+        return report
 
     def http_get(self, path: str, timeout: float = 30):
         with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.panel.web_port, path), timeout=timeout) as r:

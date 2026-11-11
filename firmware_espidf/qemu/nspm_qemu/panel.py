@@ -34,13 +34,13 @@ CRASH_PATTERNS = [
     re.compile(r"\*\*\*ERROR\*\*\* A stack overflow"),
 ]
 
-# Logged by Nextion::init() just before it installs the UART driver and
-# power-cycles the display. The TFT announces itself a moment later.
-NEXTION_POWER_ON = re.compile(r"Nextion: Initializing Nextion display")
+# Logged by Nextion::restart(), which switches the display off and on: at every boot, when an
+# operating baud rate falls back, when the link is recovered, when a GUI update starts, and when a
+# terminal session ends (Nextion::terminal_release(true)). The
+# fake display cannot see the GPIO, so this stands in for it: the display loses everything it
+# held (an upload in progress included), and its TFT announces itself a moment later.
+NEXTION_POWER_CYCLE = re.compile(r"Nextion: Power-cycling Nextion display")
 NEXTION_BOOT_DELAY = 0.5
-# NextionTerminal ends every session with Nextion::terminal_release(true), which power-cycles the
-# display (Nextion::restart(): its power GPIO, which the emulator cannot see). It logs this first.
-TERMINAL_SESSION_END = re.compile(r"NextionTerminal: Session \d+ (stopped|ended)")
 
 # The ROM's reset banner, printed on power-on and after every esp_restart().
 ROM_RESET = re.compile(r"^rst:0x[0-9a-f]+ \((\w+)\)")
@@ -329,10 +329,10 @@ class QemuPanel:
                 if reset:
                     self.resets.append(reset.group(1))
                 self._cond.notify_all()
-            if self.boot_display and NEXTION_POWER_ON.search(line):
-                threading.Timer(NEXTION_BOOT_DELAY, self._display_boot).start()
-            if self.nextion.terminal_profile is not None and TERMINAL_SESSION_END.search(line):
+            if NEXTION_POWER_CYCLE.search(line):
                 self.nextion.power_cycle()
+                if self.boot_display:
+                    threading.Timer(NEXTION_BOOT_DELAY, self._display_boot).start()
         with self._cond:
             self._cond.notify_all()
 
