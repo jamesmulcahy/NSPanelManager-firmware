@@ -112,6 +112,12 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def gdb_mode() -> Optional[str]:
+    """NSPM_QEMU_GDB: None when unset, empty or "0" (off), else "1" or "wait"."""
+    mode = os.environ.get("NSPM_QEMU_GDB", "")
+    return None if mode in ("", "0") else mode
+
+
 class PanelCrashed(AssertionError):
     pass
 
@@ -131,6 +137,10 @@ class QemuPanel:
         else:
             self.nextion = FakeNextion(hmi=hmi.load())
         self.web_port = _free_port()
+        # A port of its own, so suites can run side by side with the stub on. `wait` is for a
+        # person attaching by hand, so it keeps the well-known :3333.
+        mode = gdb_mode()
+        self.gdb_port: Optional[int] = None if mode is None else 3333 if mode == "wait" else _free_port()
         self.lines: List[str] = []
         self.crash: Optional[str] = None
         self.resets: List[str] = []  # reset reasons, one per boot (POWERON_RESET, SW_CPU_RESET, ...)
@@ -186,13 +196,15 @@ class QemuPanel:
             # let _run() start a fresh QEMU on the same flash: a clean power-on.
             "-no-reboot",
         ]
-        # NSPM_QEMU_GDB=1 exposes a gdbstub on :3333; =wait also halts at reset until gdb attaches.
-        gdb = os.environ.get("NSPM_QEMU_GDB")
-        if gdb:
-            args += ["-gdb", "tcp::3333"]
-            if gdb == "wait":
+        # NSPM_QEMU_GDB=1 exposes a gdbstub on a free port; =wait uses :3333 and also halts at
+        # reset until gdb attaches.
+        if self.gdb_port is not None:
+            args += ["-gdb", "tcp:127.0.0.1:%d" % self.gdb_port]
+            if gdb_mode() == "wait":
                 args += ["-S"]
-                log.warning("waiting for gdb on :3333")
+                log.warning("waiting for gdb on :%d", self.gdb_port)
+            else:
+                log.info("gdbstub on :%d", self.gdb_port)
         log.info("starting %s", " ".join(args))
         # stdin must stay open: EOF on QEMU's stdio chardev stalls UART0, and
         # with it every task that logs.
@@ -203,11 +215,11 @@ class QemuPanel:
         the kernel's locks, and every FreeRTOS task with what it is blocked on (freertos_tasks.py), to
         `path`. For a guest that hangs or deadlocks without a panic.
         Returns the path, or None if there was no stub or guest to attach to."""
-        if not os.environ.get("NSPM_QEMU_GDB") or not self.running:
+        if self.gdb_port is None or not self.running:
             return None
         elf = os.path.join(self.build_dir, "firmware.elf")
         commands = [
-            "set pagination off", "set confirm off", "target remote :3333",
+            "set pagination off", "set confirm off", "target remote 127.0.0.1:%d" % self.gdb_port,
             "info threads", "thread apply all bt 40",
             "thread 1", "p pxCurrentTCBs[0]->pcTaskName", "p pxCurrentTCBs[1]->pcTaskName",
             # Each CPU's own state, to check against what the scheduler thinks is running.

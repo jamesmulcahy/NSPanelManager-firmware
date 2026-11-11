@@ -346,11 +346,12 @@ Consequences:
 
 ## Debugging
 
-- `NSPM_QEMU_GDB=1` exposes a gdbstub on `:3333`. `NSPM_QEMU_GDB=wait` also halts at reset
-  until GDB attaches:
+- `NSPM_QEMU_GDB=1` exposes a gdbstub on a free port, logged as `gdbstub on :<port>`, so suites
+  can run side by side. `run_tests.sh` sets it unless it is already set; `NSPM_QEMU_GDB=0` turns
+  it off. `NSPM_QEMU_GDB=wait` uses `:3333` and halts at reset until GDB attaches:
   `~/.platformio/packages/tool-xtensa-esp-elf-gdb/bin/xtensa-esp32-elf-gdb .pio/build/qemu/firmware.elf -ex "target remote :3333"`.
   `thread apply all bt` shows both CPUs, which is how the ADC hang was found.
-- **A failing test records what the guest was doing.** With `NSPM_QEMU_GDB` set (CI sets it), a test
+- **A failing test records what the guest was doing.** With `NSPM_QEMU_GDB` on (the default with `run_tests.sh`, and in CI), a test
   that fails while the guest is still running, which is how a hang or deadlock shows up, gets
   `cpus.txt` beside its console log, taken before the guest is stopped: both CPUs' backtraces,
   registers and running task, the kernel and flash locks, and every FreeRTOS task with its state,
