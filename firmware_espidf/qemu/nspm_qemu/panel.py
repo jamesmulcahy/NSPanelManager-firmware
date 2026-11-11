@@ -118,6 +118,26 @@ def gdb_mode() -> Optional[str]:
     return None if mode in ("", "0") else mode
 
 
+CLOCK_SAMPLE_GAP = 1.0  # seconds of host time between dump_cpus()'s two clock samples
+
+
+def _clock_sample(gdb_output: bytes) -> Optional[List[int]]:
+    """[CPU0 ccount, CPU1 ccount, xTickCount] from the first three `$N = value` lines, or None."""
+    values = re.findall(rb"^\$\d+ = (0x[0-9a-fA-F]+|\d+)", gdb_output, re.M)[:3]
+    return [int(v, 0) for v in values] if len(values) == 3 else None
+
+
+def _clock_report(first: Optional[List[int]], second: Optional[List[int]]) -> str:
+    """The header of cpus.txt: how far each CPU's clock and the tick moved between the samples."""
+    if first is None or second is None:
+        return "Clock check failed: could not read ccount/xTickCount twice.\n\n"
+    names = ("CPU0 ccount", "CPU1 ccount", "xTickCount")
+    moved = ", ".join("%s +%d" % (n, (b - a) & 0xFFFFFFFF) for n, a, b in zip(names, first, second))
+    return ("Clock check, two samples %.1f s apart (host time): %s.\n"
+            "A ccount that does not move: that CPU is stopped in the emulator. ccount moving but\n"
+            "xTickCount not: the tick interrupt is not being taken.\n\n" % (CLOCK_SAMPLE_GAP, moved))
+
+
 class PanelCrashed(AssertionError):
     pass
 
@@ -243,8 +263,19 @@ class QemuPanel:
         ]
         try:
             gdb, env = find_gdb()
-            args = gdb + ["-q", "-batch", elf] + [a for c in commands for a in ("-ex", c)]
-            out = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env).stdout
+
+            def run(cmds: List[str]) -> bytes:
+                args = gdb + ["-q", "-batch", elf] + [a for c in cmds for a in ("-ex", c)]
+                return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env).stdout
+
+            # Is the guest still moving? Sample each CPU's cycle counter and the FreeRTOS tick twice,
+            # letting the guest run in between (gdb resumes it on detach). A snapshot alone cannot
+            # tell a CPU stopped in the emulator from one that is merely idle.
+            clocks = ["thread 1", "p/x $ccount", "thread 2", "p/x $ccount", "p xTickCount"]
+            first = _clock_sample(run(commands[:3] + clocks + ["detach"]))
+            time.sleep(CLOCK_SAMPLE_GAP)
+            out = run(commands[:3] + clocks + commands[3:])
+            out = _clock_report(first, _clock_sample(out)).encode() + out
         except (OSError, subprocess.TimeoutExpired) as e:
             out = ("gdb failed: %s" % e).encode()
         with open(path, "wb") as f:
