@@ -42,6 +42,9 @@ NEXTION_BOOT_DELAY = 0.5
 # display (Nextion::restart(): its power GPIO, which the emulator cannot see). It logs this first.
 TERMINAL_SESSION_END = re.compile(r"NextionTerminal: Session \d+ (stopped|ended)")
 
+# The ROM's reset banner, printed on power-on and after every esp_restart().
+ROM_RESET = re.compile(r"^rst:0x[0-9a-f]+ \((\w+)\)")
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -130,11 +133,14 @@ class QemuPanel:
         self.web_port = _free_port()
         self.lines: List[str] = []
         self.crash: Optional[str] = None
+        self.resets: List[str] = []  # reset reasons, one per boot (POWERON_RESET, SW_CPU_RESET, ...)
         self._cond = threading.Condition()
         self._proc: Optional[subprocess.Popen] = None
         self._console_log = None
         self._reader: Optional[threading.Thread] = None
         self.boot_display = True  # emit the TFT's NSPM flag on power-on
+        self._stopping = False
+        self._relaunching = False
 
     @property
     def client_id(self) -> str:
@@ -144,11 +150,22 @@ class QemuPanel:
 
     def start(self) -> None:
         os.makedirs(self.workdir, exist_ok=True)
-        flash = os.path.join(self.workdir, "flash.bin")
-        efuse = os.path.join(self.workdir, "efuse.bin")
-        build_flash_image(self.build_dir, self.project_dir, self.panel_config, flash)
-        build_efuse_image(self.mac, efuse)
+        build_flash_image(self.build_dir, self.project_dir, self.panel_config, self._flash)
+        build_efuse_image(self.mac, self._efuse)
+        self._console_log = open(os.path.join(self.workdir, "console.log"), "w")
+        self._reader = threading.Thread(target=self._run, name="qemu-console", daemon=True)
+        self._launch()
+        self._reader.start()
 
+    @property
+    def _flash(self) -> str:
+        return os.path.join(self.workdir, "flash.bin")
+
+    @property
+    def _efuse(self) -> str:
+        return os.path.join(self.workdir, "efuse.bin")
+
+    def _launch(self) -> None:
         args = [
             find_qemu(),
             "-M", "esp32",
@@ -158,11 +175,16 @@ class QemuPanel:
             "-serial", "stdio",
             "-serial", "null",
             "-serial", "tcp:127.0.0.1:%d" % self.nextion.port,
-            "-drive", "file=%s,if=mtd,format=raw" % flash,
-            "-drive", "file=%s,if=none,format=raw,id=efuse" % efuse,
+            "-drive", "file=%s,if=mtd,format=raw" % self._flash,
+            "-drive", "file=%s,if=none,format=raw,id=efuse" % self._efuse,
             "-global", "driver=nvram.esp32.efuse,property=drive,value=efuse",
             "-global", "driver=timer.esp32.timg,property=wdt_disable,value=true",
             "-nic", "user,model=open_eth,hostfwd=tcp:127.0.0.1:%d-:80" % self.web_port,
+            # QEMU's in-place reset leaves interrupt state from the previous boot
+            # behind, and the next boot can take an interrupt with no handler
+            # (InstrFetchProhibited at PC 0 in esp_timer_init). Exit instead, and
+            # let _run() start a fresh QEMU on the same flash: a clean power-on.
+            "-no-reboot",
         ]
         # NSPM_QEMU_GDB=1 exposes a gdbstub on :3333; =wait also halts at reset until gdb attaches.
         gdb = os.environ.get("NSPM_QEMU_GDB")
@@ -172,12 +194,9 @@ class QemuPanel:
                 args += ["-S"]
                 log.warning("waiting for gdb on :3333")
         log.info("starting %s", " ".join(args))
-        self._console_log = open(os.path.join(self.workdir, "console.log"), "w")
         # stdin must stay open: EOF on QEMU's stdio chardev stalls UART0, and
         # with it every task that logs.
         self._proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        self._reader = threading.Thread(target=self._read_console, name="qemu-console", daemon=True)
-        self._reader.start()
 
     def dump_cpus(self, path: str, timeout: float = 60) -> Optional[str]:
         """With NSPM_QEMU_GDB set, attach gdb to the running guest and write what each CPU is doing,
@@ -221,6 +240,7 @@ class QemuPanel:
         return path
 
     def stop(self) -> None:
+        self._stopping = True
         if self._proc is not None and self._proc.poll() is None:
             self._proc.terminate()
             try:
@@ -270,12 +290,29 @@ class QemuPanel:
     def check_alive(self) -> None:
         if self.crash is not None:
             raise PanelCrashed("firmware crashed: %s\n%s" % (self.crash, self.tail(40)))
-        if self._proc is not None and self._proc.poll() is not None:
+        if self._proc is not None and self._proc.poll() is not None and not self._relaunching:
             raise PanelCrashed("QEMU exited with %s\n%s" % (self._proc.returncode, self.tail(40)))
 
     def tail(self, n: int = 40) -> str:
         with self._cond:
             return "\n".join(self.lines[-n:])
+
+    def _run(self) -> None:
+        """Read the console; when the firmware resets (QEMU exits 0 under -no-reboot), boot it again."""
+        while True:
+            self._read_console()
+            assert self._proc is not None
+            code = self._proc.wait()
+            if self._stopping or code != 0 or self.crash is not None:
+                return
+            with self._cond:
+                self._relaunching = True
+            log.info("firmware reset; starting QEMU again on the same flash")
+            try:
+                self._launch()
+            finally:
+                with self._cond:
+                    self._relaunching = False
 
     def _read_console(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
@@ -288,6 +325,9 @@ class QemuPanel:
                 self.lines.append(line)
                 if self.crash is None and any(p.search(line) for p in CRASH_PATTERNS):
                     self.crash = line
+                reset = ROM_RESET.search(line)
+                if reset:
+                    self.resets.append(reset.group(1))
                 self._cond.notify_all()
             if self.boot_display and NEXTION_POWER_ON.search(line):
                 threading.Timer(NEXTION_BOOT_DELAY, self._display_boot).start()
@@ -301,6 +341,15 @@ class QemuPanel:
             self.nextion.boot()
         except (OSError, RuntimeError) as e:
             log.warning("could not send NSPM flag: %s", e)
+
+    @property
+    def boots(self) -> int:
+        with self._cond:
+            return len(self.resets)
+
+    def wait_for_reboot(self, boots_before: int, timeout: float = 120) -> None:
+        """Wait until the firmware has restarted since `boots` was `boots_before`."""
+        self.wait_until(lambda: self.boots > boots_before, timeout, "panel reboot")
 
     # ---- helpers -----------------------------------------------------------
 

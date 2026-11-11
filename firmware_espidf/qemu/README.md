@@ -47,6 +47,7 @@ on the lights, through the viewer alone.
    UART0 ──────────────► console: captured, crash-checked, saved per test
    UART2 ◄─────────────► FakeNextion       (TCP socket)
    open_eth ── slirp ──► host 10.0.2.2 ──► FaultProxy ──► mosquitto ◄── observer ◄──► FakeManager
+                                       └──► UpdateServer (HTTP: firmware, LittleFS and TFT downloads and checksums)
                          panel :80 forwarded to Rig.panel.web_port
 ```
 
@@ -56,6 +57,7 @@ on the lights, through the viewer alone.
 | `QemuPanel` | `nspm_qemu/panel.py` | Builds the flash and eFuse images, runs QEMU, gives `wait_for_log()`, detects panics. |
 | `FakeNextion` | `nspm_qemu/fake_nextion.py` | The display emulator ([nextion-tools](https://github.com/jamesmulcahy/nextion-tools)' `nextion_tools.emu`, pinned in `requirements.txt`) as the NSPanel Manager TFT: models the screen from the panel's commands and injects user input. |
 | `FakeManager` | `nspm_qemu/fake_manager.py` | Registration handshake, config, room and entity-page state, decoded commands. |
+| `UpdateServer` | `nspm_qemu/update_server.py` | The manager's HTTP side of an update: the firmware, the LittleFS image and the TFT (with Django's Range quirks: 200 with `data[a:b]`, never 206). Records every request and injects faults at a file offset, aimed at one file with `target=`. |
 | `Broker` | `nspm_qemu/broker.py` | A mosquitto per test. A paho client records all traffic, a TCP proxy in front of the panel lets tests cut its connection, and connects and subscriptions are read from mosquitto's log. |
 
 ### Files
@@ -72,6 +74,9 @@ on the lights, through the viewer alone.
 | `nspm_qemu/rig.py`, `panel.py`, `image.py`, `waiting.py` | Library | Running the panel: see the table above. `image.py` builds the flash and eFuse images. |
 | `nspm_qemu/fake_manager.py`, `broker.py`, `fake_nextion.py` | Fake | The manager, broker and display the panel talks to. |
 | `nspm_qemu/stack_manager.py`, `stack_web.py` | Library | The real manager on a dev stack, in place of the fake ([Stack tests](#stack-tests)): watches its MQTT, and accepts and deletes panels through its web API. |
+
+| `nspm_qemu/fake_manager.py`, `broker.py`, `fake_nextion.py`, `update_server.py` | Fake | The manager, broker, display and update downloads the panel talks to. |
+| `nspm_qemu/ota_update.py` | Library | Runs a firmware/LittleFS update on a `Rig` and reads LittleFS back from the flash image ([LittleFS update tests](#littlefs-update-tests)). |
 | `nspm_qemu/upstream.py`, `hmi.py`, `proto.py` | Library | Fetch and cache NSPanelManager's HMI and `.proto` files, and load them. |
 | `nspm_qemu/gui.py`, `display_errors.py` | Data | Component names tests touch; display rejections known to be the firmware's. |
 | `nspm_qemu/freertos_tasks.py` | gdb script | The task dump a failing test takes ([Debugging](#debugging)). |
@@ -235,6 +240,34 @@ starts its dev stack, waits for MQTTManager to build, and runs `-m stack`. The N
 repository and branch are set at the top of that workflow (and can be overridden when it is
 run by hand).
 
+## LittleFS update tests
+
+The panel's settings live in `/littlefs/config.json`, on the partition a LittleFS update
+replaces, and the update erases that partition before it downloads anything.
+`tests/test_littlefs_update.py` breaks the download in every way `UpdateServer` can (a reset or a
+clean close mid-body, a refused connection, an error page, no `Content-Length`, an image that
+does not fit) and checks that the panel never comes back without its settings.
+
+Most tests update LittleFS only: `stage_littlefs_only(rig)` stores a firmware md5 in the
+panel's config.json and serves the same md5 from `/checksum_firmware`, so "update firmware" goes
+straight to the LittleFS step. The last two run the whole update, flashing the QEMU build's own
+`firmware.bin`, which reboots the panel twice.
+
+`run_update(rig)` sends `firmware_update` and waits for the panel to reboot and register again.
+The registration carries the panel's name and stored checksums. After the reboot it reads the
+LittleFS partition out of the flash file with littlefs-python (PlatformIO's mklittlefs carries an
+older LittleFS that misses files the firmware wrote, config.json among them). The checks:
+
+- `check_settings_kept`: the panel registers under its own name, and config.json still holds
+  its Wi-Fi and MQTT settings (L1), within the time budget (L3);
+- `check_new_image`: the served image is on flash (a marker in its index.html) and its md5 is
+  stored (L2);
+- `check_fallback`: after every attempt failed, LittleFS holds only the settings, and the
+  stored LittleFS md5 is empty so that the manager offers the image again.
+
+A fault that hits before the erase must leave the panel up on its current LittleFS, without
+rebooting; those tests check that the web UI still serves the old `index.html`.
+
 ## What differs from hardware
 
 The `qemu` PlatformIO env is `original_sonoff` with `-DNSPM_QEMU` and
@@ -262,6 +295,10 @@ Consequences:
 - **The Nextion receive path is triggered differently.** Frames are split by the same
   `_post_received_frames()` as on hardware, but on `UART_DATA` events rather than
   `UART_PATTERN_DET`. Bugs in the pattern-detect events themselves are out of reach.
+- **A reset is a fresh QEMU.** QEMU runs with `-no-reboot`, so `esp_restart()` (after an update,
+  for example) ends the process, and `QemuPanel` starts a new one on the same flash file: a clean
+  power-on, because QEMU's in-place reset leaves stale interrupt state behind. The fake display
+  keeps its state across it, as a display that stays powered would.
 - **Timing is not real.** QEMU runs the guest slower than real time and not cycle-accurately.
   Races may appear or vanish compared with hardware.
 - **Buttons, relays and the buzzer** are GPIO/LEDC writes into models no test reads yet.
