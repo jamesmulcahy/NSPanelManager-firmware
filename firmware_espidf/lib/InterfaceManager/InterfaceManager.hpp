@@ -162,6 +162,12 @@ private:
   // or is the screensaver blocked?
   static inline MutexWrapped<bool> _screensaver_blocked = false;
 
+  // A firmware or LittleFS update is showing its progress on the loading page. Nothing else may
+  // take the screen until UPDATE_ENDED_WITHOUT_REBOOT (or FIRMWARE_UPDATE_FAILED) gives it back.
+  // Without this, an update that starts while the panel first leaves the loading page at boot
+  // ends up behind the default page, with its progress written to a page that has no t_ip.
+  static inline std::atomic<bool> _update_holds_screen = false;
+
   // Has the config been loaded from NSPanel Manager container yet?
   static inline std::atomic<bool> _nspm_config_loaded = false;
 

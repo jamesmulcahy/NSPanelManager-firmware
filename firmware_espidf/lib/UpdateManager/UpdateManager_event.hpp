@@ -14,4 +14,6 @@ enum updatemanager_event_t {
   LITTLEFS_UPDATE_FINISHED,
   LITTLEFS_UPDATE_PROGRESS,
   FIRMWARE_UPDATE_FAILED,
+  // The update task is ending without a reboot (it failed, or found nothing to do).
+  UPDATE_ENDED_WITHOUT_REBOOT,
 };
