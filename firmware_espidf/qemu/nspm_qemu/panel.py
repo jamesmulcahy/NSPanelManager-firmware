@@ -254,6 +254,11 @@ class QemuPanel:
             # The spinlocks the scheduler and the cross-core interrupt take (owner: 0xB33FFFFF free,
             # 0xCDCD core 0, 0xABAB core 1), and the pending cross-core reasons.
             ("/x", "xKernelLock"), ("/x", "reason_spinlock"), ("/x", "reason"),
+            # picolibc's stdout, shared by every task and line-buffered: bytes written but not yet
+            # sent to UART0 (len), and its lock. A log line can be stuck here, unseen on the console.
+            ("", "__stdout.len"), ("", "__stdout.off"), ("", "__stdout.pos"),
+            ("", "__stdout.buf[0]@(__stdout.len > 0 ? __stdout.len : 1)"),
+            ("", "*__stdout.xfile.cfile.file.lock"),
         ):
             commands += ["printf \"%s = \"" % expr, "output%s %s" % (fmt, expr), "echo \\n"]
         commands += [
