@@ -3,4 +3,7 @@ firmware_espidf/node_modules/
 firmware_espidf/sdkconfig.qemu
 firmware_espidf/qemu/.venv/
 firmware_espidf/qemu/build/
+# LVGL is 200 MB with its docs and examples; the component manager fetches it at build time, pinned
+# by version and hash in dependencies.lock. The other managed components are small and committed.
+firmware_espidf/managed_components/lvgl__lvgl/
 __pycache__/

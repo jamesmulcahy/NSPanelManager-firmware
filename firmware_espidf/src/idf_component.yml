@@ -3,3 +3,13 @@ dependencies:
   joltwallet/littlefs: "1.22.3"
   mittelab/nlohmann-json: "3.11.3"
   espp/dns_server: "1.3.3"
+  # espp/dns_server asks for its espp dependencies as ">=1.0". Pinned at the versions in
+  # dependencies.lock, so a change to this file that makes the component manager solve again
+  # (adding lvgl did) does not also upgrade them.
+  espp/base_component: "1.3.3"
+  espp/format: "1.3.3"
+  espp/logger: "1.3.3"
+  espp/socket: "1.3.3"
+  espp/task: "1.3.3"
+  espp/thread_pool: "1.3.3"
+  lvgl/lvgl: "9.6.0"

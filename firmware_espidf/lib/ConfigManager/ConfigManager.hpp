@@ -122,4 +122,8 @@ public:
     NEVER = 2,  // Never.
   };
   static inline SerialLogMode serial_log = SerialLogMode::AUTO;
+
+  // Whether the LVGL screens are laid out for a US (portrait) panel. Taken from the manager's
+  // config (is_us_panel) and kept here, so the first screen after a boot has the right shape.
+  static inline bool lvgl_us_layout = true;
 };
