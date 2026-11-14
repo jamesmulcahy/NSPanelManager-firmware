@@ -162,7 +162,7 @@ lv_obj_t *tile(lv_obj_t *parent, const char *glyph, int icon_size, const char *t
   lv_obj_t *card = lv_button_create(parent);
   flat(card);
   lv_obj_set_style_radius(card, 12, 0);
-  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_opa(card, Theme::card_opa(), 0);
   lv_obj_set_style_bg_color(card, Theme::card(), 0);
   lv_obj_set_style_bg_color(card, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_set_style_text_color(card, Theme::text(), LV_STATE_PRESSED);

@@ -12,7 +12,7 @@ NSPM's pages, data, navigation and manager protocol are unchanged; only the draw
 | Mode | `lib/LvglUi/LvglUi.cpp` (`init()`) | LVGL is the UI when the display reports a terminal TFT (`NextionTerminal::is_receiver()`), sent no NSPM startup flag, and `lvgl_ui` is on |
 | Page adapters | `lib/Pages/*` (`LvglUi::active()` branches) | Where a page would drive the Nextion, it hands a view's state to `LvglUi::show()`; view actions call the same handlers the Nextion touch events did |
 | Host | `lib/LvglUi/` | Screensaver timeout and wake, swipe-down menu, touch sound, backlight, album art fetch (`LvglArt`), Latin-1 text (`LvglText`) |
-| Views | `lib/LvglRenderer/*View.cpp`, `Theme`, `Ui` | The screens, free of ESP-IDF (the host simulator builds them) |
+| Views | `lib/LvglRenderer/*View.cpp`, `Theme`, `Ui`, `Background` | The screens, free of ESP-IDF (the host simulator builds them) |
 | Renderer | `lib/LvglRenderer/LvglRenderer.cpp` | LVGL's task, draw buffer, touch input, boot screen |
 | Transport | `lib/NextionTerminal/` | The terminal session; see its README |
 | Nextion | `lib/Nextion/` | In LVGL mode: commands and queries dropped (`set_commands_blocked`), pages redirected to LVGL, brightness to the receiver |
@@ -28,6 +28,7 @@ On `nspanel/<MAC>/command`:
 | Command | Effect |
 |---|---|
 | `{"command": "lvgl_ui", "enable": false}` | Keep the Nextion pages whatever the TFT (saved; reboots). A kill switch that needs no TFT reinstall; on a terminal TFT the display then shows the TFT's own "waiting" page, but the panel still takes MQTT, firmware and TFT updates |
+| `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once) |
 | `{"command": "lvgl_tap", "x": 160, "y": 20, "hold_ms": 100}` | A touch through the LVGL path, for testing without a finger; `x2`/`y2` make it a swipe |
 
 ## Putting a panel on it
@@ -40,10 +41,10 @@ On `nspanel/<MAC>/command`:
 
 ## Performance (Office, US receiver)
 
-| | |
-|---|---|
-| Page change (build, layout, repaint) | ~229 ms |
-| Full repaint | ~105 ms |
+| | Plain | Ocean background |
+|---|---|---|
+| Page change (build, layout, repaint) | ~229 ms | ~241 ms |
+| Full repaint | ~105 ms | ~118 ms |
 
 The transfer is bound by the receiver (~1.5 Mpx/s through its 512-byte credit window), not the
 ESP32. On the ESP32 side, PSRAM and flash share one cache at 40 MHz, so anything touching them is
@@ -54,7 +55,8 @@ internal RAM (no gain). Not tried: PSRAM and flash at 80 MHz. It needs a panel w
 OTA rollback, as a wrong clock fails at boot.
 
 Album art is fetched after the page is drawn (180x180 RGB565 from the manager) and costs ~0.2 s on
-the wire.
+the wire. The backgrounds are designed for the link: colour changes only down the screen or at a few
+edges per row, so they cost 3-13% more bytes than a plain screen (a photo costs 3-5 times as much).
 
 ## Flash
 
@@ -65,6 +67,7 @@ there:
 - Fonts are subsets (`tools/gen_fonts.sh`): only the glyphs the pages use, 1-2 bpp.
 - LVGL widgets and Montserrat sizes the views don't use are off in `sdkconfig.original_sonoff`; the
   default font is the 2 KB UNSCII 8, as every label sets its own.
+- The backgrounds are generated at run time into PSRAM, not stored.
 
 Further room if needed, measured as builds but not run on a panel: trimming mbedTLS options
 (~17 KB), Wi-Fi extras off (~15 KB), `MBEDTLS_AES_FEWER_TABLES` (~6 KB).
@@ -72,6 +75,6 @@ Further room if needed, measured as builds but not run on a panel: trimming mbed
 ## Simulator
 
 `test/host/lvgl_sim/build.sh [OUT]` draws every view with mock data (`Pages.cpp`) on US and EU
-screens and writes the frames as images with each frame's cost
+screens, plain and over each background, and writes the frames as images with each frame's cost
 on the wire (`costs.csv`). It needs LVGL's source, which `pio run` fetches into
 `managed_components/`.

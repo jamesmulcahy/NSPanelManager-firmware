@@ -1,4 +1,5 @@
 #include "ScreensaverView.hpp"
+#include "Background.hpp"
 #include "Theme.hpp"
 #include "Ui.hpp"
 
@@ -168,7 +169,10 @@ void ScreensaverView::show(const ScreensaverState &state) {
     for (Day &d : ScreensaverView::_days) {
       d = Day{};
     }
-    lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
+    // "With background": the page background preset shows through if there is one (Background.hpp);
+    // "without": black, as the HMI's screensaver2.
+    bool art = state.background && Background::current() != Background::Preset::NONE;
+    lv_obj_set_style_bg_opa(parent, art ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(parent, state.background ? Theme::background() : lv_color_black(), 0);
     if (state.weather) {
       ScreensaverView::_build_weather(ScreensaverView::_landscape);

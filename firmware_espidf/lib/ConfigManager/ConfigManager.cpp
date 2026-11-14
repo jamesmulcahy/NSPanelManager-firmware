@@ -163,6 +163,10 @@ esp_err_t ConfigManager::load_config() {
     ConfigManager::lvgl_ui = config_data["lvgl_ui"].get<bool>();
   }
 
+  if (config_data.contains("lvgl_background") && config_data["lvgl_background"].is_string()) {
+    ConfigManager::lvgl_background = config_data["lvgl_background"].get<std::string>();
+  }
+
   // Handle thermostat modes
   if (config_data.contains("relay1_is_thermostat_heat_mode") && config_data["relay1_is_thermostat_heat_mode"].is_boolean()) {
     ConfigManager::relay1_thermostat_heat_mode = config_data["relay1_is_thermostat_heat_mode"].get<bool>();
@@ -232,6 +236,7 @@ void ConfigManager::create_default() {
   ConfigManager::serial_log = ConfigManager::SerialLogMode::AUTO;
   ConfigManager::lvgl_us_layout = true;
   ConfigManager::lvgl_ui = true;
+  ConfigManager::lvgl_background = "none";
 }
 
 esp_err_t ConfigManager::save_config() {
@@ -246,6 +251,7 @@ esp_err_t ConfigManager::save_config() {
   json["serial_log"] = static_cast<int>(ConfigManager::serial_log);
   json["lvgl_us_layout"] = ConfigManager::lvgl_us_layout;
   json["lvgl_ui"] = ConfigManager::lvgl_ui;
+  json["lvgl_background"] = ConfigManager::lvgl_background;
   json["wifi_hostname"] = ConfigManager::wifi_hostname;
   json["wifi_ssid"] = ConfigManager::wifi_ssid;
   json["wifi_psk"] = ConfigManager::wifi_psk;

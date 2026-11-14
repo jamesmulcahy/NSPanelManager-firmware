@@ -3,8 +3,10 @@
 // protocol-8 records NextionTerminal would send (PackBits, COBS, headers), and the time at 4 Mbaud.
 // Built and run by build.sh.
 //
-// Writes OUT/<region>-<nn>-<page>.ppm per page, and every frame's cost to OUT/costs.csv. Page
-// fixtures (mock data) are in Pages.cpp.
+// Writes OUT/<region>-<nn>-<page>.ppm per page, OUT/us-bg-<preset>-<page>.ppm for the pages over
+// each background preset, and every frame's cost to OUT/costs.csv. Page fixtures (mock data) are
+// in Pages.cpp.
+#include "Background.hpp"
 #include "BootScreen.hpp"
 #include "Pages.hpp"
 #include "TerminalProtocol.hpp"
@@ -86,6 +88,7 @@ static void run(bool landscape, const char *out) {
   lv_display_set_flush_cb(display, flush);
   lv_display_set_default(display);
   lv_obj_t *screen = lv_screen_active();
+  Background::attach(screen);
 
   // The boot screen, as LvglRenderer builds it.
   Theme::screen(screen);
@@ -110,22 +113,32 @@ static void run(bool landscape, const char *out) {
   refresh();
   report(region, "boot screen: clock 12:34 -> 12:35");
 
-  // Every page.
-  int n = 0;
-  for (const PageCase &page : page_cases()) {
-    page.build(Theme::page_root(screen, landscape), landscape);
-    lv_obj_invalidate(screen);
-    refresh();
-    report(region, page.name);
-    char number[8];
-    snprintf(number, sizeof(number), "%02d", n++);
-    write_ppm(std::string(out) + "/" + region + "-" + number + "-" + page.name + ".ppm");
-    if (page.update != nullptr) {
-      page.update();
+  // Every page, plain; and on a portrait screen over each background preset.
+  std::vector<Background::Preset> presets = {Background::Preset::NONE};
+  if (!landscape) {
+    presets.insert(presets.end(), {Background::Preset::OCEAN, Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS});
+  }
+  for (Background::Preset preset : presets) {
+    Background::set(preset);
+    const bool plain = preset == Background::Preset::NONE;
+    int n = 0;
+    for (const PageCase &page : page_cases()) {
+      page.build(Theme::page_root(screen, landscape), landscape);
+      lv_obj_invalidate(screen);
       refresh();
-      report(region, std::string(page.name) + ": " + page.update_what);
+      std::string what = plain ? std::string(page.name) : std::string(Background::name(preset)) + " " + page.name;
+      report(region, what);
+      char number[8];
+      snprintf(number, sizeof(number), "%02d", n++);
+      write_ppm(std::string(out) + "/" + region + (plain ? "-" + std::string(number) : std::string("-bg-") + Background::name(preset)) + "-" + page.name + ".ppm");
+      if (page.update != nullptr) {
+        page.update();
+        refresh();
+        report(region, what + ": " + page.update_what);
+      }
     }
   }
+  Background::set(Background::Preset::NONE);
   lv_display_delete(display);
 }
 

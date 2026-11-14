@@ -129,4 +129,6 @@ public:
   // LVGL as the panel's whole UI when the display runs an nspanel-terminal TFT (LvglUi). false keeps
   // the Nextion pages whatever the TFT: a kill switch that needs no TFT reinstall.
   static inline bool lvgl_ui = true;
+  // The page background preset with LVGL as the UI (Background.hpp): "none", "ocean", "dusk", "aurora" or "peaks".
+  static inline std::string lvgl_background = "none";
 };

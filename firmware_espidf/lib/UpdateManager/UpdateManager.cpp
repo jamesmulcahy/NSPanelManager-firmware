@@ -635,6 +635,14 @@ void UpdateManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, 
           } else {
             ESP_LOGW("UpdateManager", "lvgl_tap needs x and y on the screen.");
           }
+        } else if (command_string.compare("lvgl_background") == 0) {
+          // {"command": "lvgl_background", "preset": "ocean"}: the page background with LVGL as the UI
+          // ("none" for the plain look). Saved, and applied at once.
+          if (json.contains("preset") && json["preset"].is_string()) {
+            ConfigManager::lvgl_background = json["preset"].get<std::string>();
+            ConfigManager::save_config();
+            LvglUi::set_background(ConfigManager::lvgl_background);
+          }
         } else if (command_string.compare("lvgl_ui") == 0) {
           // {"command": "lvgl_ui", "enable": false}: keep the Nextion pages whatever TFT the display runs
           // (true: LVGL on a terminal TFT, the default). Saved, then the panel reboots to apply it.

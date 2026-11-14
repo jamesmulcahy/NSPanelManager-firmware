@@ -65,6 +65,12 @@ public:
   static void show_placeholder(const char *page);
 
   /**
+   * From any task: draw the pages over background preset `name` ("none", "ocean", "dusk", "aurora",
+   * "peaks"; Background.hpp), rebuilding the page shown (cards turn see-through or solid).
+   */
+  static void set_background(const std::string &name);
+
+  /**
    * Called on LvglUi's task when the wall clock's minute changes (pages showing the time redraw).
    */
   static inline void (*on_minute)() = nullptr;

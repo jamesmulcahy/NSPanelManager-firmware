@@ -32,11 +32,15 @@ void screen(lv_obj_t *obj) {
   lv_obj_set_style_pad_gap(obj, 12, 0);
 }
 
+static lv_opa_t card_opacity = LV_OPA_COVER;
+lv_opa_t card_opa() { return card_opacity; }
+void set_card_opa(lv_opa_t opa) { card_opacity = opa; }
+
 lv_obj_t *card(lv_obj_t *parent) {
   lv_obj_t *card = lv_obj_create(parent);
   lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(card, Theme::card(), 0);
-  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_opa(card, card_opacity, 0);
   lv_obj_set_style_text_color(card, text(), 0);
   lv_obj_set_style_border_width(card, 0, 0);
   lv_obj_set_style_radius(card, 12, 0);

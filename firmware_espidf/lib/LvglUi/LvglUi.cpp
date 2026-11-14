@@ -1,3 +1,4 @@
+#include <Background.hpp>
 #include <BuzzerManager.hpp>
 #include <ConfigManager.hpp>
 #include <GUI_data.hpp>
@@ -82,6 +83,12 @@ bool LvglUi::init() {
   LvglRenderer::touch_filter = LvglUi::_touch;
   // GUI task, after a region change rebuilt the screens: build the last view again.
   LvglRenderer::on_pages_rebuilt = LvglUi::_rebuild;
+  // The page background (Background.hpp), drawn behind the pages screen's children.
+  std::string background = ConfigManager::lvgl_background;
+  LvglRenderer::post([background]() {
+    Background::attach(LvglRenderer::pages_screen());
+    Background::set(Background::from_name(background.c_str()));
+  });
   PlaceholderView::on_action = [](PlaceholderView::Action action) {
     LvglUi::defer([]() { InterfaceManager::show_default_page(); });
   };
@@ -131,6 +138,16 @@ void LvglUi::_rebuild() {
       LvglUi::_apply();
     }
   }
+}
+
+void LvglUi::set_background(const std::string &name) {
+  Background::Preset preset = Background::from_name(name.c_str());
+  ESP_LOGI(TAG, "Page background: %s.", Background::name(preset));
+  LvglRenderer::post([preset]() {
+    Background::set(preset);
+    LvglUi::_rebuild();
+    lv_obj_invalidate(LvglRenderer::pages_screen());
+  });
 }
 
 void LvglUi::show_placeholder(const char *page) {

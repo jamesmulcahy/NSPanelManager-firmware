@@ -20,6 +20,10 @@ inline lv_color_t track() { return lv_color_hex(0x283448); }
 inline lv_color_t pressed() { return lv_color_hex(0x303C50); }
 inline lv_color_t disabled() { return lv_color_hex(0x586070); }
 inline lv_color_t danger() { return lv_color_hex(0xF85048); }
+// How opaque cards and tiles are: solid, or see-through over a page background (Background.hpp).
+// Read when a card is built.
+lv_opa_t card_opa();
+void set_card_opa(lv_opa_t opa);
 
 /**
  * The part of the screen a page may use. The EU HMI's art is 456 px wide on its 480x320
