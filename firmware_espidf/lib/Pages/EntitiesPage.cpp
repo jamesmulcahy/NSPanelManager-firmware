@@ -4,7 +4,10 @@
 #include <EntityPage.hpp>
 #include <GUI_data.hpp>
 #include <HomePage.hpp>
+#include <EntitiesView.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglText.hpp>
+#include <LvglUi.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <Nextion.hpp>
@@ -19,6 +22,12 @@ void EntitiesPage::show(display_type_t display_type) {
   EntitiesPage::_display_type = display_type;
 
   std::shared_ptr<PageHandlers> handlers = InterfaceManager::begin_page(EntitiesPage::unshow);
+  if (LvglUi::active()) {
+    // Touches arrive as the view's actions, on the GUI task: hand them to LvglUi's task.
+    EntitiesView::on_action = [](EntitiesView::Action action, int32_t slot) {
+      LvglUi::defer([action, slot]() { EntitiesPage::_lvgl_action((int)action, slot); });
+    };
+  }
 
   // EntitiesPage::_update_display();
   if (handlers->add_to(RoomManager::event_loop(), ROOMMANAGER_EVENT, ESP_EVENT_ANY_ID, EntitiesPage::_handle_roommanager_event) != ESP_OK) [[unlikely]] {
@@ -64,12 +73,25 @@ void EntitiesPage::unshow() {
   EntitiesPage::_current_entities_page.set(nullptr);
   EntitiesPage::_currently_showing_page_type = 0;       // Set to 0 to force a page navigation on Nextion display when showing EntitiesPage next time.
   EntitiesPage::_currently_showing_header_text.set(""); // Clear stored string so that header text is always updated when showing EntitiesPage.
+  EntitiesPage::_lvgl_save_progress = -1;
+  EntitiesPage::_lvgl_header_override.set("");
 }
 
 void EntitiesPage::_update_display(const std::shared_ptr<NSPanelRoomEntitiesPage> &page) {
   if (page == nullptr) {
     ESP_LOGE("EntitiesPage", "Tried to show RoomEntitiesPage but no _current_room_status has been set. Returning to HomePage.");
     InterfaceManager::request_show_home_page(); // May run on the RoomManager loop; see InterfaceManager::_task_page_transitions.
+    return;
+  }
+
+  if (LvglUi::active()) {
+    if (page->page_type != 4 && page->page_type != 8 && page->page_type != 12) {
+      ESP_LOGE("EntitiesPage", "Unknown entities page type! Type: %ld. Will navigate to home page.", page->page_type);
+      InterfaceManager::request_show_home_page();
+      return;
+    }
+    EntitiesPage::_currently_showing_page_type = page->page_type;
+    EntitiesPage::_lvgl_render(page);
     return;
   }
 
@@ -557,8 +579,12 @@ NSPanelRoomEntitiesPage__EntitySlot *EntitiesPage::_get_entity_in_slot(const std
 
 void EntitiesPage::_handle_entity_button_pressed(const std::shared_ptr<NSPanelRoomEntitiesPage> &page, int32_t slot) {
   NSPanelRoomEntitiesPage__EntitySlot *entity = EntitiesPage::_get_entity_in_slot(page, slot);
-  // Media players can't be toggled, open their control page instead.
-  if (entity != nullptr && entity->type == NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE__ENTITY_TYPE_MEDIA_PLAYER && entity->mqtt_state_topic[0] != '\0') {
+  // Media players can't be toggled, open their control page instead. With LVGL, thermostats and covers
+  // too: the manager's thermostat toggle does nothing, and LVGL's tiles have no separate name to tap.
+  const bool opens_page = entity != nullptr && (entity->type == NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE__ENTITY_TYPE_MEDIA_PLAYER ||
+                                                (LvglUi::active() && (entity->type == NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE__ENTITY_TYPE_THERMOSTAT ||
+                                                                      entity->type == NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE__ENTITY_TYPE_COVER)));
+  if (opens_page && entity->mqtt_state_topic[0] != '\0') {
     EntityPage::show(entity->mqtt_state_topic);
     return;
   }
@@ -598,9 +624,17 @@ void EntitiesPage::_task_save_scene_progress(void *scene_slot) {
   Nextion::set_component_visibility(GUI_ITEMS_PAGE_COMMON::slider_save_name, true, 250);
   for (int i = 0; i < 100 && EntitiesPage::_save_scene; i += 2) {
     Nextion::set_component_value(GUI_ITEMS_PAGE_COMMON::slider_save_name, i, 25);
+    if (LvglUi::active()) {
+      EntitiesPage::_lvgl_save_progress = i;
+      EntitiesPage::_lvgl_refresh();
+    }
     vTaskDelay(pdMS_TO_TICKS(3000 / (100 / 2))); // Update in steps of 2 and take 3 seconds (3000ms) to save a scene
   }
   Nextion::set_component_visibility(GUI_ITEMS_PAGE_COMMON::slider_save_name, false, 250);
+  if (LvglUi::active()) {
+    EntitiesPage::_lvgl_save_progress = -1;
+    EntitiesPage::_lvgl_refresh();
+  }
 
   std::shared_ptr<NSPanelRoomEntitiesPage> page = EntitiesPage::_current_entities_page.get();
   if (EntitiesPage::_save_scene && page == nullptr) {
@@ -628,29 +662,147 @@ void EntitiesPage::_task_save_scene_progress(void *scene_slot) {
         // Display text to user to say scene was saved.
         Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, "Scene saved", 250);
         EntitiesPage::_currently_showing_header_text.set("Scene saved");
+      EntitiesPage::_lvgl_header_override.set("Scene saved");
+      EntitiesPage::_lvgl_refresh();
+        EntitiesPage::_lvgl_header_override.set("Scene saved");
+        EntitiesPage::_lvgl_refresh();
         vTaskDelay(pdMS_TO_TICKS(1000));
         Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, page->header_text, 250);
         EntitiesPage::_currently_showing_header_text.set(page->header_text);
+        EntitiesPage::_lvgl_header_override.set("");
+        EntitiesPage::_lvgl_refresh();
       } else {
         ESP_LOGE("EntitiesPage", "Failed to send save command!");
         Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, "Save failed", 250);
         EntitiesPage::_currently_showing_header_text.set("Save failed");
+      EntitiesPage::_lvgl_header_override.set("Save failed");
+      EntitiesPage::_lvgl_refresh();
+        EntitiesPage::_lvgl_header_override.set("Save failed");
+        EntitiesPage::_lvgl_refresh();
         vTaskDelay(pdMS_TO_TICKS(1000));
         Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, page->header_text, 250);
         EntitiesPage::_currently_showing_header_text.set(page->header_text);
+        EntitiesPage::_lvgl_header_override.set("");
+        EntitiesPage::_lvgl_refresh();
       }
     } else {
       ESP_LOGE("EntitiesPage", "Failed to serialize save command!");
       ESP_LOGE("EntitiesPage", "Failed to send save command!");
       Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, "Save failed", 250);
       EntitiesPage::_currently_showing_header_text.set("Save failed");
+      EntitiesPage::_lvgl_header_override.set("Save failed");
+      EntitiesPage::_lvgl_refresh();
       vTaskDelay(pdMS_TO_TICKS(1000));
       Nextion::set_component_text(GUI_ITEMS_PAGE_COMMON::page_header_label, page->header_text, 250);
       EntitiesPage::_currently_showing_header_text.set(page->header_text);
+      EntitiesPage::_lvgl_header_override.set("");
+      EntitiesPage::_lvgl_refresh();
     }
   }
 
   // Task finished. Reset ptr and exit task.
   EntitiesPage::_save_scene_task_handle = NULL;
   vTaskDelete(NULL);
+}
+void EntitiesPage::_lvgl_render(const std::shared_ptr<NSPanelRoomEntitiesPage> &page) {
+  if (!LvglUi::active() || page == nullptr) {
+    return;
+  }
+  EntitiesState state;
+  std::string header = EntitiesPage::_lvgl_header_override.get();
+  state.header = LvglText::utf8(header.empty() ? page->header_text : header.c_str());
+  state.size = page->page_type;
+  state.save_progress = EntitiesPage::_lvgl_save_progress;
+  for (size_t i = 0; i < page->n_entities; i++) {
+    const NSPanelRoomEntitiesPage__EntitySlot *entity = page->entities[i];
+    if (entity == nullptr || entity->room_view_position < 0 || entity->room_view_position >= EntitiesState::MAX_SLOTS) {
+      continue;
+    }
+    EntitySlot &slot = state.slots[entity->room_view_position];
+    slot.empty = false;
+    slot.name = LvglText::utf8(entity->name);
+    slot.on = entity->pco == LvglText::ICON_COLOR_ON;
+    slot.icon = LvglText::slot_icon((int)entity->type, slot.on);
+  }
+  LvglUi::show(LvglUi::View::ENTITIES, EntitiesView::build, [state]() { EntitiesView::show(state); });
+}
+
+void EntitiesPage::_lvgl_refresh() {
+  if (LvglUi::active() && EntitiesPage::_currently_showing_page_type != 0) {
+    EntitiesPage::_lvgl_render(EntitiesPage::_current_entities_page.get());
+  }
+}
+
+void EntitiesPage::_step_page(bool next) {
+  switch (EntitiesPage::_display_type) {
+  case display_type_t::SCENES:
+    next ? RoomManager::go_to_next_scenes_page() : RoomManager::go_to_previous_scenes_page();
+    break;
+  case display_type_t::GLOBAL_SCENES:
+    next ? RoomManager::go_to_next_global_scenes_page() : RoomManager::go_to_previous_global_scenes_page();
+    break;
+  default:
+    next ? RoomManager::go_to_next_entities_page() : RoomManager::go_to_previous_entities_page();
+    break;
+  }
+}
+
+void EntitiesPage::_lvgl_action(int action, int32_t slot) {
+  if (!InterfaceManager::is_current_page(EntitiesPage::unshow)) {
+    return; // Left the page before the action got here.
+  }
+  if ((EntitiesView::Action)action == EntitiesView::Action::BACK) {
+    HomePage::show(); // Also from the "No scenes" page, which has no page data.
+    return;
+  }
+  std::shared_ptr<NSPanelRoomEntitiesPage> page = EntitiesPage::_current_entities_page.get();
+  if (page == nullptr || EntitiesPage::_currently_showing_page_type == 0) {
+    return;
+  }
+  const bool scenes = EntitiesPage::_display_type != display_type_t::ENTITIES;
+  switch ((EntitiesView::Action)action) {
+  case EntitiesView::Action::BACK:
+    HomePage::show();
+    break;
+  case EntitiesView::Action::PREV:
+    EntitiesPage::_step_page(false);
+    break;
+  case EntitiesView::Action::NEXT:
+    EntitiesPage::_step_page(true);
+    break;
+  case EntitiesView::Action::SLOT:
+    // A tap: activate a scene, or toggle an entity (media players open their page), as tapping the
+    // Nextion pages' scene label or entity button does.
+    if (EntitiesPage::_get_entity_in_slot(page, slot) == nullptr) {
+      break;
+    }
+    if (scenes) {
+      BuzzerManager::raise_event_for_touch(buzzer_event_t::SCENE_ACTIVATED);
+      EntitiesPage::_send_entity_toggle_command_to_manager(page->id, slot);
+    } else {
+      EntitiesPage::_handle_entity_button_pressed(page, slot);
+    }
+    break;
+  case EntitiesView::Action::SLOT_LONG: {
+    // A hold: save a scene (until let go, or 3 s), or open an entity's page, as the Nextion pages'
+    // scene button and entity label do.
+    NSPanelRoomEntitiesPage__EntitySlot *entity = EntitiesPage::_get_entity_in_slot(page, slot);
+    if (entity == nullptr) {
+      break;
+    }
+    if (scenes) {
+      if (entity->can_save_scene && EntitiesPage::_save_scene_task_handle == NULL) {
+        EntitiesPage::_save_scene = true;
+        int32_t *scene_slot = new int32_t(entity->room_view_position);
+        xTaskCreatePinnedToCore(EntitiesPage::_task_save_scene_progress, "save_scene", 4096, (void *)scene_slot, 1, &EntitiesPage::_save_scene_task_handle, 1);
+      }
+    } else if (entity->mqtt_state_topic[0] != '\0') {
+      EntityPage::show(entity->mqtt_state_topic);
+    }
+    break;
+  }
+  case EntitiesView::Action::SLOT_RELEASED:
+    EntitiesPage::_save_scene = false;
+    break;
+  }
 }

@@ -59,6 +59,13 @@ private:
   static void _go_to_nextion_page();
 
   /**
+   * With LVGL as the UI (LvglUi), and the screensaver shown: draw it, from everything this page
+   * holds. Called wherever the Nextion version updates a label; ScreensaverView redraws only what
+   * changed. Not with _weather_update_data_mutex held.
+   */
+  static void _lvgl_render();
+
+  /**
    * Handle events from MQTT manager, such as new weather forecasts sent over MQTT
    */
   static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);

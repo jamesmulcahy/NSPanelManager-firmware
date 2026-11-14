@@ -34,6 +34,11 @@ public:
 
 private:
   /**
+   * An EntitiesView action (as int, keeping LVGL out of this header) on LvglUi's task.
+   */
+  static void _lvgl_action(int action, int32_t slot);
+
+  /**
    * Go to the items page that fits the sources and draw the ones on the current page.
    */
   static void _update_display();

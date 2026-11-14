@@ -1,4 +1,5 @@
 #pragma once
+#include <esp_timer.h>
 
 #include <atomic>
 #include <esp_event.h>
@@ -103,6 +104,16 @@ private:
 
   // Send new set temp for a thermostat
   static void _send_thermostat_setpoint_command();
+
+  // LVGL (LvglUi): the light and thermostat pages drawn with LightView and ThermostatView, and their
+  // actions (as ints, keeping LVGL out of this header) run on LvglUi's task.
+  static void _lvgl_render_light();
+  static void _lvgl_render_thermostat();
+  static void _lvgl_light_action(int action, int32_t value);
+  static void _lvgl_thermostat_action(int action, int32_t option);
+  // The HMI's setTimer / setTempTimer (3 s): commit an option, or the setpoint, once the buttons rest.
+  static void _lvgl_thermostat_timer(void *arg);
+  static inline esp_timer_handle_t _lvgl_thermostat_timer_handle = NULL;
 
   // What is the page currently showing
   enum _entity_page_modes {

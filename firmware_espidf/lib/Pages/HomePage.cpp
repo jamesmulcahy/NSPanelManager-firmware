@@ -2,7 +2,12 @@
 #include <EntitiesPage.hpp>
 #include <GUI_data.hpp>
 #include <HomePage.hpp>
+#include <HomeView.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglText.hpp>
+#include <LvglUi.hpp>
+#include <PanelClock.hpp>
+#include <ctime>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -19,6 +24,17 @@ void HomePage::show() {
   esp_log_level_set("HomePage", ConfigManager::log_level);
 
   std::shared_ptr<PageHandlers> handlers = InterfaceManager::begin_page(HomePage::unshow);
+  if (LvglUi::active()) {
+    HomeView::on_action = [](HomeView::Action action, int32_t value) {
+      LvglUi::defer([action, value]() { HomePage::_lvgl_action((int)action, value); });
+    };
+    HomeView::is_swipe = []() { return LvglUi::swiping(); };
+    LvglUi::on_minute = []() {
+      if (InterfaceManager::is_current_page(HomePage::unshow)) {
+        HomePage::_lvgl_render(); // The clock in the corner.
+      }
+    };
+  }
 
   Nextion::go_to_page(GUI_HOME_PAGE::page_name, 250);
 
@@ -73,6 +89,10 @@ void HomePage::set_current_edit_mode(HomePageEditMode mode) {
 void HomePage::_update_display() {
   // Update displayed data
   ESP_LOGD("HomePage", "Updating displayed values on HomePage.");
+  if (LvglUi::active()) {
+    HomePage::_lvgl_render();
+    return;
+  }
   std::shared_ptr<NSPanelRoomStatus> status;
   if (HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
     if (RoomManager::get_home_page_status(&status) == ESP_OK) [[likely]] {
@@ -944,5 +964,136 @@ void HomePage::_handle_color_temperature_slider_event() {
     }
   } else {
     ESP_LOGE("HomePage", "Failed to pack data while sending command to manager from 'color temperature slider'!");
+  }
+}
+void HomePage::_lvgl_render() {
+  if (!LvglUi::active() || !InterfaceManager::is_current_page(HomePage::unshow)) {
+    return;
+  }
+  std::shared_ptr<NSPanelConfig> config;
+  if (NSPM_ConfigManager::get_config(&config) != ESP_OK || !config) [[unlikely]] {
+    return;
+  }
+  HomeState state;
+  std::shared_ptr<NSPanelRoomStatus> status;
+  if (HomePage::_current_affect_mode == HomePageAffectMode::ALL) {
+    state.room = "All";
+    state.mode = "All lights";
+    state.all_rooms = true;
+    state.entities = false;
+    if (RoomManager::get_home_page_status_all_rooms(&status) != ESP_OK) {
+      status = nullptr; // Not yet known: draw the labels, lights at 0.
+    }
+  } else {
+    if (RoomManager::get_home_page_status(&status) != ESP_OK) [[unlikely]] {
+      ESP_LOGE("HomePage", "Failed to get status object for home page. Will abort update.");
+      return;
+    }
+    state.room = LvglText::utf8(status->name);
+    state.mode = "Room lights";
+  }
+  if (PanelClock::is_set()) {
+    time_t now = time(NULL);
+    struct tm local;
+    localtime_r(&now, &local);
+    char text[16];
+    strftime(text, sizeof(text), config->clock_us_style ? "%l:%M %p" : "%H:%M", &local);
+    state.time = text[0] == ' ' ? text + 1 : text;
+  }
+  if (status != nullptr) {
+    switch (HomePage::_current_edit_mode) {
+    case HomePageEditMode::CEILING_LIGHTS:
+      // Only the group being edited shows its level, as on the Nextion page.
+      state.edit = HomeState::Edit::CEILING;
+      state.ceiling = status->ceiling_lights_dim_level;
+      state.brightness = status->ceiling_lights_dim_level;
+      state.color_temperature = status->ceiling_lights_color_temperature_value;
+      break;
+    case HomePageEditMode::TABLE_LIGHTS:
+      state.edit = HomeState::Edit::TABLE;
+      state.table = status->table_lights_dim_level;
+      state.brightness = status->table_lights_dim_level;
+      state.color_temperature = status->table_lights_color_temperature_value;
+      break;
+    default:
+      state.ceiling = status->ceiling_lights_dim_level;
+      state.table = status->table_lights_dim_level;
+      state.brightness = status->average_dim_level;
+      state.color_temperature = status->average_color_temperature;
+      break;
+    }
+  }
+  LvglUi::show(LvglUi::View::HOME, HomeView::build, [state]() { HomeView::show(state); });
+}
+
+void HomePage::_lvgl_action(int action, int32_t value) {
+  if (!InterfaceManager::is_current_page(HomePage::unshow)) {
+    return; // Left the page before the action got here.
+  }
+  switch ((HomeView::Action)action) {
+  case HomeView::Action::CEILING_DOWN:
+    HomePage::_handle_nextion_event_master_ceiling_lights_button(true);
+    break;
+  case HomeView::Action::CEILING_UP:
+    HomePage::_handle_nextion_event_master_ceiling_lights_button(false);
+    break;
+  case HomeView::Action::TABLE_DOWN:
+    HomePage::_handle_nextion_event_master_table_lights_button(true);
+    break;
+  case HomeView::Action::TABLE_UP:
+    HomePage::_handle_nextion_event_master_table_lights_button(false);
+    break;
+  case HomeView::Action::BRIGHTNESS: {
+    // What _update_brightness_slider_cache() reads back from the Nextion slider.
+    int32_t brightness = value;
+    std::shared_ptr<NSPanelConfig> config;
+    if (NSPM_ConfigManager::get_config(&config) == ESP_OK && brightness >= config->raise_light_level_to_100_above) {
+      brightness = 100;
+    }
+    HomePage::_cache_brightness_slider = brightness;
+    HomePage::_handle_brightness_slider_event();
+    HomePage::_lvgl_render(); // Optimistic status, or back to what it was.
+    break;
+  }
+  case HomeView::Action::COLOR_TEMPERATURE:
+    HomePage::_cache_color_temperature_slider = value;
+    HomePage::_handle_color_temperature_slider_event();
+    break;
+  case HomeView::Action::NEXT_ROOM:
+    if (HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
+      RoomManager::go_to_next_room();
+    }
+    break;
+  case HomeView::Action::NEXT_MODE:
+    if (HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
+      std::shared_ptr<NSPanelConfig> config;
+      if (NSPM_ConfigManager::get_config(&config) == ESP_OK && !config->locked_to_default_room) {
+        HomePage::set_current_affect_mode(HomePageAffectMode::ALL);
+      } else {
+        ESP_LOGW("HomePage", "Tried to enter 'All rooms' mode but panel is not allowed to control other rooms than the default.");
+      }
+    } else {
+      HomePage::set_current_affect_mode(HomePageAffectMode::ROOM);
+    }
+    break;
+  case HomeView::Action::SCENES:
+    EntitiesPage::show(HomePage::_current_affect_mode == HomePageAffectMode::ALL ? EntitiesPage::display_type_t::GLOBAL_SCENES
+                                                                                  : EntitiesPage::display_type_t::SCENES);
+    break;
+  case HomeView::Action::ENTITIES:
+    if (HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
+      EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
+    }
+    break;
+  case HomeView::Action::CEILING_CANCEL:
+  case HomeView::Action::TABLE_CANCEL:
+    // The press became a swipe: forget the hold timer, toggle nothing.
+    if (esp_timer_is_active(HomePage::_special_mode_timer_handle) == 1) {
+      esp_timer_stop(HomePage::_special_mode_timer_handle);
+      HomePage::_special_mode_timer_activation_mode = HomePageEditMode::ALL_LIGHTS;
+    }
+    break;
+  default:
+    break; // CEILING/TABLE taps and holds: the DOWN/UP pairs above carry them.
   }
 }

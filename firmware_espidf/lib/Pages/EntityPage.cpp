@@ -1,9 +1,14 @@
+#include <algorithm>
 #include <ConfigManager.hpp>
 #include <CoverPage.hpp>
 #include <EntitiesPage.hpp>
 #include <EntityPage.hpp>
 #include <GUI_data.hpp>
 #include <InterfaceManager.hpp>
+#include <LightView.hpp>
+#include <LvglText.hpp>
+#include <LvglUi.hpp>
+#include <ThermostatView.hpp>
 #include <MediaPlayerPage.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
@@ -29,6 +34,15 @@ void EntityPage::show(std::string state_topic) {
   // Reset variables:
   EntityPage::_selected_thermostat_option_index = 0;
   EntityPage::_is_currently_editing = false;
+
+  if (LvglUi::active()) {
+    LightView::on_action = [](LightView::Action action, int32_t value) {
+      LvglUi::defer([action, value]() { EntityPage::_lvgl_light_action((int)action, value); });
+    };
+    ThermostatView::on_action = [](ThermostatView::Action action, int32_t option) {
+      LvglUi::defer([action, option]() { EntityPage::_lvgl_thermostat_action((int)action, option); });
+    };
+  }
 }
 
 void EntityPage::unshow() {
@@ -196,6 +210,11 @@ void EntityPage::_update_display_light() {
     std::shared_ptr<PageHandlers> handlers = InterfaceManager::begin_page(EntityPage::unshow);
 
     handlers->add(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event);
+  }
+
+  if (LvglUi::active()) {
+    EntityPage::_lvgl_render_light();
+    return;
   }
 
   auto state = EntityPage::_get_current_state();
@@ -459,6 +478,11 @@ void EntityPage::_update_display_thermostat() {
     std::shared_ptr<PageHandlers> handlers = InterfaceManager::begin_page(EntityPage::unshow);
 
     handlers->add(NEXTION_EVENT, ESP_EVENT_ANY_ID, &EntityPage::_handle_nextion_event);
+  }
+
+  if (LvglUi::active()) {
+    EntityPage::_lvgl_render_thermostat();
+    return;
   }
 
   std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
@@ -798,4 +822,229 @@ void EntityPage::_update_display_media_player() {
 
   std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
   MediaPlayerPage::update_display(state->media_player, page_just_opened);
+}
+
+// --- LVGL -----------------------------------------------------------------------------------------
+
+// The manager's thermostat option icons are characters of the HMI's icon font (MQTTManager's
+// entity_icons.hpp); these are the closest Material Design Icons in the 24 px font.
+static const char *thermostat_icon(const char *glyph) {
+  switch (glyph != nullptr ? glyph[0] : 0) {
+  case '!': return NSPM_ICON_FIRE;                  // heating
+  case '8': return NSPM_ICON_SNOWFLAKE;             // cooling
+  case '#': return NSPM_ICON_SUN_SNOWFLAKE_VARIANT; // heat/cool
+  case '$': return NSPM_ICON_HVAC;                  // auto
+  case '%': return NSPM_ICON_WATER_PERCENT;         // dry
+  case '&': return NSPM_ICON_LEAF;                  // eco
+  case '\'': return NSPM_ICON_SHIELD_OFF;           // away
+  case '(': return NSPM_ICON_HOME;                  // home
+  case ')': return NSPM_ICON_SLEEP;                 // sleep
+  case '*': return NSPM_ICON_FIRE;                  // boost
+  case '+': return NSPM_ICON_SOFA;                  // comfort
+  case ',': return NSPM_ICON_GESTURE_TAP_BUTTON;    // activity
+  case '-': return NSPM_ICON_SNOWFLAKE;             // defrosting
+  case '.':
+  case '/':
+  case '0': return NSPM_ICON_ARROW_OSCILLATING;     // swing
+  case '1': return NSPM_ICON_POWER;                 // fan off
+  case '2': return NSPM_ICON_FAN_AUTO;              // fan auto
+  case '3':
+  case '4':
+  case '5':
+  case '6': return NSPM_ICON_FAN;                   // fan, fan speeds
+  case 'h': return NSPM_ICON_POWER;                 // off
+  default: return NSPM_ICON_THERMOSTAT;
+  }
+}
+
+static std::string temperature_text(float value) {
+  char text[16];
+  bool fahrenheit = true;
+  std::shared_ptr<NSPanelConfig> config;
+  if (NSPM_ConfigManager::get_config(&config) == ESP_OK && config) {
+    fahrenheit = config->use_fahrenheit;
+  }
+  snprintf(text, sizeof(text), "%.1f\xC2\xB0%s", value, fahrenheit ? "F" : "C");
+  return text;
+}
+
+void EntityPage::_lvgl_render_light() {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_LIGHT || !InterfaceManager::is_current_page(EntityPage::unshow)) {
+    return;
+  }
+  const NSPanelEntityState__Light *light = state->light;
+  LightState view;
+  view.name = LvglText::utf8(light->name);
+  view.can_color = light->can_color;
+  view.can_temperature = light->can_color_temp;
+  // As the Nextion page: a light that does only one shows that one, whatever mode it reports.
+  view.color_mode = light->can_color && (!light->can_color_temp || EntityPage::_current_mode == _entity_page_modes::LIGHT_RGB);
+  view.brightness = light->brightness;
+  view.color_temperature = light->color_temp;
+  view.saturation = light->saturation;
+  view.hue = light->hue;
+  LvglUi::show(LvglUi::View::LIGHT, LightView::build, [view]() { LightView::show(view); });
+}
+
+// Send a light command for the light shown, with one field set by `fill`.
+static void send_light_command(const std::shared_ptr<NSPanelEntityState> &state, void (*fill)(NSPanelMQTTManagerCommand__LightCommand &, int32_t), int32_t value) {
+  int32_t light_id = state->light->light_id;
+  NSPanelMQTTManagerCommand__LightCommand light_command = NSPANEL_MQTTMANAGER_COMMAND__LIGHT_COMMAND__INIT;
+  light_command.light_ids = &light_id;
+  light_command.n_light_ids = 1;
+  fill(light_command, value);
+
+  NSPanelMQTTManagerCommand cmd = NSPANEL_MQTTMANAGER_COMMAND__INIT;
+  cmd.command_data_case = NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_LIGHT_COMMAND;
+  cmd.light_command = &light_command;
+  cmd.nspanel_id = NSPM_ConfigManager::get_nspanel_id();
+  uint32_t packed_length = nspanel_mqttmanager_command__get_packed_size(&cmd);
+  std::vector<uint8_t> buffer(packed_length);
+  if (nspanel_mqttmanager_command__pack(&cmd, buffer.data()) != packed_length) [[unlikely]] {
+    ESP_LOGE("EntityPage", "Failed to pack protobuf command.");
+    return;
+  }
+  if (MqttManager::publish(NSPM_ConfigManager::get_manager_command_topic(), (const char *)buffer.data(), packed_length, false) != ESP_OK) [[unlikely]] {
+    ESP_LOGE("EntityPage", "Failed to send MQTT message with command payload.");
+  }
+}
+
+void EntityPage::_lvgl_light_action(int action, int32_t value) {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_LIGHT || !InterfaceManager::is_current_page(EntityPage::unshow)) {
+    return;
+  }
+  switch ((LightView::Action)action) {
+  case LightView::Action::BACK:
+    EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
+    return;
+  case LightView::Action::SWITCH_MODE:
+    EntityPage::_current_mode = EntityPage::_current_mode == _entity_page_modes::LIGHT_RGB ? _entity_page_modes::LIGHT_COLOR_TEMPERATURE : _entity_page_modes::LIGHT_RGB;
+    break;
+  case LightView::Action::BRIGHTNESS:
+    send_light_command(state, [](NSPanelMQTTManagerCommand__LightCommand &c, int32_t v) { c.has_brightness = true; c.brightness = v; }, value);
+    break;
+  case LightView::Action::COLOR_TEMPERATURE:
+    send_light_command(state, [](NSPanelMQTTManagerCommand__LightCommand &c, int32_t v) { c.has_color_temperature = true; c.color_temperature = v; }, value);
+    break;
+  case LightView::Action::SATURATION:
+    send_light_command(state, [](NSPanelMQTTManagerCommand__LightCommand &c, int32_t v) { c.has_saturation = true; c.saturation = v; }, value);
+    break;
+  case LightView::Action::HUE:
+    send_light_command(state, [](NSPanelMQTTManagerCommand__LightCommand &c, int32_t v) { c.has_hue = true; c.hue = v; }, value);
+    break;
+  }
+  EntityPage::_lvgl_render_light(); // The slider stays where it was let go until the state follows.
+}
+
+void EntityPage::_lvgl_render_thermostat() {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT || !InterfaceManager::is_current_page(EntityPage::unshow)) {
+    return;
+  }
+  const NSPanelEntityState__Thermostat *thermostat = state->thermostat;
+  ThermostatState view;
+  view.name = LvglText::utf8(thermostat->name);
+  view.current = temperature_text(thermostat->has_current_temperature ? thermostat->current_temperature : StatusUpdateManager::current_temperature());
+  // tempup/tempdown replace current_value/current_icon under the spinlock: copy them under it too,
+  // into fixed buffers (no allocation with interrupts off).
+  char names[ThermostatState::MAX_OPTIONS][32] = {}, values[ThermostatState::MAX_OPTIONS][32] = {};
+  char icons[ThermostatState::MAX_OPTIONS] = {};
+  const size_t count = std::min<size_t>(thermostat->n_options, ThermostatState::MAX_OPTIONS);
+  taskENTER_CRITICAL(&EntityPage::_entity_page_spinlock);
+  const bool editing = EntityPage::_is_currently_editing && EntityPage::_selected_thermostat_option_index < thermostat->n_options;
+  for (size_t i = 0; i < count; i++) {
+    const NSPanelEntityState__Thermostat__ThermostatOption *option = thermostat->options[i];
+    strncpy(names[i], option->name != NULL ? option->name : "", sizeof(names[i]) - 1);
+    strncpy(values[i], option->current_value != NULL ? option->current_value : "", sizeof(values[i]) - 1);
+    icons[i] = option->current_icon != NULL ? option->current_icon[0] : 0;
+  }
+  taskEXIT_CRITICAL(&EntityPage::_entity_page_spinlock);
+  for (size_t i = 0; i < count; i++) {
+    const char glyph[2] = {icons[i], 0};
+    view.options[i].name = LvglText::utf8(names[i]);
+    view.options[i].value = LvglText::utf8(values[i]);
+    view.options[i].icon = thermostat_icon(glyph);
+  }
+  if (editing) {
+    view.selected = EntityPage::_selected_thermostat_option_index;
+    view.set_label = view.options[view.selected].name;
+    view.set_value = view.options[view.selected].value;
+  } else {
+    view.set_label = "Set";
+    view.set_value = temperature_text(thermostat->set_temperature);
+  }
+  LvglUi::show(LvglUi::View::THERMOSTAT, ThermostatView::build, [view]() { ThermostatView::show(view); });
+}
+
+void EntityPage::_lvgl_thermostat_timer(void *arg) {
+  // esp_timer's task: hand over, as the HMI's timers sent their strings to the firmware.
+  LvglUi::defer([]() {
+    std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+    if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT || !InterfaceManager::is_current_page(EntityPage::unshow)) {
+      return;
+    }
+    char event[16];
+    strcpy(event, EntityPage::_is_currently_editing ? "deactivate" : "deactivatetemp");
+    EntityPage::_handle_string_event_thermostat(state, event);
+    EntityPage::_lvgl_render_thermostat();
+  });
+}
+
+void EntityPage::_lvgl_thermostat_action(int action, int32_t option) {
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::_get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT || !InterfaceManager::is_current_page(EntityPage::unshow)) {
+    return;
+  }
+  if (EntityPage::_lvgl_thermostat_timer_handle == NULL) {
+    esp_timer_create_args_t args = {};
+    args.callback = EntityPage::_lvgl_thermostat_timer;
+    args.name = "thermostat_set";
+    if (esp_timer_create(&args, &EntityPage::_lvgl_thermostat_timer_handle) != ESP_OK) {
+      ESP_LOGE("EntityPage", "Failed to create the thermostat timer; changes are sent only when leaving the page.");
+    }
+  }
+  auto restart_timer = []() {
+    if (EntityPage::_lvgl_thermostat_timer_handle != NULL) {
+      esp_timer_stop(EntityPage::_lvgl_thermostat_timer_handle);
+      esp_timer_start_once(EntityPage::_lvgl_thermostat_timer_handle, 3000 * 1000);
+    }
+  };
+  auto stop_timer = []() {
+    if (EntityPage::_lvgl_thermostat_timer_handle != NULL) {
+      esp_timer_stop(EntityPage::_lvgl_thermostat_timer_handle);
+    }
+  };
+  // The strings the HMI's thermostat page sends (thermostat.nx), handled as they always were.
+  char event[16] = "";
+  switch ((ThermostatView::Action)action) {
+  case ThermostatView::Action::BACK:
+    stop_timer();
+    strcpy(event, "back"); // Sends what is pending, then leaves.
+    EntityPage::_handle_string_event_thermostat(state, event);
+    return;
+  case ThermostatView::Action::DOWN:
+  case ThermostatView::Action::UP:
+    strcpy(event, (ThermostatView::Action)action == ThermostatView::Action::UP ? "tempup" : "tempdown");
+    EntityPage::_handle_string_event_thermostat(state, event);
+    restart_timer(); // setTimer while an option is active, setTempTimer otherwise: 3 s either way.
+    break;
+  case ThermostatView::Action::OPTION:
+    if (option < 0 || option >= ThermostatState::MAX_OPTIONS) {
+      return;
+    }
+    if (EntityPage::_is_currently_editing && EntityPage::_selected_thermostat_option_index == option) {
+      stop_timer(); // The active option tapped again: done with it.
+      strcpy(event, "deactivate");
+    } else {
+      snprintf(event, sizeof(event), "activate:set%d", (int)option + 1);
+      restart_timer();
+    }
+    EntityPage::_handle_string_event_thermostat(state, event);
+    break;
+  default:
+    return; // PREV/NEXT: one thermostat per page, as on the Nextion.
+  }
+  EntityPage::_lvgl_render_thermostat();
 }

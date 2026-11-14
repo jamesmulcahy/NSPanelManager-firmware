@@ -1,6 +1,11 @@
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
+#include <algorithm>
 #include <LittleFS.hpp>
+#include <InterfaceManager.hpp>
+#include <LvglUi.hpp>
+#include <NextionTerminal.hpp>
+#include <LvglRenderer.hpp>
 #include <LoadingPage.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
@@ -57,6 +62,11 @@ void UpdateManager::update_gui(void *param) {
     }
 
     ESP_LOGI("UpdateManager", "Will start updating GUI. Remote file size: %zu bytes", remote_tft_file_size);
+    // With LVGL as the UI the terminal holds the display's UART for good: end it first. The panel
+    // reboots after the update, so it is never resumed.
+    if (!LvglUi::suspend(10000)) {
+      ESP_LOGW("UpdateManager", "The terminal still holds the display; the update will wait for it.");
+    }
     while (Nextion::start_update(ConfigManager::nextion_upload_baudrate, ConfigManager::use_latest_nextion_upload_protocol, remote_tft_file_size) != ESP_OK) {
       ESP_LOGW("UpdateManager", "Failed to init update process with Nextion display. Will try again in 5000ms");
       vTaskDelay(pdMS_TO_TICKS(5000));
@@ -599,6 +609,42 @@ void UpdateManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, 
             ESP_LOGE("UpdateManager", "Cannot start TFT update: manager address not yet known.");
           } else {
             xTaskCreatePinnedToCore(UpdateManager::update_gui, "update_gui", 8192, NULL, 2, &UpdateManager::_current_update_task, 1);
+          }
+        } else if (command_string.compare("lvgl_tap") == 0) {
+          // {"command": "lvgl_tap", "x": 160, "y": 20, "hold_ms": 100}: a tap at x,y (screen coordinates)
+          // through the LVGL touch path, as if the display reported it. For testing without a finger.
+          int x = json.contains("x") && json["x"].is_number_integer() ? json["x"].get<int>() : -1;
+          int y = json.contains("y") && json["y"].is_number_integer() ? json["y"].get<int>() : -1;
+          int hold = json.contains("hold_ms") && json["hold_ms"].is_number_integer() ? json["hold_ms"].get<int>() : 100;
+          if (x >= 0 && y >= 0 && x < LvglRenderer::width() && y < LvglRenderer::height()) {
+            ESP_LOGI("UpdateManager", "Tap at %d,%d for %d ms.", x, y, hold);
+            // "x2", "y2": a swipe to there instead, in ten moves over hold_ms.
+            int x2 = json.contains("x2") && json["x2"].is_number_integer() ? json["x2"].get<int>() : x;
+            int y2 = json.contains("y2") && json["y2"].is_number_integer() ? json["y2"].get<int>() : y;
+            x2 = std::clamp(x2, 0, LvglRenderer::width() - 1);
+            y2 = std::clamp(y2, 0, LvglRenderer::height() - 1);
+            hold = std::clamp(hold, 20, 5000);
+            LvglRenderer::inject_touch(true, x, y);
+            for (int step = 1; step <= 10; step++) {
+              vTaskDelay(pdMS_TO_TICKS(hold / 10));
+              if (x2 != x || y2 != y) {
+                LvglRenderer::inject_touch(true, x + (x2 - x) * step / 10, y + (y2 - y) * step / 10);
+              }
+            }
+            LvglRenderer::inject_touch(false, x2, y2);
+          } else {
+            ESP_LOGW("UpdateManager", "lvgl_tap needs x and y on the screen.");
+          }
+        } else if (command_string.compare("lvgl_ui") == 0) {
+          // {"command": "lvgl_ui", "enable": false}: keep the Nextion pages whatever TFT the display runs
+          // (true: LVGL on a terminal TFT, the default). Saved, then the panel reboots to apply it.
+          if (json.contains("enable") && json["enable"].is_boolean()) {
+            ConfigManager::lvgl_ui = json["enable"].get<bool>();
+            ESP_LOGI("UpdateManager", "lvgl_ui set to %s; rebooting.", ConfigManager::lvgl_ui ? "true" : "false");
+            ConfigManager::save_config();
+            xTaskCreatePinnedToCore(UpdateManager::_task_reboot, "reboot", 4096, NULL, 2, NULL, 1);
+          } else {
+            ESP_LOGI("UpdateManager", "lvgl_ui is %s; LVGL is %sthe UI.", ConfigManager::lvgl_ui ? "true" : "false", LvglUi::active() ? "" : "not ");
           }
         } else if (command_string.compare("register_accept") == 0) {
           // Handled by NSPM_ConfigManager, which also listens on this topic.

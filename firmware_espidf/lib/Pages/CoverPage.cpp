@@ -1,5 +1,9 @@
 #include <ConfigManager.hpp>
 #include <CoverPage.hpp>
+#include <CoverView.hpp>
+#include <EntityPage.hpp>
+#include <LvglText.hpp>
+#include <LvglUi.hpp>
 #include <EntitiesPage.hpp>
 #include <GUI_data.hpp>
 #include <MqttManager.hpp>
@@ -43,6 +47,11 @@ void CoverPage::update_display(const NSPanelEntityState__Cover *cover, bool page
   CoverPage::_cover_id = cover->cover_id;
   if (page_just_opened) {
     esp_log_level_set("CoverPage", ConfigManager::log_level);
+    if (LvglUi::active()) {
+      CoverView::on_action = [](CoverView::Action action, int32_t value) {
+        LvglUi::defer([action, value]() { CoverPage::_lvgl_action((int)action, value); });
+      };
+    }
     CoverPage::_pending_position = -1;
     CoverPage::_pending_tilt_position = -1;
 
@@ -143,6 +152,29 @@ void CoverPage::update_display(const NSPanelEntityState__Cover *cover, bool page
   }
 
   Nextion::set_component_text(GUI_COVER_CONTROL_PAGE::name_label_name, combined_text.c_str(), 250);
+
+  if (LvglUi::active()) {
+    // CoverView has no tilt controls yet: it shows and sets the position only.
+    int32_t position_pending = CoverPage::_pending_position;
+    int32_t shown_position = position_pending >= 0 ? position_pending : (cover->has_position ? cover->position : 0);
+    std::string state_text = CoverPage::_state_text(cover->state);
+    if (cover->can_set_position && (position_pending >= 0 || cover->has_position)) {
+      state_text.append(" ");
+      state_text.append(std::to_string(static_cast<int>(shown_position)));
+      state_text.append("%");
+    }
+    CoverState view;
+    view.name = LvglText::utf8(cover->name);
+    view.state = state_text;
+    view.is_open = cover->state == NSPANEL_ENTITY_STATE__COVER__COVER_STATE__OPEN || cover->state == NSPANEL_ENTITY_STATE__COVER__COVER_STATE__OPENING ||
+                   (cover->has_position && cover->position > 0);
+    view.has_position = cover->can_set_position;
+    view.position = shown_position;
+    view.can_open = cover->can_open || cover->can_set_position;
+    view.can_stop = cover->can_stop;
+    view.can_close = cover->can_close || cover->can_set_position;
+    LvglUi::show(LvglUi::View::COVER, CoverView::build, [view]() { CoverView::show(view); });
+  }
 }
 
 void CoverPage::_send_command(NSPanelMQTTManagerCommand__CoverCommand *cover_command) {
@@ -322,3 +354,45 @@ void CoverPage::handle_string_event(const std::shared_ptr<NSPanelEntityState> &s
 //     }
 //   }
 // }
+
+void CoverPage::_lvgl_action(int action, int32_t value) {
+  if (!CoverPage::_showing) {
+    return; // Left the page before the action got here.
+  }
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::get_current_state();
+  if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_COVER) {
+    return;
+  }
+  const NSPanelEntityState__Cover *cover = state->cover;
+  switch ((CoverView::Action)action) {
+  case CoverView::Action::BACK:
+    EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
+    return;
+  case CoverView::Action::OPEN:
+    // As the Nextion page's open button: a cover that can only be positioned opens to 100.
+    if (cover->can_open) {
+      CoverPage::_send_action(NSPANEL_MQTTMANAGER_COMMAND__COVER_COMMAND__ACTION__OPEN);
+    } else if (cover->can_set_position) {
+      CoverPage::_send_position(100);
+    }
+    return;
+  case CoverView::Action::STOP:
+    CoverPage::_send_action(NSPANEL_MQTTMANAGER_COMMAND__COVER_COMMAND__ACTION__STOP);
+    return;
+  case CoverView::Action::CLOSE:
+    if (cover->can_close) {
+      CoverPage::_send_action(NSPANEL_MQTTMANAGER_COMMAND__COVER_COMMAND__ACTION__CLOSE);
+    } else if (cover->can_set_position) {
+      CoverPage::_send_position(0);
+    }
+    return;
+  case CoverView::Action::POSITION:
+    if (value < 0 || value > 100) {
+      return;
+    }
+    CoverPage::_send_position(static_cast<uint8_t>(value));
+    // Show the requested position until the cover reports it, as the Nextion page does.
+    CoverPage::update_display(cover, false);
+    return;
+  }
+}

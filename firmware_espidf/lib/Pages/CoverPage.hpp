@@ -59,6 +59,11 @@ private:
 
   static const char *_state_text(NSPanelEntityState__Cover__CoverState state);
 
+  /**
+   * LVGL (LvglUi): a CoverView action (as int, keeping LVGL out of this header) on LvglUi's task.
+   */
+  static void _lvgl_action(int action, int32_t value);
+
   // Whether the page is showing. Cleared when the page closes so stale touch events are ignored.
   static inline std::atomic<bool> _showing = false;
 
