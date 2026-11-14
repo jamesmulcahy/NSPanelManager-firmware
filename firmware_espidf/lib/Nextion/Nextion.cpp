@@ -136,6 +136,7 @@ void Nextion::_connect_at_default_baud() {
   // Wait for 'NSPM' flag, if we receive it.
   if (Nextion::_wait_for_event(NEXTION_EVENT, nextion_event_t::RECEIVED_NSPM_FLAG, 2500, 250) == ESP_OK) {
     ESP_LOGI("Nextion", "Received 'NSPM'-flag. You are running the NSPanel Manager GUI/TFT.");
+    Nextion::_has_received_nspm_flag = true;
   } else {
     ESP_LOGW("Nextion", "Did not receive the 'NSPM'-flag on screen startup. Are you running the NSPanel Manager GUI/TFT?");
     Nextion::_has_received_nspm_flag = false;
