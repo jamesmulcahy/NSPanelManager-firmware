@@ -34,6 +34,8 @@ void HomePage::show() {
         HomePage::_lvgl_render(); // The clock in the corner.
       }
     };
+    // The room list needs every room's name; most arrive only once (ROOM_NAMES_UPDATED).
+    RoomManager::request_room_names();
   }
 
   Nextion::go_to_page(GUI_HOME_PAGE::page_name, 250);
@@ -224,6 +226,8 @@ void HomePage::_handle_roommanager_event(void *arg, esp_event_base_t event_base,
     HomePage::_update_display();
   } else if (event_id == roommanager_event_t::HOME_PAGE_ALL_ROOMS_UPDATED && HomePage::_current_affect_mode == HomePageAffectMode::ALL) {
     HomePage::_update_display();
+  } else if (event_id == roommanager_event_t::ROOM_NAMES_UPDATED && LvglUi::active()) {
+    HomePage::_lvgl_render(); // The room list
   }
 }
 
@@ -976,9 +980,17 @@ void HomePage::_lvgl_render() {
   }
   HomeState state;
   std::shared_ptr<NSPanelRoomStatus> status;
+  // The room list: every room this panel may show, by name once known.
+  const uint32_t current_room = RoomManager::get_current_room_id();
+  for (const RoomManager::RoomName &room : RoomManager::room_names()) {
+    if (room.id == current_room && HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
+      state.room_index = (int)state.rooms.size();
+    }
+    state.rooms.push_back(room.name.empty() ? "Room " + std::to_string(room.id) : LvglText::utf8(room.name.c_str()));
+  }
+  state.all_allowed = !config->locked_to_default_room;
   if (HomePage::_current_affect_mode == HomePageAffectMode::ALL) {
-    state.room = "All";
-    state.mode = "All lights";
+    state.room = "All rooms";
     state.all_rooms = true;
     state.entities = false;
     if (RoomManager::get_home_page_status_all_rooms(&status) != ESP_OK) {
@@ -990,7 +1002,6 @@ void HomePage::_lvgl_render() {
       return;
     }
     state.room = LvglText::utf8(status->name);
-    state.mode = "Room lights";
   }
   if (PanelClock::is_set()) {
     time_t now = time(NULL);
@@ -1059,20 +1070,30 @@ void HomePage::_lvgl_action(int action, int32_t value) {
     HomePage::_cache_color_temperature_slider = value;
     HomePage::_handle_color_temperature_slider_event();
     break;
-  case HomeView::Action::NEXT_ROOM:
-    if (HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
-      RoomManager::go_to_next_room();
+  case HomeView::Action::SELECT_ROOM: {
+    // The list is RoomManager::room_names(), in order, as _lvgl_render() built it.
+    std::vector<RoomManager::RoomName> rooms = RoomManager::room_names();
+    if (value < 0 || value >= (int32_t)rooms.size()) {
+      break;
+    }
+    if (HomePage::_current_affect_mode != HomePageAffectMode::ROOM) {
+      HomePage::set_current_affect_mode(HomePageAffectMode::ROOM); // Picking a room leaves "All"
+    }
+    if (rooms[value].id != RoomManager::get_current_room_id()) {
+      RoomManager::go_to_room_id(rooms[value].id);
     }
     break;
-  case HomeView::Action::NEXT_MODE:
-    if (HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
+  }
+  case HomeView::Action::SET_MODE:
+    if (value == 1 && HomePage::_current_affect_mode == HomePageAffectMode::ROOM) {
       std::shared_ptr<NSPanelConfig> config;
       if (NSPM_ConfigManager::get_config(&config) == ESP_OK && !config->locked_to_default_room) {
         HomePage::set_current_affect_mode(HomePageAffectMode::ALL);
       } else {
         ESP_LOGW("HomePage", "Tried to enter 'All rooms' mode but panel is not allowed to control other rooms than the default.");
+        HomePage::_lvgl_render(); // Back to "Room"
       }
-    } else {
+    } else if (value == 0 && HomePage::_current_affect_mode == HomePageAffectMode::ALL) {
       HomePage::set_current_affect_mode(HomePageAffectMode::ROOM);
     }
     break;

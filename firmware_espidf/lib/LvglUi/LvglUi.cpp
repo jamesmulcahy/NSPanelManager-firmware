@@ -14,6 +14,7 @@
 #include <PlaceholderView.hpp>
 #include <ScreensaverPage.hpp>
 #include <Theme.hpp>
+#include <Ui.hpp>
 #include <cstdlib>
 #include <cstring>
 #include <esp_log.h>
@@ -200,8 +201,11 @@ bool LvglUi::_touch(bool down, uint16_t x, uint16_t y) {
     return true;
   }
   static bool was_down = false;
+  // The press began over an open pop-up (the room list): a drag scrolls it, it is not a swipe.
+  static bool in_popup = false;
   const int64_t now = esp_timer_get_time();
   if (down && !was_down) {
+    in_popup = Ui::popup_open;
     LvglUi::_press_x = x;
     LvglUi::_press_y = y;
     LvglUi::_press_us = now;
@@ -216,7 +220,7 @@ bool LvglUi::_touch(bool down, uint16_t x, uint16_t y) {
   if (was_down && (abs(dy) >= SWIPE_PX || abs(dx) >= SWIPE_PX)) {
     LvglUi::_swiping = true;
   }
-  if (!down && was_down && dy >= SWIPE_PX && abs(dx) * 2 <= dy && now - LvglUi::_press_us < SWIPE_MAX_US) {
+  if (!down && was_down && !in_popup && dy >= SWIPE_PX && abs(dx) * 2 <= dy && now - LvglUi::_press_us < SWIPE_MAX_US) {
     LvglUi::defer([]() { MenuPage::swipe_down(); });
   }
   was_down = down;

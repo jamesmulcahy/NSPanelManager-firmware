@@ -9,6 +9,7 @@
 #include <WiFiManager.hpp>
 #include <esp_event.h>
 #include <esp_log.h>
+#include <cstdlib>
 #include <vector>
 
 ESP_EVENT_DEFINE_BASE(ROOMMANAGER_EVENT);
@@ -681,6 +682,7 @@ void RoomManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
     if (topic_string.compare(RoomManager::_current_home_page_status_topic.get()) == 0) {
       NSPanelRoomStatus *room_status = nspanel_room_status__unpack(NULL, event->data_len, (const uint8_t *)event->data);
       if (room_status != NULL) {
+        RoomManager::_note_room_name(RoomManager::_current_room_id, room_status->name, true);
         if (xSemaphoreTake(RoomManager::_home_page_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
           ESP_LOGD("RoomManager", "Received new home page state update.");
           RoomManager::_home_page = std::shared_ptr<NSPanelRoomStatus>(room_status, &RoomManager::_nspanel_room_status_shared_ptr_deleter);
@@ -734,7 +736,93 @@ void RoomManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
       } else {
         ESP_LOGE("RoomManager", "Got new status for 'All rooms' for home page but failed to unpack it.");
       }
+    } else if (!RoomManager::_room_names_scan_topic.get().empty()) {
+      // A room's state while learning the names: .../room/<id>/state.
+      static const std::string marker = "/room/";
+      size_t at = topic_string.rfind(marker);
+      if (at != std::string::npos && topic_string.size() > at + marker.size() && topic_string.compare(topic_string.size() - 6, 6, "/state") == 0) {
+        int32_t room_id = atoi(topic_string.c_str() + at + marker.size());
+        NSPanelRoomStatus *room_status = nspanel_room_status__unpack(NULL, event->data_len, (const uint8_t *)event->data);
+        if (room_status != NULL) {
+          RoomManager::_note_room_name(room_id, room_status->name, false);
+          nspanel_room_status__free_unpacked(room_status, NULL);
+        }
+      }
     }
+  }
+}
+
+std::vector<RoomManager::RoomName> RoomManager::room_names() {
+  std::vector<RoomName> rooms;
+  std::shared_ptr<NSPanelConfig> config;
+  if (NSPM_ConfigManager::get_config(&config) != ESP_OK || !config) {
+    return rooms;
+  }
+  std::lock_guard<std::mutex> lock(RoomManager::_room_names_mutex);
+  for (size_t i = 0; i < config->n_room_infos; i++) {
+    int32_t id = config->room_infos[i]->room_id;
+    auto known = RoomManager::_room_names.find(id);
+    rooms.push_back({(uint32_t)id, known != RoomManager::_room_names.end() ? known->second : std::string()});
+  }
+  return rooms;
+}
+
+void RoomManager::request_room_names() {
+  bool missing = false;
+  for (const RoomName &room : RoomManager::room_names()) {
+    missing = missing || room.name.empty();
+  }
+  std::string manager_address = NSPM_ConfigManager::get_manager_address();
+  if (!missing || manager_address.empty() || !RoomManager::_room_names_scan_topic.get().empty()) {
+    return; // Nothing to learn, nowhere to learn it, or already learning.
+  }
+  if (RoomManager::_room_names_scan_timer == NULL) {
+    esp_timer_create_args_t args = {};
+    args.callback = &RoomManager::_room_names_scan_done;
+    args.name = "room_names_scan";
+    if (esp_timer_create(&args, &RoomManager::_room_names_scan_timer) != ESP_OK) {
+      ESP_LOGE("RoomManager", "Failed to create the room names timer.");
+      return;
+    }
+  }
+  std::string topic = "nspanel/mqttmanager_" + manager_address + "/room/+/state";
+  ESP_LOGD("RoomManager", "Learning room names from %s.", topic.c_str());
+  RoomManager::_room_names_scan_topic.set(topic);
+  if (MqttManager::subscribe(topic) != ESP_OK) {
+    RoomManager::_room_names_scan_topic.set("");
+    return;
+  }
+  // The broker sends the retained states right after the subscription; a few seconds is plenty.
+  esp_timer_start_once(RoomManager::_room_names_scan_timer, 4 * 1000 * 1000);
+}
+
+void RoomManager::_room_names_scan_done(void *arg) {
+  std::string topic = RoomManager::_room_names_scan_topic.get();
+  MqttManager::unsubscribe(topic);
+  RoomManager::_room_names_scan_topic.set("");
+  size_t known = 0, total = 0;
+  for (const RoomName &room : RoomManager::room_names()) {
+    total++;
+    known += room.name.empty() ? 0 : 1;
+  }
+  ESP_LOGI("RoomManager", "Room names: %u of %u known.", (unsigned)known, (unsigned)total);
+  esp_event_post_to(RoomManager::_local_event_loop, ROOMMANAGER_EVENT, roommanager_event_t::ROOM_NAMES_UPDATED, NULL, 0, pdMS_TO_TICKS(250));
+}
+
+void RoomManager::_note_room_name(int32_t room_id, const char *name, bool notify) {
+  if (name == NULL || name[0] == '\0') {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(RoomManager::_room_names_mutex);
+    std::string &known = RoomManager::_room_names[room_id];
+    if (known == name) {
+      return;
+    }
+    known = name;
+  }
+  if (notify) {
+    esp_event_post_to(RoomManager::_local_event_loop, ROOMMANAGER_EVENT, roommanager_event_t::ROOM_NAMES_UPDATED, NULL, 0, pdMS_TO_TICKS(250));
   }
 }
 

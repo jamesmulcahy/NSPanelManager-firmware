@@ -122,20 +122,55 @@ static void update_boot() {
 }
 
 static HomeState home;
-static void build_home(lv_obj_t *root, bool landscape) {
-  HomeView::build(root, landscape);
+static void fill_home() {
   home = HomeState();
   home.room = "Kitchen";
-  home.mode = "Room lights";
+  home.rooms = {"Kitchen", "Master Bedroom", "Lounge", "Office", "Movie Theatre", "Master Bathroom", "Alex Bedroom",
+                "Laundry", "Formal Living", "Foyer", "Garage", "Gym", "Oliver"};
+  home.room_index = 0;
   home.time = "12:34 PM";
   home.ceiling = 80;
   home.table = 0;
   home.brightness = 80;
   home.color_temperature = 35;
+}
+static void build_home(lv_obj_t *root, bool landscape) {
+  HomeView::build(root, landscape);
+  fill_home();
   HomeView::show(home);
 }
 static void update_home() {
   home.brightness = home.ceiling = 55;
+  HomeView::show(home);
+}
+
+// The first dropdown under `obj`, depth first.
+static lv_obj_t *find_dropdown(lv_obj_t *obj) {
+  if (lv_obj_check_type(obj, &lv_dropdown_class)) {
+    return obj;
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_count(obj); i++) {
+    if (lv_obj_t *found = find_dropdown(lv_obj_get_child(obj, i))) {
+      return found;
+    }
+  }
+  return NULL;
+}
+static lv_obj_t *home_root = NULL;
+static void build_home_rooms(lv_obj_t *root, bool landscape) {
+  home_root = root;
+  build_home(root, landscape);
+}
+static void open_room_list() {
+  lv_dropdown_open(find_dropdown(home_root));
+}
+static void build_home_all(lv_obj_t *root, bool landscape) {
+  HomeView::build(root, landscape);
+  fill_home();
+  home.room = "All rooms";
+  home.room_index = -1;
+  home.all_rooms = true;
+  home.entities = false;
   HomeView::show(home);
 }
 
@@ -439,6 +474,8 @@ const std::vector<PageCase> &page_cases() {
   static const std::vector<PageCase> cases = {
       {"boot", build_boot, "loading text changes", update_boot},
       {"home", build_home, "brightness 80 -> 55", update_home},
+      {"home-rooms", build_home_rooms, "room list opens", open_room_list},
+      {"home-all", build_home_all, nullptr, nullptr},
       {"entities-4", build_entities4, "toggle a light", update_toggle_slot},
       {"entities-8", build_entities8, "toggle a light", update_toggle_slot},
       {"scenes-12", build_scenes, "scene saved", update_scenes},

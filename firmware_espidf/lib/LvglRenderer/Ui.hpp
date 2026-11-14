@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <lvgl.h>
 #include <string>
 
@@ -8,12 +9,15 @@
 // setters that only touch LVGL when a value really changed. Kept free of ESP-IDF headers (see
 // BootScreen.hpp), like everything a page uses.
 //
-// Why the "only if changed" setters matter: every lv_*_set_* call invalidates its object, and on
-// the stock display every invalidated pixel that differs is a fill on the wire. A page's show()
-// is called with the whole state every time anything changes, so it must cost nothing for what
-// didn't.
+// Why the "only if changed" setters matter: every lv_*_set_* call invalidates its object, and
+// every invalidated area is redrawn and sent to the display. A page's show() is called with the
+// whole state every time anything changes, so it must cost nothing for what didn't.
 
 namespace Ui {
+
+// A pop-up (the room list) is open and may scroll: the host must not take a drag for a swipe.
+// Set on the GUI task, read from any.
+inline std::atomic<bool> popup_open{false};
 
 void set_text(lv_obj_t *label, const std::string &text);
 void set_text(lv_obj_t *label, const char *text);

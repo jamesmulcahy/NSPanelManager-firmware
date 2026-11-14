@@ -3,8 +3,9 @@
 // protocol-8 records NextionTerminal would send (PackBits, COBS, headers), and the time at 4 Mbaud.
 // Built and run by build.sh.
 //
-// Writes OUT/<region>-<nn>-<page>.ppm per page, OUT/us-bg-<preset>-<page>.ppm for the pages over
-// each background preset, and every frame's cost to OUT/costs.csv. Page fixtures (mock data) are
+// Writes OUT/<region>-<nn>-<page>.ppm per page (and -after.ppm once its update is shown),
+// OUT/us-bg-<preset>-<page>.ppm for the pages over each background preset, and every frame's cost
+// to OUT/costs.csv. Page fixtures (mock data) are
 // in Pages.cpp.
 #include "Background.hpp"
 #include "BootScreen.hpp"
@@ -135,6 +136,7 @@ static void run(bool landscape, const char *out) {
         page.update();
         refresh();
         report(region, what + ": " + page.update_what);
+        write_ppm(std::string(out) + "/" + region + (plain ? "-" + std::string(number) : std::string("-bg-") + Background::name(preset)) + "-" + page.name + "-after.ppm");
       }
     }
   }

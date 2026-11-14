@@ -110,18 +110,121 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_add_event_cb(brightness.slider, slider_released, LV_EVENT_RELEASED, (void *)(intptr_t)Action::BRIGHTNESS);
   lv_obj_add_event_cb(kelvin.slider, slider_released, LV_EVENT_RELEASED, (void *)(intptr_t)Action::COLOR_TEMPERATURE);
 
-  // Footer: the room and the mode, each tapped to step to the next.
+  // Footer: the room, picked from a list that opens upwards, and the mode, a two-way switch.
   lv_obj_t *footer = Theme::group(parent, LV_FLEX_FLOW_ROW);
   lv_obj_set_size(footer, lv_pct(100), 48);
+
+  lv_obj_t *room = lv_dropdown_create(footer);
+  HomeView::_room = room;
+  HomeView::_options.clear();
+  HomeView::_room_text.clear();
+  HomeView::_catcher = NULL;
+  Ui::popup_open = false;
+  lv_obj_set_flex_grow(room, 3);
+  lv_obj_set_height(room, lv_pct(100));
+  lv_obj_set_style_radius(room, 12, 0);
+  lv_obj_set_style_border_width(room, 0, 0);
+  lv_obj_set_style_shadow_width(room, 0, 0);
+  lv_obj_set_style_bg_color(room, Theme::card(), 0);
+  lv_obj_set_style_bg_opa(room, Theme::card_opa(), 0);
+  lv_obj_set_style_bg_color(room, Theme::pressed(), LV_STATE_PRESSED);
+  lv_obj_set_style_text_font(room, Theme::body_font(), 0);
+  lv_obj_set_style_text_color(room, Theme::text(), 0);
+  lv_obj_set_style_pad_left(room, 16, 0);
+  lv_obj_set_style_pad_right(room, 10, 0);
+  lv_obj_set_style_pad_ver(room, 0, 0);
+  // The label sits mid-height: LVGL draws the button text from the top padding.
+  lv_obj_set_style_pad_top(room, (48 - lv_font_get_line_height(Theme::body_font())) / 2, 0);
+  lv_dropdown_set_dir(room, LV_DIR_TOP);
+  lv_dropdown_set_symbol(room, NSPM_ICON_CHEVRON_UP);
+  lv_obj_set_style_text_font(room, Theme::icon_font(24), LV_PART_INDICATOR);
+  lv_obj_set_style_text_color(room, Theme::muted(), LV_PART_INDICATOR);
+  lv_obj_t *list = lv_dropdown_get_list(room);
+  lv_obj_set_style_bg_color(list, Theme::card(), 0);
+  lv_obj_set_style_bg_opa(list, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(list, Theme::track(), 0);
+  lv_obj_set_style_border_width(list, 1, 0);
+  lv_obj_set_style_radius(list, 12, 0);
+  lv_obj_set_style_shadow_width(list, 0, 0);
+  lv_obj_set_style_text_font(list, Theme::body_font(), 0);
+  lv_obj_set_style_text_color(list, Theme::text(), 0);
+  // Rows a finger can hit: 14 px text 26 px apart, six rows before the list scrolls.
+  lv_obj_set_style_text_line_space(list, 26, 0);
+  lv_obj_set_style_pad_ver(list, 14, 0);
+  lv_obj_set_style_pad_hor(list, 16, 0);
+  lv_obj_set_style_max_height(list, 6 * (lv_font_get_line_height(Theme::body_font()) + 26) + 2, 0);
+  lv_obj_set_style_bg_color(list, Theme::track(), (lv_style_selector_t)LV_PART_SELECTED | (lv_style_selector_t)LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(list, Theme::pressed(), (lv_style_selector_t)LV_PART_SELECTED | (lv_style_selector_t)LV_STATE_PRESSED);
+  lv_obj_set_style_text_color(list, Theme::on(), (lv_style_selector_t)LV_PART_SELECTED | (lv_style_selector_t)LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(list, Theme::muted(), LV_PART_SCROLLBAR);
+  for (lv_event_code_t code : {LV_EVENT_READY, LV_EVENT_CANCEL, LV_EVENT_VALUE_CHANGED, LV_EVENT_DELETE}) {
+    lv_obj_add_event_cb(room, HomeView::_room_event, code, NULL);
+  }
+
+  lv_obj_t *mode = Theme::group(footer, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_grow(mode, 2);
+  lv_obj_set_height(mode, lv_pct(100));
+  lv_obj_set_style_bg_color(mode, Theme::card(), 0);
+  lv_obj_set_style_bg_opa(mode, Theme::card_opa(), 0);
+  lv_obj_set_style_radius(mode, 12, 0);
+  lv_obj_set_style_pad_all(mode, 4, 0);
+  lv_obj_set_style_pad_gap(mode, 4, 0);
   for (int i = 0; i < 2; i++) {
-    lv_obj_t *button = Ui::tile(footer, NSPM_ICON_CHEVRON_DOWN, 24, "", true);
-    lv_obj_set_flex_grow(button, 1);
-    lv_obj_set_height(button, lv_pct(100));
-    lv_obj_set_style_pad_left(button, 8, 0);
-    lv_obj_set_style_pad_gap(button, 6, 0);
-    lv_obj_set_style_text_color(Ui::tile_icon(button), Theme::muted(), 0);
-    on_click(button, i == 0 ? Action::NEXT_ROOM : Action::NEXT_MODE, LV_EVENT_CLICKED);
-    (i == 0 ? HomeView::_room : HomeView::_mode) = Ui::tile_label(button);
+    lv_obj_t *half = lv_button_create(mode);
+    lv_obj_set_flex_grow(half, 1);
+    lv_obj_set_height(half, lv_pct(100));
+    lv_obj_set_style_radius(half, 9, 0);
+    lv_obj_set_style_shadow_width(half, 0, 0);
+    lv_obj_set_style_bg_opa(half, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(half, LV_OPA_COVER, LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(half, Theme::track(), LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(half, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(half, Theme::pressed(), LV_STATE_PRESSED);
+    lv_obj_set_style_text_color(half, Theme::muted(), 0);
+    lv_obj_set_style_text_color(half, Theme::text(), LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(half, Theme::muted(), LV_STATE_DISABLED);
+    // A plain label, so its colour follows the button's state.
+    lv_obj_t *label = lv_label_create(half);
+    lv_label_set_text_static(label, i == 0 ? "Room" : "All");
+    lv_obj_set_style_text_font(label, Theme::body_font(), 0);
+    lv_obj_center(label);
+    lv_obj_add_event_cb(half, [](lv_event_t *event) { emit(Action::SET_MODE, (int32_t)(intptr_t)lv_event_get_user_data(event)); },
+                        LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    (i == 0 ? HomeView::_mode_room : HomeView::_mode_all) = half;
+  }
+}
+
+void HomeView::_room_event(lv_event_t *event) {
+  lv_obj_t *room = (lv_obj_t *)lv_event_get_current_target(event);
+  switch (lv_event_get_code(event)) {
+  case LV_EVENT_READY: {
+    // Opened. A transparent layer under the list takes any tap outside it, so that tap only closes
+    // the list (the dropdown closes on defocus, which needs input groups this UI does not use).
+    lv_obj_t *screen = lv_obj_get_screen(room);
+    lv_obj_t *catcher = lv_obj_create(screen);
+    lv_obj_remove_style_all(catcher);
+    lv_obj_add_flag(catcher, (lv_obj_flag_t)(LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING));
+    lv_obj_set_size(catcher, lv_pct(100), lv_pct(100));
+    lv_obj_add_event_cb(catcher, [](lv_event_t *e) { lv_dropdown_close((lv_obj_t *)lv_event_get_user_data(e)); }, LV_EVENT_CLICKED, room);
+    lv_obj_move_foreground(lv_dropdown_get_list(room));
+    HomeView::_catcher = catcher;
+    Ui::popup_open = true; // No swipe-down menu while the list scrolls
+    break;
+  }
+  case LV_EVENT_CANCEL:
+  case LV_EVENT_DELETE:
+    // Closed, or the page is going (the catcher is the screen's, not the page's).
+    if (HomeView::_catcher != NULL) {
+      lv_obj_delete_async(HomeView::_catcher);
+      HomeView::_catcher = NULL;
+    }
+    Ui::popup_open = false;
+    break;
+  case LV_EVENT_VALUE_CHANGED:
+    emit(Action::SELECT_ROOM, (int32_t)lv_dropdown_get_selected(room));
+    break;
+  default:
+    break;
   }
 }
 
@@ -155,6 +258,33 @@ void HomeView::show(const HomeState &state) {
   Ui::set_text(HomeView::_brightness_value, text);
   snprintf(text, sizeof(text), "%d%%", state.color_temperature);
   Ui::set_text(HomeView::_kelvin_value, text);
-  Ui::set_text(HomeView::_room, state.room);
-  Ui::set_text(HomeView::_mode, state.mode);
+
+  // The room list, and what the button reads: the selected room, or the given text (all-rooms
+  // mode, or a room not in the list).
+  std::string options;
+  for (const std::string &name : state.rooms) {
+    options += (options.empty() ? "" : "\n") + name;
+  }
+  if (options.empty()) {
+    options = state.room;
+  }
+  if (options != HomeView::_options) {
+    HomeView::_options = options;
+    lv_dropdown_set_options(HomeView::_room, options.c_str());
+  }
+  const bool in_list = state.room_index >= 0 && state.room_index < (int)state.rooms.size();
+  if (in_list) {
+    if (lv_dropdown_get_selected(HomeView::_room) != (uint32_t)state.room_index) {
+      lv_dropdown_set_selected(HomeView::_room, state.room_index);
+    }
+    if (lv_dropdown_get_text(HomeView::_room) != NULL) {
+      lv_dropdown_set_text(HomeView::_room, NULL);
+    }
+  } else if (state.room != HomeView::_room_text || lv_dropdown_get_text(HomeView::_room) == NULL) {
+    HomeView::_room_text = state.room;
+    lv_dropdown_set_text(HomeView::_room, HomeView::_room_text.c_str());
+  }
+  Ui::set_checked(HomeView::_mode_room, !state.all_rooms);
+  Ui::set_checked(HomeView::_mode_all, state.all_rooms);
+  Ui::set_enabled(HomeView::_mode_all, state.all_allowed || state.all_rooms);
 }

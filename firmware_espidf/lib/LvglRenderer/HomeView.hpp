@@ -1,6 +1,7 @@
 #pragma once
 #include <lvgl.h>
 #include <string>
+#include <vector>
 
 // LVGL replacement for the Nextion `home` page (lib/Pages/HomePage). Pure LVGL, no firmware
 // headers: HomePage would fill a HomeState from RoomManager and handle the actions.
@@ -11,8 +12,10 @@
 struct HomeState {
   enum class Edit { ALL, CEILING, TABLE }; // Which lights the sliders change (a long press on a tile)
 
-  std::string room;         // "Kitchen", or "All" in all-rooms mode
-  std::string mode;         // "Room lights" / "All lights"
+  std::string room;         // "Kitchen", or "All" in all-rooms mode: what the room button reads
+  std::vector<std::string> rooms; // The room list, in order
+  int room_index = -1;      // The current room's place in `rooms`, -1 for none (all-rooms mode)
+  bool all_allowed = true;  // The mode switch may go to "All" (not when locked to the default room)
   std::string time;         // The clock in the corner ("12:34 PM")
   bool all_rooms = false;   // Scenes button shows the all-rooms picture
   int ceiling = 0;          // Brightness 0-100, 0 = off
@@ -33,8 +36,8 @@ public:
     TABLE_LONG,
     BRIGHTNESS,      // value: 0-100, on release
     COLOR_TEMPERATURE,
-    NEXT_ROOM,       // b_nextroom
-    NEXT_MODE,       // mode
+    SELECT_ROOM,     // value: the room's index in HomeState::rooms
+    SET_MODE,        // value: 0 the room's lights, 1 every room's
     // Every press and release of the light tiles, for a host that times the hold itself (HomePage's
     // special_mode_trigger_time), as the Nextion buttons report them.
     CEILING_DOWN,
@@ -65,6 +68,13 @@ private:
   static inline lv_obj_t *_brightness_value = NULL;
   static inline lv_obj_t *_kelvin = NULL;
   static inline lv_obj_t *_kelvin_value = NULL;
-  static inline lv_obj_t *_room = NULL;
-  static inline lv_obj_t *_mode = NULL;
+  static inline lv_obj_t *_room = NULL;      // The room dropdown
+  static inline lv_obj_t *_mode_room = NULL; // The mode switch's halves
+  static inline lv_obj_t *_mode_all = NULL;
+  static inline lv_obj_t *_catcher = NULL;   // Behind the open room list: a tap there closes it
+  // What the dropdown holds (it keeps a pointer to its button text, not a copy).
+  static inline std::string _options;
+  static inline std::string _room_text;
+
+  static void _room_event(lv_event_t *event);
 };

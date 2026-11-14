@@ -4034,7 +4034,7 @@ CONFIG_LV_USE_BUTTON=y
 # CONFIG_LV_USE_CHART is not set
 # default:
 # CONFIG_LV_USE_CHECKBOX is not set
-# CONFIG_LV_USE_DROPDOWN is not set
+CONFIG_LV_USE_DROPDOWN=y
 # default:
 # CONFIG_LV_USE_FFMPEG is not set
 # default:
