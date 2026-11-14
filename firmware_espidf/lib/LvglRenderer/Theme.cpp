@@ -2,6 +2,7 @@
 
 // Subsets of Montserrat (tools/gen_fonts.sh): only the characters and symbols the screens use.
 LV_FONT_DECLARE(nspm_font_clock_48);
+LV_FONT_DECLARE(nspm_font_clock_88);
 LV_FONT_DECLARE(nspm_font_title);
 LV_FONT_DECLARE(nspm_font_body);
 LV_FONT_DECLARE(nspm_font_large);
@@ -12,6 +13,7 @@ LV_FONT_DECLARE(nspm_font_icon_64);
 namespace Theme {
 
 const lv_font_t *clock_font() { return &nspm_font_clock_48; }
+const lv_font_t *big_clock_font() { return &nspm_font_clock_88; }
 const lv_font_t *title_font() { return &nspm_font_title; }
 const lv_font_t *body_font() { return &nspm_font_body; }
 const lv_font_t *large_font() { return &nspm_font_large; }

@@ -34,6 +34,8 @@ inline int32_t usable_height(bool landscape) { return landscape ? 320 : 480; }
 
 // The clock's digits (tools/lv_font_subset.py), and the text sizes.
 const lv_font_t *clock_font();
+// The screensaver clock on a portrait screen: digits, colon and dash only.
+const lv_font_t *big_clock_font();
 const lv_font_t *title_font();
 const lv_font_t *body_font();
 // Montserrat 32, digits and what temperatures need ("72°F", "-3.5°C", "45%").

@@ -34,6 +34,9 @@ montserrat="${MONTSERRAT_TTF:-${LVGL_DIR:-$root/managed_components/lvgl__lvgl}/s
 latin=00A1-00FF,2013-2014,2018-201E,2022,2026
 "$python" -I "$here/lv_icon_font.py" --ttf "$montserrat" --size 14 --bpp "$body_bpp" --codes "$latin" nspm_font_body_latin > "$out/nspm_font_body_latin.c"
 "$python" -I "$here/lv_icon_font.py" --ttf "$montserrat" --size 20 --bpp "$large_bpp" --codes "$latin" nspm_font_title_latin > "$out/nspm_font_title_latin.c"
+# The screensaver's clock on a portrait screen: larger than LVGL's largest built-in size, so
+# rasterised from the TTF. Digits, colon and dash: 88 px still fits "10:00 PM" across the card.
+"$python" -I "$here/lv_icon_font.py" --ttf "$montserrat" --size 88 --bpp "$large_bpp" --codes 002D,0030-003A nspm_font_clock_88 > "$out/nspm_font_clock_88.c"
 icons --ttf "$mdi" --size 24 --bpp "$large_bpp" nspm_font_icon_24 > "$out/nspm_font_icon_24.c"
 # Tiles, transport and big buttons.
 icons --ttf "$mdi" --size 40 --bpp "$large_bpp" --icons chevron-left,chevron-right,ceiling-light,lamp,lamps,lightbulb,lightbulb-outline,lightbulb-group,toggle-switch,toggle-switch-off-outline,power-socket-us,fan,gesture-tap-button,window-shutter,window-shutter-open,blinds,garage,thermostat,television,coffee-maker,sofa,speaker,palette,palette-swatch,play,pause,skip-previous,skip-next,shield-home,shield-off,weather-night,spray-bottle,restart,music,arrow-up,arrow-down,stop nspm_font_icon_40 > "$out/nspm_font_icon_40.c"

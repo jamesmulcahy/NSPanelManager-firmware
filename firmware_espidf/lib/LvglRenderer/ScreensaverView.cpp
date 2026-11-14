@@ -41,13 +41,14 @@ static lv_obj_t *reading(lv_obj_t *parent, const char *glyph, lv_obj_t **icon, l
   return row;
 }
 
-static lv_obj_t *clock(lv_obj_t *parent, lv_obj_t **time, lv_obj_t **am_pm) {
+static lv_obj_t *clock(lv_obj_t *parent, lv_obj_t **time, lv_obj_t **am_pm, const lv_font_t *font = Theme::clock_font()) {
   lv_obj_t *row = Theme::group(parent, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
   lv_obj_set_style_pad_gap(row, 6, 0);
-  *time = Theme::label(row, "", Theme::clock_font(), Theme::text());
+  *time = Theme::label(row, "", font, Theme::text());
   *am_pm = Theme::label(row, "", Theme::title_font(), Theme::muted());
-  lv_obj_set_style_pad_bottom(*am_pm, 8, 0);
+  // On the digits' baseline: the font's line has room below it for descenders the digits lack.
+  lv_obj_set_style_pad_bottom(*am_pm, font == Theme::clock_font() ? 8 : 16, 0);
   return row;
 }
 
@@ -77,10 +78,16 @@ void ScreensaverView::_build_weather(bool landscape) {
 
   lv_obj_set_flex_align(time, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_gap(time, 0, 0);
-  clock(time, &ScreensaverView::_time, &ScreensaverView::_am_pm);
-  ScreensaverView::_date = Theme::label(time, "", Theme::body_font(), Theme::muted());
-  ScreensaverView::_inside_group = reading(time, NSPM_ICON_HOME_THERMOMETER, NULL, &ScreensaverView::_inside, Theme::body_font());
-  lv_obj_set_style_pad_top(ScreensaverView::_inside_group, 4, 0);
+  // The clock as large as the card's width allows on a portrait screen; below it the date and the
+  // room's temperature share one row, to give the clock the height.
+  clock(time, &ScreensaverView::_time, &ScreensaverView::_am_pm, landscape ? Theme::clock_font() : Theme::big_clock_font());
+  // (A landscape card is half the width: the two stay stacked there.)
+  lv_obj_t *below = Theme::group(time, landscape ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+  lv_obj_set_width(below, lv_pct(100));
+  lv_obj_set_style_pad_gap(below, 4, 0);
+  lv_obj_set_flex_align(below, landscape ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  ScreensaverView::_date = Theme::label(below, "", Theme::body_font(), Theme::muted());
+  ScreensaverView::_inside_group = reading(below, NSPM_ICON_HOME_THERMOMETER, NULL, &ScreensaverView::_inside, Theme::body_font());
 
   lv_obj_set_style_pad_gap(now, 4, 0);
   ScreensaverView::_outside_group = Theme::group(now, LV_FLEX_FLOW_ROW);
