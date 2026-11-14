@@ -124,6 +124,8 @@ private:
   // _status_report_mutex; the text must outlive packing, since the protobuf only points at it.
   static inline NSPanelWarning _link_baud_warning;
   static inline std::string _link_baud_warning_text;
+  // Holds the text _status_report.ip_address points at while the report is packed.
+  static inline std::string _ip_address_text;
   static inline NSPanelWarning *_warnings[1];
 
 #if defined(BOARD_CUSTOM)

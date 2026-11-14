@@ -158,7 +158,10 @@ void StatusUpdateManager::_send_status_update(void *arg) {
 
     size_t heap_used_pct = (total_heap_used / total_heap_size) * 100;
     StatusUpdateManager::_status_report.heap_used_pct = heap_used_pct;
-    StatusUpdateManager::_status_report.ip_address = (char *)WiFiManager::ip_string().c_str();
+    // Kept in a member: ip_string() returns a temporary, which would be freed before the report is
+    // packed below (it read as an empty address once built -Os).
+    StatusUpdateManager::_ip_address_text = WiFiManager::ip_string();
+    StatusUpdateManager::_status_report.ip_address = (char *)StatusUpdateManager::_ip_address_text.c_str();
     StatusUpdateManager::_status_report.temperature = StatusUpdateManager::_measured_average_temperature.get();
 #if defined(BOARD_CUSTOM)
     StatusUpdateManager::_status_report.humidity = StatusUpdateManager::_measured_average_humidity.get();
