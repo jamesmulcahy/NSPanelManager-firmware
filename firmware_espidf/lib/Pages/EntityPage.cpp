@@ -577,13 +577,15 @@ void EntityPage::_handle_string_event_thermostat(const std::shared_ptr<NSPanelEn
   } else if (strcmp(data, "deactivatetemp") == 0) { // We've changed the temperature. Send updated temperature to manager.
     EntityPage::_send_thermostat_setpoint_command();
   } else if (strcmp(data, "back") == 0) {
-    EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
-
+    // Send what is pending before leaving: sending redraws this page, and once the entities page has
+    // begun, EntityPage's unshow has cleared _currently_showing, so that redraw would open the
+    // thermostat page again (on Office: "back" did nothing).
     if (EntityPage::_is_currently_editing) [[unlikely]] { // We are currently in editing mode, send the current option.
       EntityPage::_send_thermostat_option_command();
     } else {
       EntityPage::_send_thermostat_setpoint_command();
     }
+    EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
   } else if (strcmp(data, "tempup") == 0) {
     if (EntityPage::_is_currently_editing) {
       if (EntityPage::_selected_thermostat_option_index < state->thermostat->n_options) {
