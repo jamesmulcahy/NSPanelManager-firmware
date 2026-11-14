@@ -41,23 +41,40 @@ void EntitiesPage::show(display_type_t display_type) {
   }
 
   // If current room has an entities page, go to it and if not, show the next available entities page.
+  esp_err_t found = ESP_FAIL;
   switch (display_type) {
   case display_type_t::ENTITIES:
-    RoomManager::go_to_first_entities_page();
+    found = RoomManager::go_to_first_entities_page();
     break;
 
   case display_type_t::SCENES:
-    RoomManager::go_to_first_scenes_page();
+    found = RoomManager::go_to_first_scenes_page();
     break;
 
   case display_type_t::GLOBAL_SCENES:
-    RoomManager::go_to_first_global_scenes_page();
+    found = RoomManager::go_to_first_global_scenes_page();
     break;
 
   default:
     ESP_LOGE("EntitiesPage", "Unknown display type! Will return to HomePage.");
     HomePage::show();
-    break;
+    return;
+  }
+
+  if (found != ESP_OK) {
+    // Nothing to show (a room without scenes, say): no page data will arrive. Say so, rather than leave
+    // the last page on screen with no page behind it to take its touches.
+    const char *what = display_type == display_type_t::ENTITIES ? "No entities" : "No scenes";
+    ESP_LOGI("EntitiesPage", "%s to show.", what);
+    if (LvglUi::active()) {
+      EntitiesState state;
+      state.header = what;
+      state.can_prev = false;
+      state.can_next = false;
+      LvglUi::show(LvglUi::View::ENTITIES, EntitiesView::build, [state]() { EntitiesView::show(state); });
+    } else {
+      HomePage::show(); // The Nextion items pages have no way to say it.
+    }
   }
 
   // if (RoomManager::get_current_room_entities_page_status(&EntitiesPage::_current_entities_page) != ESP_OK) [[unlikely]] {
