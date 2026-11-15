@@ -15,10 +15,10 @@ using the same topics and retained-message conventions as the real manager
   manager -> nspanel/mqttmanager_<addr>/all_rooms_status       NSPanelRoomStatus (retained)
   manager -> nspanel/mqttmanager_<addr>/entity_pages/<id>/state NSPanelRoomEntitiesPage (retained)
   manager -> nspanel/mqttmanager_<addr>/status/weather          NSPanelWeatherUpdate (retained)
-  panel   -> nspanel/mqttmanager_<addr>/command      NSPanelMQTTManagerCommand
-  panel   -> nspanel/<mac>/lvgl_look                 a look chosen on the panel (JSON); with
-                                                     confirm_looks, answered as the manager does:
-                                                     the config again, with that look
+  panel   -> nspanel/mqttmanager_<addr>/command      NSPanelMQTTManagerCommand; its lvgl_look (a look
+                                                     chosen on the panel) is, with confirm_looks,
+                                                     answered as the manager does: the config again,
+                                                     with that look
 """
 
 import json
@@ -108,6 +108,45 @@ def default_entity_pages() -> Dict[int, "pb.NSPanelRoomEntitiesPage"]:
             ],
         )
     return pages
+
+
+def _fields(data: bytes):
+    """(number, wire type, value) of each top-level protobuf field; value is bytes for length-delimited
+    fields and an int for varints (the only two wire types these messages use)."""
+    def varint(i: int):
+        n = shift = 0
+        while True:
+            byte = data[i]
+            n |= (byte & 0x7F) << shift
+            i += 1
+            if not byte & 0x80:
+                return n, i
+            shift += 7
+    i = 0
+    while i < len(data):
+        key, i = varint(i)
+        number, wire = key >> 3, key & 7
+        if wire == 0:
+            value, i = varint(i)
+        elif wire == 2:
+            size, i = varint(i)
+            value, i = data[i:i + size], i + size
+        else:
+            raise ValueError("wire type %d" % wire)
+        yield number, wire, value
+
+
+def lvgl_look_of(command_payload: bytes) -> Optional[Dict[str, str]]:
+    """NSPanelMQTTManagerCommand.lvgl_look (field 11: LvglLook {theme = 1, background = 2}) as
+    {"theme", "background"}, decoded by hand (the pinned .proto may not have it), or None."""
+    for number, wire, value in _fields(command_payload):
+        if number == 11 and wire == 2:
+            look = {"theme": "", "background": ""}
+            for inner, inner_wire, inner_value in _fields(value):
+                if inner_wire == 2 and inner in (1, 2):
+                    look["theme" if inner == 1 else "background"] = inner_value.decode()
+            return look
+    return None
 
 
 def _string_field(number: int, value: str) -> bytes:
@@ -291,25 +330,22 @@ class FakeManager:
         # Broker listeners only see what the panel published, never the harness's own messages.
         if msg.topic == "nspanel/mqttmanager/command":
             self._on_register_request(msg)
-        elif self.panel_mac is not None and msg.topic == "nspanel/%s/lvgl_look" % self.panel_mac:
-            try:
-                report = json.loads(msg.payload)
-            except ValueError:
-                log.warning("unparseable look report: %r", msg.payload[:64])
-                return
-            log.info("look from panel: %s", report)
-            with self._cond:
-                self.look_reports.append(report)
-                self._cond.notify_all()
-            if self.confirm_looks:
-                self.lvgl_look = {"theme": report["theme"], "background": report["background"]}
-                self.publish_config()
         elif msg.topic == self.command_topic:
             cmd = pb.NSPanelMQTTManagerCommand()
             try:
                 cmd.ParseFromString(msg.payload)
+                report = lvgl_look_of(msg.payload)
             except Exception:
                 log.warning("undecodable command on %s: %r", msg.topic, msg.payload[:64])
+                return
+            if report is not None:
+                log.info("look from panel: %s", report)
+                with self._cond:
+                    self.look_reports.append(report)
+                    self._cond.notify_all()
+                if self.confirm_looks:
+                    self.lvgl_look = {"theme": report["theme"], "background": report["background"]}
+                    self.publish_config()
                 return
             log.info("command from panel: %s", cmd.WhichOneof("CommandData"))
             with self._cond:

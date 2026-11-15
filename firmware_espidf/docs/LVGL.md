@@ -57,8 +57,9 @@ menu nor the page (`LookPage::show()` returns unless `LvglUi::active()`).
 
 ### Reporting, and who wins
 
-A look set on the panel (picker or command) is published, not retained, on
-`nspanel/<MAC>/lvgl_look` as `{"background": "ocean", "theme": "auto"}`, names made canonical
+A look set on the panel (picker or command) is reported to the manager as a command on its
+protobuf command topic, like the panel's other actions: `NSPanelMQTTManagerCommand.lvgl_look`
+(`LvglLook { theme, background }`, field 11, with the panel's `nspanel_id`), names made canonical
 (`light` is `grey`, unknown names `auto` / `none`). It stays **unconfirmed**
 (`ConfigManager::lvgl_look_unconfirmed`, saved, so a reboot keeps it) until a config arrives whose
 look (both fields) is the same; a manager that knows the report saves it as the panel's settings and
