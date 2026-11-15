@@ -23,12 +23,10 @@ on:
         required: false
 
 env:
-  # The dev stack is not in NSPanelManager upstream yet: it lives on a fork, together with the
-  # MQTTManager fix these tests need (NSPManager/NSPanelManager#399; without it MQTTManager
-  # crashes on "database is locked" when the tests change the database back to back).
-  # Re-point to NSPManager/NSPanelManager and its devel branch once both are merged there.
   NSPM_REPO: jamesmulcahy/NSPanelManager
-  NSPM_REF: ${{ inputs.nspm_ref || 'feat/dev-stack' }}
+  # The manager under test: the fork's dev stack (docker/dev), from jamesmulcahy/NSPanelManager#1.
+  # Once that is merged, use the manager's fork branch here.
+  NSPM_REF: ${{ inputs.nspm_ref || 'feat/dev-stack-fork' }}
   # Where the stack's broker and web UI are published on the runner.
   NSPM_DEV_MQTT_PORT: "18830"
   NSPM_DEV_MQTT_BIND: "127.0.0.1"
@@ -68,7 +66,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.NSPM_CONAN_CACHE }}
-          key: stack-conan-${{ hashFiles('nspanelmanager/docker/MQTTManager/conanfile.py', 'nspanelmanager/docker/dev/Dockerfile') }}
+          key: stack-conan-${{ hashFiles('nspanelmanager/docker/MQTTManager/conanfile.py', 'nspanelmanager/docker/Dockerfile', 'nspanelmanager/docker/dev/Dockerfile') }}
           restore-keys: stack-conan-
 
       # In the background: building the stack's images and then MQTTManager (inside the
