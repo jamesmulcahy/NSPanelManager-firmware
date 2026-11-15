@@ -1,0 +1,59 @@
+name: "CI gate"
+
+# The one check to mark as required on the fork branch. The other workflows are path-filtered, so
+# a pull request only runs the ones its changes touch, and a workflow that never starts leaves a
+# required check waiting forever. This job always runs: it waits for every other check run on the
+# pull request's head commit to finish, and fails if any of them failed.
+
+on:
+  pull_request:
+    branches:
+      - "fork"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  checks: read
+  contents: read
+
+jobs:
+  gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    # Long enough for the slowest check: the QEMU suite, or the stack tests with a cold Conan cache.
+    timeout-minutes: 180
+    steps:
+      - name: Wait for the other checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          SELF: CI gate
+        run: |
+          # Give the other workflows time to queue their check runs.
+          sleep 60
+          while :; do
+            runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+                     --jq ".check_runs[] | select(.name != \"$SELF\") | [.name, .status, (.conclusion // \"\")] | @tsv")
+            pending=$(awk -F'\t' '$2 != "completed"' <<< "$runs")
+            if [ -z "$pending" ]; then break; fi
+            echo "Waiting for: $(cut -f1 <<< "$pending" | paste -sd, -)"
+            sleep 60
+          done
+          if [ -z "$runs" ]; then
+            echo "No other checks ran for these changes." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "| Check | Conclusion |"
+            echo "|---|---|"
+            awk -F'\t' '{ printf "| %s | %s |\n", $1, $3 }' <<< "$runs"
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=$(awk -F'\t' '$3 !~ /^(success|skipped|neutral)$/' <<< "$runs")
+          if [ -n "$failed" ]; then
+            echo "Failed: $(cut -f1 <<< "$failed" | paste -sd, -)"
+            exit 1
+          fi
+          echo "All $(grep -c . <<< "$runs") checks passed."
