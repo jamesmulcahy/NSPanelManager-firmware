@@ -1,12 +1,15 @@
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
+#include <LookPage.hpp>
 #include <LvglUi.hpp>
 #include <MenuPage.hpp>
 #include <MenuView.hpp>
 #include <esp_log.h>
 #include <nspm_icons.h>
 
-// The dropdown page's items (MenuView; the simulator's mock in test/host/lvgl_sim/Pages.cpp): only "Clean screen" does anything.
+// The dropdown page's items (MenuView; the simulator's mock in test/host/lvgl_sim/Pages.cpp): "Look"
+// and "Clean screen" do something, the rest are the HMI's placeholders.
+static constexpr int LOOK_ITEM = 3;
 static constexpr int CLEAN_SCREEN_ITEM = 4;
 
 void MenuPage::show() {
@@ -22,6 +25,7 @@ void MenuPage::show() {
   state.items[0] = {NSPM_ICON_SHIELD_HOME, "ON", "Coming soon...", true};
   state.items[1] = {NSPM_ICON_WEATHER_NIGHT, "ON", "Coming soon...", true};
   state.items[2] = {NSPM_ICON_SHIELD_OFF, "Disarmed", "Coming soon...", false};
+  state.items[LOOK_ITEM] = {NSPM_ICON_PALETTE, "Look", "", false};
   state.items[CLEAN_SCREEN_ITEM] = {NSPM_ICON_SPRAY_BOTTLE, "Clean screen", "", false};
   LvglUi::show(LvglUi::View::MENU, MenuView::build, [state]() { MenuView::show(state); });
 }
@@ -35,6 +39,8 @@ void MenuPage::_action(int action, int32_t item) {
   }
   if ((MenuView::Action)action == MenuView::Action::BACK) {
     HomePage::show();
+  } else if (item == LOOK_ITEM) {
+    LookPage::show();
   } else if (item == CLEAN_SCREEN_ITEM) {
     MenuPage::show_clean_screen();
   }
@@ -92,7 +98,8 @@ void MenuPage::_tick(void *arg) {
 void MenuPage::swipe_down() {
   if (InterfaceManager::is_current_page(HomePage::unshow)) {
     MenuPage::show();
-  } else if (InterfaceManager::is_current_page(MenuPage::unshow) || InterfaceManager::is_current_page(MenuPage::unshow_clean_screen)) {
+  } else if (InterfaceManager::is_current_page(MenuPage::unshow) || InterfaceManager::is_current_page(MenuPage::unshow_clean_screen) ||
+             InterfaceManager::is_current_page(LookPage::unshow)) {
     HomePage::show();
   }
 }

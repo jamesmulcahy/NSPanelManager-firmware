@@ -28,9 +28,71 @@ On `nspanel/<MAC>/command`:
 | Command | Effect |
 |---|---|
 | `{"command": "lvgl_ui", "enable": false}` | Keep the Nextion pages whatever the TFT (saved; reboots). A kill switch that needs no TFT reinstall; on a terminal TFT the display then shows the TFT's own "waiting" page, but the panel still takes MQTT, firmware and TFT updates |
-| `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once) |
-| `{"command": "lvgl_theme", "theme": "grey"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `grey`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once). `light` is taken as `grey`: the white palette it named was too bright from above. A tile or menu item that is on takes the palette's accent, mixed into its card |
+| `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once; reported, see "The look") |
+| `{"command": "lvgl_theme", "theme": "grey"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `grey`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once; reported). `light` is taken as `grey`: the white palette it named was too bright from above. A tile or menu item that is on takes the palette's accent, mixed into its card |
 | `{"command": "lvgl_tap", "x": 160, "y": 20, "hold_ms": 100}` | A touch through the LVGL path, for testing without a finger; `x2`/`y2` make it a swipe |
+
+Both look commands do nothing when they repeat the look in use (no flash write, no repaint).
+
+## The look
+
+The look is a page background and a palette (`ConfigManager::lvgl_background` / `lvgl_theme`, saved
+in `config.json`, so the boot screen has it before the manager answers). It is set three ways, all
+through `LvglLook` (`lib/LvglUi/LvglLook.cpp`):
+
+| From | How | Reported to the manager |
+|---|---|---|
+| The manager's config | `NSPanelConfig.lvgl_theme` (49) / `lvgl_background` (50), on every config. Empty: not managed, keep the panel's own. Applied only when it differs | No: the manager knows it |
+| The commands above | Applied at once | Yes |
+| The person at the panel | Swipe down, **Look**: a page of six looks (`LookView`, `Looks::ALL`): Ocean, Dusk, Aurora and Peaks (that background with `auto`, its own palette), Dark and Grey (no background). The look in use has the amber outline; a tap applies, saves and reports, and the page stays | Yes |
+
+![The look picker](look-picker.png)
+
+The picker shows each look as a small screen: the background's art scaled from `Background::render_row()`
+into LVGL's heap when the page is built (132x96, 25 KB each, freed with the page; nothing in flash),
+with a card in the palette's card, text and accent colours. On a landscape (EU) screen, where no
+background is drawn, the previews are the palette's colours only. A combination the manager set that
+is not one of the six (say `grey` over `ocean`) selects none. Panels on NSPM's TFT have neither the
+menu nor the page (`LookPage::show()` returns unless `LvglUi::active()`).
+
+### Reporting, and who wins
+
+A look set on the panel (picker or command) is published, not retained, on
+`nspanel/<MAC>/lvgl_look` as `{"background": "ocean", "theme": "auto"}`, names made canonical
+(`light` is `grey`, unknown names `auto` / `none`). It stays **unconfirmed**
+(`ConfigManager::lvgl_look_unconfirmed`, saved, so a reboot keeps it) until a config arrives whose
+look (both fields) is the same; a manager that knows the report saves it as the panel's settings and
+answers with exactly that config. While it is unconfirmed:
+
+- a config with another look is not applied: it was sent before the manager had the report (a
+  settings save crossing it), or it is the retained config replayed after a reconnect or boot;
+- that config makes the panel send the report again, at most every 10 s
+  (`LvglLook::REPORT_INTERVAL_US`): it covers a report lost (QoS 0, or MQTT was down when the look
+  was picked) and a manager that was not running. The spacing is the guard against a manager that
+  answers a report with another look: the two cannot go back and forth faster than that.
+- a command still applies (it is the newest explicit change), and becomes the unconfirmed look.
+
+So the newest change wins, with one tie-break: a look picked on the panel while it could not reach
+the manager beats a change made in the manager meanwhile, as the panel cannot tell their order and
+somebody standing at it saw the result.
+
+`register_request` lists `"features": ["lvgl_look"]`. A manager that knows it sends this panel no
+`lvgl_theme` / `lvgl_background` commands, only the config. That matters: those commands are not
+answers to anything, so one sent on registration would overtake a report still on its way.
+
+| Manager | What happens |
+|---|---|
+| Knows the report (NSPanelManager `feat/lvgl-look-from-panel`) | Picks are saved as the panel's settings and show on its settings page; the config confirms them; later changes in the manager reach the panel through the config |
+| Sends config fields and commands but not reports (`feat/lvgl-panel-mode`) | A pick works and survives reboots. It stays unconfirmed: configs with the manager's look are ignored, and the report is sent again (to nobody) with each config, at most every 10 s. A command (a change in the manager's settings, or the look it sends once per manager start) replaces the pick. To keep picks, leave the panel's look on "Keep the panel's own" there |
+| Neither (upstream NSPM) | A pick works and survives reboots; the config's look fields are absent (empty), so nothing replaces it. The report goes to a topic nobody subscribes to: no error on the manager |
+
+The status report also says what the display shows (`display_mode`: `NEXTION`, `LVGL`, or
+`TERMINAL_IDLE` for a terminal TFT with LVGL off or failed to start; `LvglUi::display_mode()`) and,
+in LVGL mode, the look in use (`lvgl_theme`, `lvgl_background`).
+
+The protobuf-c files in `lib/ProtoBuf` are copied from NSPanelManager's `protobuf_firmware/` on
+`feat/lvgl-panel-mode` (protoc 27.0, protobuf-c 1.4.1): fields added only, nothing renumbered. The
+config grows by at most ~20 bytes and the status report by ~20, far inside the 4 KB MQTT buffer.
 
 ## Screenshots
 

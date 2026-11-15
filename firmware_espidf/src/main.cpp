@@ -3,6 +3,7 @@
 #include <ConfigManager.hpp>
 #include <EventLoopWatchdog.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglLook.hpp>
 #include <LittleFS.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
@@ -207,6 +208,10 @@ extern "C" void app_main() {
 
   // Start the interface and load config
   InterfaceManager::init();
+
+  // The LVGL look from the manager's config, and reports of one chosen on the panel (after
+  // InterfaceManager::init(), which decides whether LVGL is the UI).
+  LvglLook::init();
 
   // Wait until we have been accepted by a manager and received both address and port
   while (NSPM_ConfigManager::get_manager_address().empty() && NSPM_ConfigManager::get_manager_port() == 0) {

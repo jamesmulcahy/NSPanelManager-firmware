@@ -40,13 +40,16 @@ static std::string printable_identity() {
 bool LvglUi::init() {
   esp_log_level_set(TAG, ConfigManager::log_level);
   std::string identity = printable_identity();
+  const bool terminal_tft = !Nextion::nspm_flag_received() && NextionTerminal::is_receiver(identity.c_str());
   if (!ConfigManager::lvgl_ui) {
     ESP_LOGI(TAG, "lvgl_ui is off: Nextion pages (display: %s).", identity.c_str());
+    LvglUi::_display_mode = terminal_tft ? DisplayMode::TERMINAL_IDLE : DisplayMode::NEXTION;
     return false;
   }
-  if (Nextion::nspm_flag_received() || !NextionTerminal::is_receiver(identity.c_str())) {
+  if (!terminal_tft) {
     ESP_LOGI(TAG, "Nextion pages: the display runs %s (%s).", Nextion::nspm_flag_received() ? "NSPM's TFT" : "no terminal TFT",
              identity.empty() ? "no connect reply" : identity.c_str());
+    LvglUi::_display_mode = DisplayMode::NEXTION;
     return false;
   }
   // The palette before the first screen is built; Background::set() below applies the same one.
@@ -57,6 +60,7 @@ bool LvglUi::init() {
   if (started != ESP_OK) {
     // The TFT has no Nextion pages either: the display will show its "waiting for connection".
     ESP_LOGE(TAG, "The display runs a terminal TFT, but LVGL did not start: %s.", esp_err_to_name(started));
+    LvglUi::_display_mode = DisplayMode::TERMINAL_IDLE;
     return false;
   }
 
@@ -104,6 +108,7 @@ bool LvglUi::init() {
   }
   LvglUi::_last_activity_us = esp_timer_get_time();
   LvglUi::_active = true;
+  LvglUi::_display_mode = DisplayMode::LVGL;
   LvglUi::_start_terminal();
   ESP_LOGI(TAG, "LVGL is the UI: the display runs a terminal TFT (%s).", identity.c_str());
   return true;

@@ -3,11 +3,13 @@
 // cost of a change is measured as well as the cost of the first frame.
 #include "Pages.hpp"
 
+#include "Background.hpp"
 #include "BootScreen.hpp"
 #include "CoverView.hpp"
 #include "EntitiesView.hpp"
 #include "HomeView.hpp"
 #include "LightView.hpp"
+#include "LookView.hpp"
 #include "MediaPlayerView.hpp"
 #include "MenuView.hpp"
 #include "ScreensaverView.hpp"
@@ -438,6 +440,7 @@ static void build_menu(lv_obj_t *root, bool landscape) {
   menu.items[0] = {NSPM_ICON_SHIELD_HOME, "ON", "Coming soon...", true};
   menu.items[1] = {NSPM_ICON_WEATHER_NIGHT, "ON", "Coming soon...", true};
   menu.items[2] = {NSPM_ICON_SHIELD_OFF, "Disarmed", "Coming soon...", false};
+  menu.items[3] = {NSPM_ICON_PALETTE, "Look", "", false};
   menu.items[4] = {NSPM_ICON_SPRAY_BOTTLE, "Clean screen", "", false};
   menu.items[5] = {NSPM_ICON_RESTART, "Reboot", "Coming soon...", false};
   MenuView::show(menu);
@@ -457,6 +460,23 @@ static void build_menu_dialog(lv_obj_t *root, bool landscape) {
   DialogView::show(reboot_dialog());
 }
 static void update_dialog_close() { DialogView::show(DialogState()); }
+
+// The look picker, with the look the page is drawn in selected (none for a combination it does not
+// offer, such as NSPM_THEME=grey over a background).
+static LookState look;
+static int drawn_look() {
+  return Looks::find(Background::name(Background::current()), Theme::palette().name);
+}
+static void build_look(lv_obj_t *root, bool landscape) {
+  LookView::build(root, landscape);
+  look = LookState();
+  look.selected = drawn_look();
+  LookView::show(look);
+}
+static void update_look() {
+  look.selected = (look.selected + 1) % Looks::COUNT;
+  LookView::show(look);
+}
 
 static CleanScreenState clean;
 static void build_clean(lv_obj_t *root, bool landscape) {
@@ -491,6 +511,7 @@ const std::vector<PageCase> &page_cases() {
       {"screensaver-clock", build_saver_clock, "clock 12:34 -> 12:35", update_saver_tick},
       {"menu", build_menu, "reboot dialog opens", update_menu_dialog},
       {"menu-dialog", build_menu_dialog, "dialog closes", update_dialog_close},
+      {"look", build_look, "another look selected", update_look},
       {"clean-screen", build_clean, "countdown tick", update_clean},
   };
   return cases;

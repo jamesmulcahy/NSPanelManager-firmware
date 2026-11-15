@@ -1,5 +1,7 @@
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
+#include <LvglLook.hpp>
+#include <LvglUi.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <Nextion.hpp>
@@ -17,6 +19,10 @@
 #include <esp_mac.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+
+static_assert((int)LvglUi::DisplayMode::NEXTION == NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_NEXTION);
+static_assert((int)LvglUi::DisplayMode::LVGL == NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_LVGL);
+static_assert((int)LvglUi::DisplayMode::TERMINAL_IDLE == NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_TERMINAL_IDLE);
 
 // If we are compiling for custom NSPanel PCB, include sources to work with those components.
 #if defined(BOARD_CUSTOM)
@@ -162,6 +168,15 @@ void StatusUpdateManager::_send_status_update(void *arg) {
     // packed below (it read as an empty address once built -Os).
     StatusUpdateManager::_ip_address_text = WiFiManager::ip_string();
     StatusUpdateManager::_status_report.ip_address = (char *)StatusUpdateManager::_ip_address_text.c_str();
+    // What the display shows, and the look in LVGL mode (docs/LVGL.md). The enum's values are the proto's.
+    StatusUpdateManager::_status_report.display_mode = (NSPanelStatusReport__NSPanelDisplayMode)LvglUi::display_mode();
+    StatusUpdateManager::_lvgl_theme_text.clear();
+    StatusUpdateManager::_lvgl_background_text.clear();
+    if (LvglUi::active()) {
+      LvglLook::current(&StatusUpdateManager::_lvgl_background_text, &StatusUpdateManager::_lvgl_theme_text);
+    }
+    StatusUpdateManager::_status_report.lvgl_theme = (char *)StatusUpdateManager::_lvgl_theme_text.c_str();
+    StatusUpdateManager::_status_report.lvgl_background = (char *)StatusUpdateManager::_lvgl_background_text.c_str();
     StatusUpdateManager::_status_report.temperature = StatusUpdateManager::_measured_average_temperature.get();
 #if defined(BOARD_CUSTOM)
     StatusUpdateManager::_status_report.humidity = StatusUpdateManager::_measured_average_humidity.get();

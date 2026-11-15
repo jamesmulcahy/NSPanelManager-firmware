@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <LittleFS.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglLook.hpp>
 #include <LvglUi.hpp>
 #include <NextionTerminal.hpp>
 #include <LvglRenderer.hpp>
@@ -637,20 +638,16 @@ void UpdateManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, 
           }
         } else if (command_string.compare("lvgl_background") == 0) {
           // {"command": "lvgl_background", "preset": "ocean"}: the page background with LVGL as the UI
-          // ("none" for the plain look). Saved, and applied at once.
+          // ("none" for the plain look). Saved, applied at once and reported (LvglLook); a repeat does nothing.
           if (json.contains("preset") && json["preset"].is_string()) {
-            ConfigManager::lvgl_background = json["preset"].get<std::string>();
-            ConfigManager::save_config();
-            LvglUi::set_look(ConfigManager::lvgl_background, ConfigManager::lvgl_theme);
+            LvglLook::command_background(json["preset"].get<std::string>());
           }
         } else if (command_string.compare("lvgl_theme") == 0) {
           // {"command": "lvgl_theme", "theme": "grey"}: the colours with LVGL as the UI: "auto" (the
           // background preset's own, dark without one), "dark", "grey" ("light" too), "ocean", "dusk", "aurora" or
-          // "peaks". Saved, and applied at once.
+          // "peaks". Saved, applied at once and reported (LvglLook); a repeat does nothing.
           if (json.contains("theme") && json["theme"].is_string()) {
-            ConfigManager::lvgl_theme = json["theme"].get<std::string>();
-            ConfigManager::save_config();
-            LvglUi::set_look(ConfigManager::lvgl_background, ConfigManager::lvgl_theme);
+            LvglLook::command_theme(json["theme"].get<std::string>());
           }
         } else if (command_string.compare("lvgl_ui") == 0) {
           // {"command": "lvgl_ui", "enable": false}: keep the Nextion pages whatever TFT the display runs

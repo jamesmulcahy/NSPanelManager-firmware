@@ -316,6 +316,11 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   json["md5_data_file"] = ConfigManager::md5_data_file.c_str();
   json["md5_tft_file"] = ConfigManager::md5_gui.c_str();
   json["address"] = ip_address_str;
+  // What this firmware does that a manager may rely on. "lvgl_look": it applies the look in
+  // NSPanelConfig (lvgl_theme, lvgl_background) and reports a look chosen on the panel on
+  // nspanel/<MAC>/lvgl_look (LvglLook), so the manager need not send the lvgl_theme and
+  // lvgl_background commands. Older managers ignore keys they do not know.
+  json["features"] = nlohmann::json::array({"lvgl_look"});
 #if defined(BOARD_SONOFF)
   json["model"] = "sonoff";
 #elif defined(BOARD_CUSTOM)
