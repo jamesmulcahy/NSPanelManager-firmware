@@ -5,6 +5,7 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
+#include <esp_private/wifi.h>
 #include <string>
 
 #if defined(NSPM_QEMU)
@@ -43,6 +44,11 @@ void WiFiManager::init() {
     ESP_LOGE("WiFiManager", "Failed to init WiFi, error: %s", esp_err_to_name(wifi_init_res));
   }
   ESP_ERROR_CHECK(wifi_init_res);
+  // The Wi-Fi libraries are precompiled, so the compile-time cap on ESP-IDF's logging (CMakeLists.txt)
+  // cannot reach them. esp_wifi_init() sets their own level to CONFIG_LOG_MAXIMUM_LEVEL (DEBUG), which
+  // ESP-IDF's per-tag "wifi" level (INFO) used to filter; with one global level it no longer does, and
+  // every keep-alive frame logged several lines. Keep them at INFO.
+  esp_wifi_internal_set_log_level(WIFI_LOG_INFO);
 
   // Load MAC address from ESP32 into memory
   uint8_t mac[6];

@@ -14,3 +14,39 @@ project(firmware_espidf)
 # FMT_OPTIMIZE_SIZE above made the room.
 idf_component_get_property(lvgl_lib lvgl__lvgl COMPONENT_LIB)
 target_compile_options(${lvgl_lib} PRIVATE -O2)
+
+# One global log level (CONFIG_LOG_TAG_LEVEL_IMPL_NONE): ESP-IDF's per-tag levels are looked up under
+# a mutex with a one-tick timeout, and a lookup that times out drops the line silently. Without
+# per-tag levels, ESP-IDF's own components would follow the panel's runtime level (DEBUG on most
+# panels), so cap them at INFO at compile time: their debug lines are compiled out. Our own code is
+# left out: src/ is the "src" component, and PlatformIO builds lib/ with the flags of that component
+# (and of "__pio_env"), so capping either would compile out our debug lines too. Precompiled
+# libraries (Wi-Fi, PHY) are not affected by this and check the runtime level.
+# Every library a component defines, including those in its subdirectories (espressif__mqtt builds its
+# outbox as a library of its own, in lib/mqtt_outbox).
+function(nspm_cap_log_level directory)
+  get_property(targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(target ${targets})
+    get_target_property(type ${target} TYPE)
+    get_target_property(aliased ${target} ALIASED_TARGET)
+    get_target_property(imported ${target} IMPORTED)
+    if(NOT aliased AND NOT imported AND type MATCHES "^(STATIC|SHARED|MODULE|OBJECT)_LIBRARY$")
+      target_compile_definitions(${target} PRIVATE LOG_LOCAL_LEVEL=ESP_LOG_INFO)
+    endif()
+  endforeach()
+  get_property(subdirectories DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+  foreach(subdirectory ${subdirectories})
+    nspm_cap_log_level("${subdirectory}")
+  endforeach()
+endfunction()
+
+idf_build_get_property(nspm_build_components BUILD_COMPONENTS)
+foreach(nspm_component ${nspm_build_components})
+  if(nspm_component STREQUAL "src" OR nspm_component STREQUAL "__pio_env" OR nspm_component STREQUAL "main")
+    continue()
+  endif()
+  idf_component_get_property(nspm_component_dir ${nspm_component} COMPONENT_DIR)
+  if(nspm_component_dir)
+    nspm_cap_log_level("${nspm_component_dir}")
+  endif()
+endforeach()

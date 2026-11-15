@@ -52,6 +52,9 @@ esp_err_t ConfigManager::load_config() {
 
   if (config_data.contains("log_level") && config_data["log_level"].is_number_integer()) {
     ConfigManager::log_level = static_cast<esp_log_level_t>(config_data.at("log_level").get<int32_t>());
+    // One level for everything (CONFIG_LOG_TAG_LEVEL_IMPL_NONE): esp_log_level_set() with any tag sets
+    // it. ESP-IDF's components are capped at INFO at compile time (CMakeLists.txt).
+    esp_log_level_set("*", ConfigManager::log_level);
     ESP_LOGE("ConfigManager", "Loaded log level: %d", config_data.at("log_level").get<int32_t>());
   } else {
     ESP_LOGE("ConfigManager", "Log level is not of type int!");
