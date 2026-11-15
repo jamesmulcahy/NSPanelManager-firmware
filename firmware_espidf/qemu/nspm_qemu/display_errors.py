@@ -11,6 +11,8 @@ from typing import List, Tuple
 KNOWN: List[Tuple[str, str]] = [
     (r"^DRAKJHSUYDGBNCJHGJKSHBDN$",
      "Nextion::init() sends this on purpose, to get the display out of whatever it was doing"),
+    (r"^$",
+     "NextionTerminal ends any half-sent instruction with a bare terminator before its connect"),
 ]
 
 _COMPILED = [(re.compile(pattern), why) for pattern, why in KNOWN]

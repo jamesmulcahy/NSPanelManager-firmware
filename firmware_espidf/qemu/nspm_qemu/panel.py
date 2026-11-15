@@ -19,7 +19,7 @@ import time
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import hmi
-from .fake_nextion import FakeNextion
+from .fake_nextion import TERMINAL, FakeNextion
 from .image import build_efuse_image, build_flash_image
 
 log = logging.getLogger("panel")
@@ -38,6 +38,9 @@ CRASH_PATTERNS = [
 # power-cycles the display. The TFT announces itself a moment later.
 NEXTION_POWER_ON = re.compile(r"Nextion: Initializing Nextion display")
 NEXTION_BOOT_DELAY = 0.5
+# NextionTerminal ends every session with Nextion::terminal_release(true), which power-cycles the
+# display (Nextion::restart(): its power GPIO, which the emulator cannot see). It logs this first.
+TERMINAL_SESSION_END = re.compile(r"NextionTerminal: Session \d+ (stopped|ended)")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -117,7 +120,13 @@ class QemuPanel:
         self.project_dir = project_dir
         self.mac = mac
         self.panel_config = panel_config
-        self.nextion = FakeNextion(hmi=hmi.load())
+        if TERMINAL:
+            self.nextion = FakeNextion(terminal=TERMINAL)
+            if TERMINAL != "us" and self.panel_config is not None:
+                # LvglUi picks the receiver from config.json: the EU one unless lvgl_us_layout.
+                self.panel_config = dict(self.panel_config, lvgl_us_layout=False)
+        else:
+            self.nextion = FakeNextion(hmi=hmi.load())
         self.web_port = _free_port()
         self.lines: List[str] = []
         self.crash: Optional[str] = None
@@ -282,6 +291,8 @@ class QemuPanel:
                 self._cond.notify_all()
             if self.boot_display and NEXTION_POWER_ON.search(line):
                 threading.Timer(NEXTION_BOOT_DELAY, self._display_boot).start()
+            if self.nextion.terminal_profile is not None and TERMINAL_SESSION_END.search(line):
+                self.nextion.power_cycle()
         with self._cond:
             self._cond.notify_all()
 

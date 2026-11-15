@@ -173,6 +173,33 @@ that.
 `sleep_display`: after the firmware's screensaver timeout (FakeManager: 60 s) with no touch, the
 page prints `0x92` and the panel goes to its screensaver, as a real one would.
 
+## The LVGL UI (terminal TFT)
+
+```
+NSPM_QEMU_TERMINAL=us NEXTION_TOOLS=~/nspanel/nextion-tools firmware_espidf/qemu/run_tests.sh -k lvgl
+firmware_espidf/qemu/web_panel.sh --terminal us
+```
+
+With `NSPM_QEMU_TERMINAL=us` (or `eu-on-us`) the fake display runs
+[nspanel-terminal](https://github.com/ptaru/nspanel-terminal)'s TFT instead of NSPM's: no HMI, no
+`NSPM` banner, and nextion-tools' protocol-8 receiver behind it. The firmware's LvglUi then draws
+every page and streams the pixels, and `FakeManager` says `is_us_panel` to match. Screenshots are
+the receiver's framebuffer, turned upright; `nextion.tap_screen(x, y)` touches a point of the
+screen as a screenshot shows it. `tests/test_lvgl_terminal.py` runs only in this mode (and skips
+otherwise); its touch coordinates are for the US layout. Without the variable, the rest of the
+suite runs against NSPM's TFT as before; with it, the Nextion-page tests do not apply.
+
+The receiver needs nextion-tools with the terminal emulation (`NEXTION_TOOLS=<checkout>` until a
+release has it).
+
+Two things differ from a panel:
+
+- **The receiver's 3 s watchdog is off (60 s).** It runs on the host's clock, and the boot-time
+  LittleFS save stops the guest for ~20 s. The firmware's own reverse timeout, on the guest's
+  clock, can still end the session then; it starts another, and `Rig.boot()` waits for it.
+- **The stream is slow**, ~8 KB/s under QEMU against ~1.5 Mpx/s on a panel, so a full repaint
+  takes seconds. Wait for the screen with `settle()` (in the test file), not fixed sleeps.
+
 ## What differs from hardware
 
 The `qemu` PlatformIO env is `original_sonoff` with `-DNSPM_QEMU` and

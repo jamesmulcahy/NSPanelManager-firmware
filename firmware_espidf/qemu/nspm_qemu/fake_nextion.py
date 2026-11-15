@@ -6,6 +6,12 @@ https://github.com/jamesmulcahy/nextion-tools; requirements.txt pins it).
 So the "NSPM" banner, the 0x92 sleep frame and the 0x93 wake frame all come from the HMI's code,
 as on a real panel: the banner from page0's load, sleep from each page's sleep_display timer, and
 wake from the screensaver's touch capture. What is left here is how a test asks for them.
+
+With NSPM_QEMU_TERMINAL=us (or eu-on-us) the display runs nspanel-terminal's TFT instead: no
+pages and no NSPM banner, a `connect` reply with native version 94, so the firmware's LvglUi
+starts a NextionTerminal session and streams LVGL's pixels (nextion-tools' terminal receiver,
+protocol 8). The screen is then the receiver's framebuffer, shown turned as the firmware turns it
+for the panel (NextionTerminal::options_for()), and touches become terminal touch samples.
 """
 
 import logging
@@ -14,6 +20,7 @@ import re
 from typing import Optional, Union
 
 from nextion_tools.emu import Display, TcpServer
+from nextion_tools.emu import terminal as _terminal
 
 log = logging.getLogger("fake_nextion")
 
@@ -24,10 +31,27 @@ STRING_DATA = 0x99
 
 SCREENSAVER_PAGES = ("screensaver", "screensaver2")
 
+# The terminal receiver the display runs, if any: "us" (320x480, which the firmware draws turned
+# 180 degrees) or "eu-on-us" (454x320 on a US panel: turned 90, touch offset 26).
+TERMINAL = os.environ.get("NSPM_QEMU_TERMINAL") or None
+# How the firmware turns the screen onto each receiver (NextionTerminal::options_for()), so that
+# snapshots and the viewer show the screen upright.
+TERMINAL_ROTATION = {"us": 180, "eu-on-us": 90, "eu": 0}
+# The receiver ends a session after 3 s without input, timed on the host's clock. Under QEMU the
+# guest stops for ~20 s while it writes LittleFS with the flash cache off (see Rig.boot()), which a
+# real panel does in milliseconds, so that watchdog would end every session at boot. The firmware
+# keeps its own reverse timeout, on the guest's clock, so a sender that really goes quiet still
+# fails there.
+_terminal.WATCHDOG_S = 60.0
+
 
 class FakeNextion(Display):
     def __init__(self, **kwargs):
-        if kwargs.get("hmi") is None or not kwargs.get("scripts", True):
+        terminal = kwargs.get("terminal")
+        if terminal is not None:
+            # nspanel-terminal's TFT prints no banner: the firmware must not see NSPM's flag.
+            kwargs.setdefault("rotation", TERMINAL_ROTATION.get(str(terminal), 0))
+        elif kwargs.get("hmi") is None or not kwargs.get("scripts", True):
             # Without the HMI's code nothing else prints it.
             kwargs.setdefault("banner", b"NSPM\xff\xff\xff")
         super().__init__(TcpServer(), **kwargs)
@@ -39,7 +63,7 @@ class FakeNextion(Display):
     def screenshot(self, name: str) -> Optional[str]:
         """Save what the screen shows as <screenshots_dir>/NN-<name>.png. Never fails a test:
         returns None, and logs why, if it could not."""
-        if self.screenshots_dir is None or self.screen is None:
+        if self.screenshots_dir is None or (self.screen is None and not self.showing_terminal):
             return None
         self._screenshots += 1
         path = os.path.join(self.screenshots_dir, "%02d-%s.png" % (self._screenshots, re.sub(r"[^\w.-]", "_", name)))
@@ -71,6 +95,12 @@ class FakeNextion(Display):
         firmware logs that it shows the screensaver before its `page` command reaches the
         display). Returns False, having touched nothing, if none is shown by then, since a tap
         elsewhere would land on a real button."""
+        if self.terminal_profile is not None:
+            # LVGL's screensaver: a tap anywhere wakes it.
+            self.wait_for_terminal(wait)
+            w, h = self.size
+            self.tap(w // 2, h // 2)
+            return True
         if not self.runs_scripts:
             self.send_frame(WAKE)
             return True
@@ -81,6 +111,11 @@ class FakeNextion(Display):
             w, h = self._current_page().size
         self.tap(w // 2, h // 2)
         return True
+
+    def tap_screen(self, x: int, y: int, hold: float = 0.1) -> None:
+        """A tap at (x, y) of the screen as shown (screenshots, the viewer): for the terminal, the
+        firmware's own LVGL coordinates, cropped as the receiver crops them."""
+        self.tap(*self.unrotate(x, y), hold=hold)
 
     def send_string(self, data: Union[bytes, str]) -> None:
         """A 0x99 string event (the TFT's printh-style custom data)."""
