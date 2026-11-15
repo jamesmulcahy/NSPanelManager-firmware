@@ -20,8 +20,49 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The QEMU firmware, built once for every test job below.
+  build:
+    name: build (qemu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: firmware_espidf
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO toolchains
+        uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: qemu-build-${{ runner.os }}-${{ hashFiles('firmware_espidf/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio==6.1.19
+
+      - name: Build the firmware for QEMU
+        run: pio run --environment qemu
+
+      - name: Keep the images the tests boot
+        uses: actions/upload-artifact@v7
+        with:
+          name: qemu-firmware
+          path: |
+            firmware_espidf/.pio/build/qemu/firmware.bin
+            firmware_espidf/.pio/build/qemu/firmware.elf
+            firmware_espidf/.pio/build/qemu/bootloader.bin
+            firmware_espidf/.pio/build/qemu/partitions.bin
+            firmware_espidf/.pio/build/qemu/ota_data_initial.bin
+          if-no-files-found: error
+          retention-days: 3
+
   qemu:
     name: qemu (${{ matrix.display }})
+    needs: build
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -81,14 +122,24 @@ jobs:
             ~/.cache/nspm-qemu
           key: qemu-tests-${{ runner.os }}-${{ hashFiles('firmware_espidf/platformio.ini', 'firmware_espidf/qemu/install_qemu.sh', '.github/workflows/qemu-tests.yml') }}
 
-      - name: Install PlatformIO
+      - name: Install PlatformIO tools
         run: |
           pip install platformio==6.1.19
           # gdb, for the CPU and task dump a failing test takes of a hung guest.
           pio pkg install --global --tool "espressif/tool-xtensa-esp-elf-gdb@~12.1.0"
+          # mklittlefs, which builds each test's LittleFS image (qemu/nspm_qemu/image.py); the version
+          # espressif32 7.1.1 itself installs, so its images match the firmware's LittleFS.
+          pio pkg install --global --tool "platformio/tool-mklittlefs@~1.203.0"
 
-      - name: Build and test
+      - name: Fetch the QEMU firmware
+        uses: actions/download-artifact@v7
+        with:
+          name: qemu-firmware
+          path: firmware_espidf/.pio/build/qemu
+
+      - name: Test
         env:
+          NSPM_QEMU_SKIP_BUILD: "1"
           NSPM_QEMU_GDB: "1"
           NSPM_QEMU_TERMINAL: ${{ matrix.terminal }}
           TESTS: ${{ matrix.tests }}
