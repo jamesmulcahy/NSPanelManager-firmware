@@ -202,7 +202,7 @@ static void style_slider(lv_obj_t *slider, bool vertical) {
   lv_obj_set_style_bg_color(slider, Theme::track(), LV_PART_MAIN);
   lv_obj_set_style_radius(slider, 10, LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(slider, Theme::text(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(slider, Theme::indicator(), LV_PART_INDICATOR);
   // A wide touch area: the slider responds a little outside its track.
   lv_obj_set_ext_click_area(slider, 8);
 }

@@ -5,21 +5,56 @@
 // headers (see BootScreen.hpp).
 
 namespace Theme {
-// Colours, chosen to be exact in RGB565 so what the planner sends is what was meant.
-inline lv_color_t background() { return lv_color_hex(0x10141C); }
-inline lv_color_t card() { return lv_color_hex(0x1C2230); }
-inline lv_color_t text() { return lv_color_hex(0xF0F0F0); }
-inline lv_color_t muted() { return lv_color_hex(0x8890A0); }
-inline lv_color_t accent() { return lv_color_hex(0x38A8F8); }
+/**
+ * The colours that make a theme. New colours are exact in RGB565, so what the planner sends is
+ * what was meant (DARK keeps its original values). What colours mean is not in it and stays the
+ * same in every palette: amber "on", warm, good, and the kelvin, saturation and hue gradients.
+ */
+struct Palette {
+  const char *name;
+  // Dark text on light cards. The background presets are dark art, so none is drawn under it.
+  bool light;
+  uint32_t background; // Behind everything
+  uint32_t card;       // Cards and tiles
+  uint32_t text;
+  uint32_t muted;  // Secondary text
+  uint32_t accent; // Highlights that are not "on": the boot screen's symbols, dialog buttons
+  uint32_t track;  // Slider and bar tracks, the selected option
+  uint32_t pressed;
+  uint32_t disabled; // Controls the device can't use now
+  uint32_t danger;
+  uint32_t indicator; // A plain slider's value
+};
+// The default; a light one; and one per background preset (Background.hpp), tinted to sit on its art.
+extern const Palette DARK, LIGHT, OCEAN, DUSK, AURORA, PEAKS;
+
+namespace detail {
+extern const Palette *palette;
+}
+inline const Palette &palette() { return *detail::palette; }
+// GUI task (or before LVGL starts). Views built before keep their colours: rebuild them.
+void set_palette(const Palette &palette);
+// "dark", "light", "ocean", "dusk", "aurora", "peaks"; nullptr for anything else ("auto").
+const Palette *palette_from_name(const char *name);
+
+inline lv_color_t background() { return lv_color_hex(palette().background); }
+inline lv_color_t card() { return lv_color_hex(palette().card); }
+inline lv_color_t text() { return lv_color_hex(palette().text); }
+inline lv_color_t muted() { return lv_color_hex(palette().muted); }
+inline lv_color_t accent() { return lv_color_hex(palette().accent); }
+inline lv_color_t track() { return lv_color_hex(palette().track); }
+inline lv_color_t pressed() { return lv_color_hex(palette().pressed); }
+inline lv_color_t disabled() { return lv_color_hex(palette().disabled); }
+inline lv_color_t danger() { return lv_color_hex(palette().danger); }
+inline lv_color_t indicator() { return lv_color_hex(palette().indicator); }
+// The same in every palette.
 inline lv_color_t warm() { return lv_color_hex(0xF8A038); }
 inline lv_color_t good() { return lv_color_hex(0x48C878); }
 // "On", as the Nextion pages' amber (RGB565 65024): lights that are on, the control being edited.
 inline lv_color_t on() { return lv_color_hex(0xF8C000); }
-// Slider and bar tracks, pressed buttons, and controls the device can't use now.
-inline lv_color_t track() { return lv_color_hex(0x283448); }
-inline lv_color_t pressed() { return lv_color_hex(0x303C50); }
-inline lv_color_t disabled() { return lv_color_hex(0x586070); }
-inline lv_color_t danger() { return lv_color_hex(0xF85048); }
+// Behind the screensaver and the clean screen when they have no background: black, or a light
+// palette's background, as its dark text would not show on black.
+inline lv_color_t blank() { return palette().light ? background() : lv_color_black(); }
 // How opaque cards and tiles are: solid, or see-through over a page background (Background.hpp).
 // Read when a card is built.
 lv_opa_t card_opa();

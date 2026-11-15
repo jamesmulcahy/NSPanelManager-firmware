@@ -62,7 +62,7 @@ static void clean_touched(lv_event_t *) {
 void CleanScreenView::build(lv_obj_t *parent, bool landscape) {
   (void)landscape;
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(parent, lv_color_black(), 0);
+  lv_obj_set_style_bg_color(parent, Theme::blank(), 0);
   lv_obj_add_flag(parent, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(parent, clean_touched, LV_EVENT_PRESSED, NULL);
 

@@ -1,5 +1,8 @@
 #include "Theme.hpp"
 
+#include <cstring>
+#include <initializer_list>
+
 // Subsets of Montserrat (tools/gen_fonts.sh): only the characters and symbols the screens use.
 LV_FONT_DECLARE(nspm_font_clock_48);
 LV_FONT_DECLARE(nspm_font_clock_88);
@@ -11,6 +14,33 @@ LV_FONT_DECLARE(nspm_font_icon_40);
 LV_FONT_DECLARE(nspm_font_icon_64);
 
 namespace Theme {
+
+// clang-format off
+//                       name      light  background card      text      muted     accent    track     pressed   disabled  danger    indicator
+const Palette DARK   = {"dark",   false, 0x10141C, 0x1C2230, 0xF0F0F0, 0x8890A0, 0x38A8F8, 0x283448, 0x303C50, 0x586070, 0xF85048, 0xF0F0F0};
+const Palette LIGHT  = {"light",  true,  0xE0E4E8, 0xF8F8F8, 0x182028, 0x687080, 0x1078D0, 0xD0D4D8, 0xC0C8D0, 0xA0A8B0, 0xD03028, 0x1078D0};
+// Navy, with a cyan accent.
+const Palette OCEAN  = {"ocean",  false, 0x081420, 0x102438, 0xF0F8F8, 0x80A0B8, 0x40C8F0, 0x183850, 0x284860, 0x506878, 0xF85048, 0xF0F8F8};
+// Violet, with a peach accent.
+const Palette DUSK   = {"dusk",   false, 0x181428, 0x282038, 0xF8F0F0, 0xA090A8, 0xF89060, 0x383048, 0x484058, 0x686078, 0xF85048, 0xF8F0F0};
+// Deep teal, with a green accent.
+const Palette AURORA = {"aurora", false, 0x081418, 0x102828, 0xF0F8F8, 0x80A8A8, 0x40D0A8, 0x184040, 0x285050, 0x507070, 0xF85048, 0xF0F8F8};
+// Slate blue, with a sky accent.
+const Palette PEAKS  = {"peaks",  false, 0x101828, 0x182840, 0xF0F4F8, 0x8898B0, 0x70B0F0, 0x283C58, 0x304868, 0x586880, 0xF85048, 0xF0F4F8};
+// clang-format on
+
+const Palette *detail::palette = &DARK;
+
+void set_palette(const Palette &palette) { detail::palette = &palette; }
+
+const Palette *palette_from_name(const char *name) {
+  for (const Palette *p : {&DARK, &LIGHT, &OCEAN, &DUSK, &AURORA, &PEAKS}) {
+    if (name != nullptr && strcmp(name, p->name) == 0) {
+      return p;
+    }
+  }
+  return nullptr;
+}
 
 const lv_font_t *clock_font() { return &nspm_font_clock_48; }
 const lv_font_t *big_clock_font() { return &nspm_font_clock_88; }

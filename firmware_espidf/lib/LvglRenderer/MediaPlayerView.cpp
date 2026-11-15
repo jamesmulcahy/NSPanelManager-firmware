@@ -84,7 +84,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_t *position = Theme::group(info, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_width(position, lv_pct(100));
   lv_obj_set_style_pad_row(position, 2, 0);
-  MediaPlayerView::_position = bar(position, Theme::text());
+  MediaPlayerView::_position = bar(position, Theme::indicator());
   lv_obj_set_width(MediaPlayerView::_position, lv_pct(100));
   MediaPlayerView::_elapsed = Theme::label(position, "", Theme::body_font(), Theme::muted());
   lv_obj_set_flex_grow(MediaPlayerView::_elapsed, 1);

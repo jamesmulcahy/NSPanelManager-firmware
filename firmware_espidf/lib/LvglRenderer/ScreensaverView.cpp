@@ -180,7 +180,7 @@ void ScreensaverView::show(const ScreensaverState &state) {
     // "without": black, as the HMI's screensaver2.
     bool art = state.background && Background::current() != Background::Preset::NONE;
     lv_obj_set_style_bg_opa(parent, art ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(parent, state.background ? Theme::background() : lv_color_black(), 0);
+    lv_obj_set_style_bg_color(parent, state.background ? Theme::background() : Theme::blank(), 0);
     if (state.weather) {
       ScreensaverView::_build_weather(ScreensaverView::_landscape);
     } else {

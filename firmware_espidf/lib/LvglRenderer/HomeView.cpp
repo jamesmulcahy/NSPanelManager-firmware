@@ -262,7 +262,7 @@ void HomeView::show(const HomeState &state) {
   show_tile(HomeView::_table, HomeView::_table_value, state.table, state.edit == HomeState::Edit::TABLE);
 
   // The brightness slider goes amber while it changes only one group, as on the Nextion page.
-  lv_color_t indicator = state.edit == HomeState::Edit::ALL ? Theme::text() : Theme::on();
+  lv_color_t indicator = state.edit == HomeState::Edit::ALL ? Theme::indicator() : Theme::on();
   if (!lv_color_eq(lv_obj_get_style_bg_color(HomeView::_brightness, LV_PART_INDICATOR), indicator)) {
     lv_obj_set_style_bg_color(HomeView::_brightness, indicator, LV_PART_INDICATOR);
   }
