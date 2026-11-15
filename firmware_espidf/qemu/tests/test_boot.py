@@ -1,8 +1,13 @@
 """Boot, registration and the steady state a configured panel settles into."""
 
 import json
+import urllib.error
+import urllib.request
+
+import pytest
 
 from nspm_qemu.fake_manager import QEMU_HOST_ADDRESS
+from nspm_qemu.fake_nextion import TERMINAL
 from nspm_qemu.proto import nspanel as pb
 from nspm_qemu.rig import BOOT_TIMEOUT
 
@@ -49,3 +54,13 @@ def test_web_ui_is_served(booted):
     status, data = booted.http_get("/status_data")
     assert status == 200
     assert data.get("wifi_status")  # esp_wifi_get_mode() must not crash a panel that never initialised Wi-Fi
+
+
+@pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only; test_lvgl_terminal.py covers the LVGL UI")
+def test_screenshot_is_409_on_nspm_tft(booted):
+    # The Nextion draws NSPM's pages itself: there is nothing on the ESP32 to capture.
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen("http://127.0.0.1:%d/screenshot" % booted.panel.web_port, timeout=30)
+    assert e.value.code == 409
+    assert e.value.headers.get_content_type() == "text/plain"
+    assert b"LVGL" in e.value.read()
