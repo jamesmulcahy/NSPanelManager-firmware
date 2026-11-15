@@ -1882,7 +1882,7 @@ const ProtobufCMessageDescriptor nspanel_room_entities_page__descriptor =
   (ProtobufCMessageInit) nspanel_room_entities_page__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor nspanel_room_status__field_descriptors[13] =
+static const ProtobufCFieldDescriptor nspanel_room_status__field_descriptors[15] =
 {
   {
     "id",
@@ -2040,17 +2040,43 @@ static const ProtobufCFieldDescriptor nspanel_room_status__field_descriptors[13]
     0 | PROTOBUF_C_FIELD_FLAG_PACKED,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "num_color_temperature_lights",
+    14,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT32,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelRoomStatus, num_color_temperature_lights),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "color_temperature_lights_known",
+    15,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelRoomStatus, color_temperature_lights_known),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_room_status__field_indices_by_name[] = {
   5,   /* field[5] = average_color_temperature */
   2,   /* field[2] = average_dim_level */
   6,   /* field[6] = ceiling_lights_color_temperature_value */
   3,   /* field[3] = ceiling_lights_dim_level */
+  14,   /* field[14] = color_temperature_lights_known */
   12,   /* field[12] = entity_page_ids */
   0,   /* field[0] = id */
   1,   /* field[1] = name */
   8,   /* field[8] = num_ceiling_lights */
   10,   /* field[10] = num_ceiling_lights_on */
+  13,   /* field[13] = num_color_temperature_lights */
   9,   /* field[9] = num_table_lights */
   11,   /* field[11] = num_table_lights_on */
   7,   /* field[7] = table_lights_color_temperature_value */
@@ -2059,7 +2085,7 @@ static const unsigned nspanel_room_status__field_indices_by_name[] = {
 static const ProtobufCIntRange nspanel_room_status__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 13 }
+  { 0, 15 }
 };
 const ProtobufCMessageDescriptor nspanel_room_status__descriptor =
 {
@@ -2069,7 +2095,7 @@ const ProtobufCMessageDescriptor nspanel_room_status__descriptor =
   "NSPanelRoomStatus",
   "",
   sizeof(NSPanelRoomStatus),
-  13,
+  15,
   nspanel_room_status__field_descriptors,
   nspanel_room_status__field_indices_by_name,
   1,  nspanel_room_status__number_ranges,
