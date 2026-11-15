@@ -171,6 +171,7 @@ class StackWeb:
             "openhab_item_color_temp": "",
             "openhab_item_dimmer": "",
             "openhab_item_rgb": "",
+            "openhab_item_switch": "",
         }})
         # The PUT does not return the new id; the name is unique to this test.
         entities = self._request("GET", "/rest/rooms/%d/entities" % room_id)["entities"]
