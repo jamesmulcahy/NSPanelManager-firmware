@@ -14,6 +14,10 @@ around it so tests can watch what the panel publishes and cut its connection.
   disconnect and publishes the panel's will.
 - Connects, subscribes and disconnects are read from mosquitto's own log
   (`log_type subscribe` / `unsubscribe` / `notice`).
+
+`Broker(external=(host, port))` uses a broker that is already running instead,
+such as the NSPanelManager dev stack's. Everything above still holds except the
+log, so `subscriptions()` and the connect/subscribe waits are unavailable.
 """
 
 import logging
@@ -25,8 +29,9 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
@@ -113,7 +118,8 @@ def _connect_client_id(data: bytes) -> Optional[str]:
 class FaultProxy:
     """TCP relay in front of the broker whose connections can be cut by MQTT client id."""
 
-    def __init__(self, upstream_port: int):
+    def __init__(self, upstream_port: int, upstream_host: str = "127.0.0.1"):
+        self.upstream_host = upstream_host
         self.upstream_port = upstream_port
         self._server = socket.create_server(("127.0.0.1", 0))
         self.port = self._server.getsockname()[1]
@@ -156,7 +162,7 @@ class FaultProxy:
             except OSError:
                 return
             try:
-                up = socket.create_connection(("127.0.0.1", self.upstream_port))
+                up = socket.create_connection((self.upstream_host, self.upstream_port))
             except OSError:
                 down.close()
                 continue
@@ -188,7 +194,7 @@ class FaultProxy:
 class Broker:
     """mosquitto on 127.0.0.1. The panel uses `panel_port` (the proxy); QEMU reaches it as 10.0.2.2."""
 
-    def __init__(self, log_path: Optional[str] = None):
+    def __init__(self, log_path: Optional[str] = None, external: Optional[Tuple[str, int]] = None):
         self._cond = threading.Condition()
         self.messages: List[Message] = []
         # (kind, client_id, topic) for connect / subscribe / unsubscribe / disconnect
@@ -198,8 +204,37 @@ class Broker:
         self._listeners: List[Callable[[Message], None]] = []
         # Called while waiting; raises to abort the wait (Rig sets QemuPanel.check_alive).
         self.abort_check: Optional[Callable[[], None]] = None
+        self._proc: Optional[subprocess.Popen] = None
+        self._tmp: Optional[str] = None
+        self._log_file = None
 
+        if external is not None:
+            self.host, self.port = external
+        else:
+            self._start_mosquitto(log_path)
+
+        self.proxy = FaultProxy(self.port, self.host)
+        self.panel_port = self.proxy.port
+
+        self._subscribed = threading.Event()
+        # Unique, so runs sharing an external broker do not take over each other's session.
+        self._client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id="nspm-test-observer-" + uuid.uuid4().hex[:8],
+                                   protocol=mqtt.MQTTv5)
+        self._client.on_message = self._on_message
+        self._client.on_subscribe = lambda *a: self._subscribed.set()
+        self._client.connect(self.host, self.port)
+        self._client.subscribe("#", options=SubscribeOptions(qos=0, noLocal=True, retainAsPublished=True))
+        self._client.loop_start()
+        if not self._subscribed.wait(10):
+            raise RuntimeError("observer could not subscribe to the broker at %s:%d" % (self.host, self.port))
+
+    @property
+    def external(self) -> bool:
+        return self._proc is None
+
+    def _start_mosquitto(self, log_path: Optional[str]) -> None:
         self._tmp = tempfile.mkdtemp(prefix="nspm-mosquitto-")
+        self.host = "127.0.0.1"
         self.port = _free_port()
         conf = os.path.join(self._tmp, "mosquitto.conf")
         with open(conf, "w") as f:
@@ -222,20 +257,6 @@ class Broker:
         self._log_reader = threading.Thread(target=self._read_log, name="mosquitto-log", daemon=True)
         self._log_reader.start()
         self._wait_listening()
-
-        self.proxy = FaultProxy(self.port)
-        self.panel_port = self.proxy.port
-
-        self._subscribed = threading.Event()
-        self._client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id="nspm-test-observer",
-                                   protocol=mqtt.MQTTv5)
-        self._client.on_message = self._on_message
-        self._client.on_subscribe = lambda *a: self._subscribed.set()
-        self._client.connect("127.0.0.1", self.port)
-        self._client.subscribe("#", options=SubscribeOptions(qos=0, noLocal=True, retainAsPublished=True))
-        self._client.loop_start()
-        if not self._subscribed.wait(10):
-            raise RuntimeError("observer could not subscribe to mosquitto")
 
     # ---- harness API -------------------------------------------------------
 
@@ -274,6 +295,7 @@ class Broker:
 
     def wait_for_event(self, kind: str, client_prefix: str, topic: Optional[str] = None,
                        timeout: float = 30, since: int = 0) -> None:
+        self._require_log()
         def match():
             return any(k == kind and cid.startswith(client_prefix) and (topic is None or t == topic)
                        for k, cid, t in self.events[since:])
@@ -284,6 +306,7 @@ class Broker:
 
     def subscriptions(self, client_prefix: str) -> List[str]:
         """Current subscriptions of a connected client, rebuilt from mosquitto's log."""
+        self._require_log()
         with self._cond:
             for cid in self._connected:
                 if cid.startswith(client_prefix):
@@ -291,6 +314,7 @@ class Broker:
         return []
 
     def is_connected(self, client_prefix: str) -> bool:
+        self._require_log()
         with self._cond:
             return any(cid.startswith(client_prefix) for cid in self._connected)
 
@@ -311,20 +335,27 @@ class Broker:
         self._client.loop_stop()
         self._client.disconnect()
         self.proxy.close()
-        self._proc.terminate()
-        try:
-            self._proc.wait(5)
-        except subprocess.TimeoutExpired:
-            self._proc.kill()
-            self._proc.wait()
-        # The reader may still be writing mosquitto's last lines; it stops at end of output.
-        self._log_reader.join(5)
+        if self._proc is not None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(5)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+                self._proc.wait()
+            # The reader may still be writing mosquitto's last lines; it stops at end of output.
+            self._log_reader.join(5)
         if self._log_file is not None:
             self._log_file.close()
             self._log_file = None
-        shutil.rmtree(self._tmp, ignore_errors=True)
+        if self._tmp is not None:
+            shutil.rmtree(self._tmp, ignore_errors=True)
 
     # ---- internals ---------------------------------------------------------
+
+    def _require_log(self) -> None:
+        if self.external:
+            raise RuntimeError("connects and subscriptions come from mosquitto's log, "
+                               "which an external broker does not give the harness")
 
     def _wait_listening(self) -> None:
         deadline = time.monotonic() + 10
@@ -350,7 +381,7 @@ class Broker:
                 log.exception("listener failed on %s", message.topic)
 
     def _read_log(self) -> None:
-        assert self._proc.stdout is not None
+        assert self._proc is not None and self._proc.stdout is not None
         for raw in self._proc.stdout:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if self._log_file is not None:

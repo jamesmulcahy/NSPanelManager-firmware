@@ -1,0 +1,160 @@
+name: Full-stack tests
+
+# Runs the real firmware, in Espressif's QEMU fork, against the real NSPanelManager:
+# Django web interface, MQTTManager and mosquitto, built from source by NSPanelManager's dev
+# stack (docker/dev). Nothing on the manager's side is faked. Each emulated panel registers,
+# is accepted through the same REST API the web UI uses, and is configured by MQTTManager,
+# so a protocol change in either repository fails here. See firmware_espidf/qemu/README.md,
+# "Stack tests".
+
+on:
+  push:
+    paths:
+      - "firmware_espidf/**"
+      - ".github/workflows/stack-tests.yml"
+  pull_request:
+    paths:
+      - "firmware_espidf/**"
+      - ".github/workflows/stack-tests.yml"
+  workflow_dispatch:
+    inputs:
+      nspm_ref:
+        description: "NSPanelManager branch, tag or commit to test against"
+        required: false
+
+env:
+  NSPM_REPO: jamesmulcahy/NSPanelManager
+  # The manager under test: the fork branch, with its dev stack (docker/dev).
+  NSPM_REF: ${{ inputs.nspm_ref || 'fork' }}
+  # Where the stack's broker and web UI are published on the runner.
+  NSPM_DEV_MQTT_PORT: "18830"
+  NSPM_DEV_MQTT_BIND: "127.0.0.1"
+  NSPM_DEV_PORT: "8010"
+  # A host directory rather than the stack's Conan volume, so it can be cached between runs.
+  NSPM_CONAN_CACHE: ${{ github.workspace }}/.conan-cache
+
+jobs:
+  stack:
+    runs-on: ubuntu-24.04
+    # Building MQTTManager's Conan dependencies from source takes about an hour when the
+    # cache is cold; with it warm the whole job takes a fraction of that.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out NSPanelManager
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.NSPM_REPO }}
+          ref: ${{ env.NSPM_REF }}
+          path: nspanelmanager
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install QEMU runtime libraries and mosquitto
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0 zlib1g mosquitto
+          # run_tests.sh checks for mosquitto; stack tests use the stack's broker instead.
+          sudo systemctl disable --now mosquitto
+
+      - name: Restore Conan packages
+        id: conan-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.NSPM_CONAN_CACHE }}
+          key: stack-conan-${{ hashFiles('nspanelmanager/docker/MQTTManager/conanfile.py', 'nspanelmanager/docker/Dockerfile', 'nspanelmanager/docker/dev/Dockerfile') }}
+          restore-keys: stack-conan-
+
+      # In the background: building the stack's images and then MQTTManager (inside the
+      # container, after `up` returns) is the slow part, and the firmware builds meanwhile.
+      - name: Start the NSPanelManager dev stack
+        run: |
+          mkdir -p "$NSPM_CONAN_CACHE"
+          nohup nspanelmanager/docker/dev/nspm-dev up > stack-up.log 2>&1 &
+          echo $! > stack-up.pid
+
+      - name: Cache PlatformIO toolchains and QEMU
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/nspm-qemu
+          key: qemu-tests-${{ runner.os }}-${{ hashFiles('firmware_espidf/platformio.ini', 'firmware_espidf/qemu/install_qemu.sh') }}
+
+      - name: Build the firmware for QEMU
+        working-directory: firmware_espidf
+        run: |
+          pip install platformio
+          pio run --environment qemu
+          pio run --environment qemu --target buildfs
+
+      - name: Wait for MQTTManager
+        timeout-minutes: 90
+        run: |
+          # `nspm-dev up` builds the images, then starts the stack and returns.
+          pid=$(cat stack-up.pid)
+          while kill -0 "$pid" 2>/dev/null; do sleep 5; done
+          cat stack-up.log
+          grep -q "^MQTT broker:" stack-up.log || { echo "nspm-dev up failed"; exit 1; }
+          # The nspm container then builds MQTTManager and starts it (nspm-entrypoint.sh).
+          stack() { nspanelmanager/docker/dev/nspm-dev compose "$@"; }
+          # A fresh runner has no build volume, so this build always runs.
+          until stack logs nspm 2>&1 | grep -q -- "--> MQTTManager built and started."; do
+            if stack logs nspm 2>&1 | grep -q -- "--> MQTTManager build FAILED" ||
+               [ -z "$(stack ps --status running -q nspm)" ]; then
+              stack logs --tail=200 nspm
+              exit 1
+            fi
+            sleep 15
+          done
+          # And its STOMP server is reachable through nginx, as the tests use it.
+          until [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+                     -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+                     --max-time 3 "http://127.0.0.1:$NSPM_DEV_PORT/websocket/stomp")" = 101 ]; do
+            sleep 2
+          done
+          echo "MQTTManager is up."
+
+      - name: Run the stack tests
+        working-directory: firmware_espidf
+        env:
+          NSPM_QEMU_SKIP_BUILD: "1"
+          NSPM_STACK_MQTT: 127.0.0.1:${{ env.NSPM_DEV_MQTT_PORT }}
+          NSPM_STACK_WEB: http://127.0.0.1:${{ env.NSPM_DEV_PORT }}
+        run: qemu/run_tests.sh -m stack
+
+      - name: Collect stack logs
+        if: always()
+        run: |
+          mkdir -p stack-logs
+          cp stack-up.log stack-logs/ 2>/dev/null || true
+          nspanelmanager/docker/dev/nspm-dev compose logs --no-color > stack-logs/compose.log 2>&1 || true
+          curl -s --max-time 30 "http://127.0.0.1:$NSPM_DEV_PORT/download_mqttmanager_log" > stack-logs/mqttmanager.log || true
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stack-test-logs
+          path: |
+            firmware_espidf/qemu/build/junit.xml
+            firmware_espidf/qemu/build/test-logs/
+            stack-logs/
+          if-no-files-found: ignore
+
+      # Saved even when the tests fail, so a failing test does not cost another dependency
+      # build. The container writes the cache as root, so make it readable first.
+      - name: Make the Conan cache readable
+        if: always() && steps.conan-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: sudo chown -R "$(id -u):$(id -g)" "$NSPM_CONAN_CACHE"
+
+      - name: Save Conan packages
+        if: always() && steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.NSPM_CONAN_CACHE }}
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
