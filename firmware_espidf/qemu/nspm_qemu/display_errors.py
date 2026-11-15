@@ -9,8 +9,10 @@ import re
 from typing import List, Tuple
 
 KNOWN: List[Tuple[str, str]] = [
-    (r"^DRAKJHSUYDGBNCJHGJKSHBDN$",
-     "Nextion::init() sends this on purpose, to get the display out of whatever it was doing"),
+    (r"DRAKJHSUYDGBNCJHGJKSHBDN$",
+     "Nextion::init() sends this on purpose, to get the display out of whatever it was doing. "
+     "Whatever was half-sent before it (such as the rest of a terminal frame, when a session ended "
+     "mid-frame) arrives as part of the same instruction: swallowing that is the point of it"),
     (r"^$",
      "NextionTerminal ends any half-sent instruction with a bare terminator before its connect"),
 ]
