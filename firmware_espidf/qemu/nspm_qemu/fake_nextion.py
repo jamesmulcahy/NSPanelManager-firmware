@@ -17,6 +17,7 @@ for the panel (NextionTerminal::options_for()), and touches become terminal touc
 import logging
 import os
 import re
+import time
 from typing import Optional, Union
 
 from nextion_tools.emu import Display, TcpServer
@@ -73,6 +74,24 @@ class FakeNextion(Display):
         except Exception as e:
             log.warning("could not save %s: %s", path, e)
             return None
+
+    # Nextion::restart() keeps the display's power off for 250 ms, and what reaches it meanwhile is
+    # lost on a panel. The emulator resets the moment the harness reads the restart's log line, which
+    # can be in the middle of an instruction sent just before (a dim=, say): the rest would then be
+    # read as an instruction of its own and rejected. So drop what arrives in the first 100 ms: enough
+    # for bytes already in flight, and well inside the 250 ms even though the window starts when the
+    # harness reads the line, a little after the firmware wrote it.
+    POWER_OFF_S = 0.1
+
+    def power_cycle(self) -> None:
+        super().power_cycle()
+        self._off_until = time.monotonic() + self.POWER_OFF_S
+
+    def _on_data(self, data: bytes) -> None:
+        if time.monotonic() < getattr(self, "_off_until", 0.0):
+            log.debug("display off (power cycle): dropped %d bytes", len(data))
+            return
+        super()._on_data(data)
 
     def wait_for_page(self, page: str, timeout: float = 30) -> None:
         super().wait_for_page(page, timeout)
