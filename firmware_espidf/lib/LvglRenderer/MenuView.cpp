@@ -47,7 +47,7 @@ void MenuView::show(const MenuState &state) {
     Ui::set_visible(MenuView::_notes[i], !item.note.empty());
     Ui::set_text(lv_obj_get_child(tile, 1), item.icon);
     Ui::set_text(lv_obj_get_child(tile, 2), item.label);
-    Ui::set_text_color(lv_obj_get_child(tile, 1), item.on ? Theme::on() : Theme::text());
+    Ui::set_text_color(lv_obj_get_child(tile, 1), Theme::text());
     Ui::set_bg_color(tile, item.on ? Theme::on_tint() : Theme::card());
   }
 }

@@ -644,8 +644,8 @@ void UpdateManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, 
             LvglUi::set_look(ConfigManager::lvgl_background, ConfigManager::lvgl_theme);
           }
         } else if (command_string.compare("lvgl_theme") == 0) {
-          // {"command": "lvgl_theme", "theme": "light"}: the colours with LVGL as the UI: "auto" (the
-          // background preset's own, dark without one), "dark", "light", "ocean", "dusk", "aurora" or
+          // {"command": "lvgl_theme", "theme": "grey"}: the colours with LVGL as the UI: "auto" (the
+          // background preset's own, dark without one), "dark", "grey" ("light" too), "ocean", "dusk", "aurora" or
           // "peaks". Saved, and applied at once.
           if (json.contains("theme") && json["theme"].is_string()) {
             ConfigManager::lvgl_theme = json["theme"].get<std::string>();

@@ -194,7 +194,7 @@ lv_obj_t *tile_icon(lv_obj_t *tile) { return lv_obj_get_child(tile, 0); }
 lv_obj_t *tile_label(lv_obj_t *tile) { return lv_obj_get_child(tile, 1); }
 
 void set_tile_on(lv_obj_t *tile, bool on) {
-  set_text_color(tile_icon(tile), on ? Theme::on() : Theme::text());
+  set_text_color(tile_icon(tile), Theme::text());
   set_bg_color(tile, on ? Theme::on_tint() : Theme::card());
 }
 
@@ -257,6 +257,10 @@ SliderCard slider_card(lv_obj_t *parent, const char *glyph, bool vertical) {
   return s;
 }
 
+// The knob is the track's height less 6 px (its pad of -3), and LVGL centres it on the value: at 0
+// and 100 half of it would hang past the track's ends, against the card's icon.
+constexpr int32_t KNOB_INSET = (36 - 6) / 2 + 3;
+
 static void ring_knob(lv_obj_t *slider) {
   lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
   lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
@@ -273,6 +277,12 @@ void gradient_slider(SliderCard &card, lv_color_t from, lv_color_t to, bool vert
   lv_obj_set_style_bg_grad_color(slider, vertical ? from : to, LV_PART_MAIN);
   lv_obj_set_style_bg_grad_dir(slider, vertical ? LV_GRAD_DIR_VER : LV_GRAD_DIR_HOR, LV_PART_MAIN);
   ring_knob(slider);
+  // Keep the knob on the track at either end: its travel stops a knob's radius short of each.
+  if (vertical) {
+    lv_obj_set_style_pad_ver(slider, KNOB_INSET, LV_PART_MAIN);
+  } else {
+    lv_obj_set_style_pad_hor(slider, KNOB_INSET, LV_PART_MAIN);
+  }
 }
 
 void hue_slider(SliderCard &card, bool vertical) {
