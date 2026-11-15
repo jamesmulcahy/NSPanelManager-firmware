@@ -17,7 +17,21 @@ on:
 
 jobs:
   qemu:
+    name: qemu (${{ matrix.display }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # NSPM's own TFT: the whole suite (the LVGL tests skip themselves).
+          - display: nextion
+            terminal: ""
+            select: ""
+          # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
+          # receiver. Only the LVGL tests; the rest drive NSPM's Nextion pages.
+          - display: terminal-us
+            terminal: us
+            select: "-k test_lvgl_terminal"
     timeout-minutes: 60
     defaults:
       run:
@@ -64,13 +78,14 @@ jobs:
       - name: Build and test
         env:
           NSPM_QEMU_GDB: "1"
-        run: qemu/run_tests.sh
+          NSPM_QEMU_TERMINAL: ${{ matrix.terminal }}
+        run: qemu/run_tests.sh ${{ matrix.select }}
 
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: qemu-test-logs
+          name: qemu-test-logs-${{ matrix.display }}
           path: |
             firmware_espidf/qemu/build/junit.xml
             firmware_espidf/qemu/build/test-logs/
