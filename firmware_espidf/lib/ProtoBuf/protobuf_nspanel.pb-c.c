@@ -651,7 +651,7 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_sound_event__descriptor =
   nspanel_config__nspanel_sound_event__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[40] =
+static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[42] =
 {
   {
     "name",
@@ -1133,6 +1133,30 @@ static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[40] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "lvgl_theme",
+    49,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelConfig, lvgl_theme),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "lvgl_background",
+    50,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelConfig, lvgl_background),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_config__field_indices_by_name[] = {
   38,   /* field[38] = button1_entity_page_topic */
@@ -1152,6 +1176,8 @@ static const unsigned nspanel_config__field_indices_by_name[] = {
   31,   /* field[31] = inside_temperature_sensor_mqtt_topic */
   15,   /* field[15] = is_us_panel */
   30,   /* field[30] = locked_to_default_room */
+  41,   /* field[41] = lvgl_background */
+  40,   /* field[40] = lvgl_theme */
   4,   /* field[4] = min_button_push_time */
   0,   /* field[0] = name */
   26,   /* field[26] = nspanel_id */
@@ -1183,7 +1209,7 @@ static const ProtobufCIntRange nspanel_config__number_ranges[5 + 1] =
   { 30, 23 },
   { 35, 27 },
   { 37, 28 },
-  { 0, 40 }
+  { 0, 42 }
 };
 const ProtobufCMessageDescriptor nspanel_config__descriptor =
 {
@@ -1193,7 +1219,7 @@ const ProtobufCMessageDescriptor nspanel_config__descriptor =
   "NSPanelConfig",
   "",
   sizeof(NSPanelConfig),
-  40,
+  42,
   nspanel_config__field_descriptors,
   nspanel_config__field_indices_by_name,
   5,  nspanel_config__number_ranges,
@@ -1287,7 +1313,39 @@ const ProtobufCEnumDescriptor nspanel_status_report__state__descriptor =
   nspanel_status_report__state__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[15] =
+static const ProtobufCEnumValue nspanel_status_report__nspanel_display_mode__enum_values_by_number[4] =
+{
+  { "DISPLAY_MODE_UNKNOWN", "NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN", 0 },
+  { "DISPLAY_MODE_NEXTION", "NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_NEXTION", 1 },
+  { "DISPLAY_MODE_LVGL", "NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_LVGL", 2 },
+  { "DISPLAY_MODE_TERMINAL_IDLE", "NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_TERMINAL_IDLE", 3 },
+};
+static const ProtobufCIntRange nspanel_status_report__nspanel_display_mode__value_ranges[] = {
+{0, 0},{0, 4}
+};
+static const ProtobufCEnumValueIndex nspanel_status_report__nspanel_display_mode__enum_values_by_name[4] =
+{
+  { "DISPLAY_MODE_LVGL", 2 },
+  { "DISPLAY_MODE_NEXTION", 1 },
+  { "DISPLAY_MODE_TERMINAL_IDLE", 3 },
+  { "DISPLAY_MODE_UNKNOWN", 0 },
+};
+const ProtobufCEnumDescriptor nspanel_status_report__nspanel_display_mode__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "NSPanelStatusReport.NSPanelDisplayMode",
+  "NSPanelDisplayMode",
+  "NSPanelStatusReport__NSPanelDisplayMode",
+  "",
+  4,
+  nspanel_status_report__nspanel_display_mode__enum_values_by_number,
+  4,
+  nspanel_status_report__nspanel_display_mode__enum_values_by_name,
+  1,
+  nspanel_status_report__nspanel_display_mode__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[18] =
 {
   {
     "nspanel_state",
@@ -1469,13 +1527,52 @@ static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[1
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "display_mode",
+    16,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelStatusReport, display_mode),
+    &nspanel_status_report__nspanel_display_mode__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "lvgl_theme",
+    17,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelStatusReport, lvgl_theme),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "lvgl_background",
+    18,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelStatusReport, lvgl_background),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_status_report__field_indices_by_name[] = {
+  15,   /* field[15] = display_mode */
   11,   /* field[11] = has_humidity */
   13,   /* field[13] = has_pressure */
   3,   /* field[3] = heap_used_pct */
   12,   /* field[12] = humidity */
   6,   /* field[6] = ip_address */
+  17,   /* field[17] = lvgl_background */
+  16,   /* field[16] = lvgl_theme */
   4,   /* field[4] = mac_address */
   8,   /* field[8] = md5_firmware */
   9,   /* field[9] = md5_littlefs */
@@ -1490,7 +1587,7 @@ static const unsigned nspanel_status_report__field_indices_by_name[] = {
 static const ProtobufCIntRange nspanel_status_report__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 15 }
+  { 0, 18 }
 };
 const ProtobufCMessageDescriptor nspanel_status_report__descriptor =
 {
@@ -1500,7 +1597,7 @@ const ProtobufCMessageDescriptor nspanel_status_report__descriptor =
   "NSPanelStatusReport",
   "",
   sizeof(NSPanelStatusReport),
-  15,
+  18,
   nspanel_status_report__field_descriptors,
   nspanel_status_report__field_indices_by_name,
   1,  nspanel_status_report__number_ranges,

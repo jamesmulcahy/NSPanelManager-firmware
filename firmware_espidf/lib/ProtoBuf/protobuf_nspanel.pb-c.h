@@ -101,6 +101,25 @@ typedef enum _NSPanelStatusReport__State {
   NSPANEL_STATUS_REPORT__STATE__REBOOTING = 5
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_STATUS_REPORT__STATE)
 } NSPanelStatusReport__State;
+/*
+ * What the display shows. Firmware that does not report it leaves it UNKNOWN.
+ */
+typedef enum _NSPanelStatusReport__NSPanelDisplayMode {
+  NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN = 0,
+  /*
+   * NSPM's Nextion pages
+   */
+  NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_NEXTION = 1,
+  /*
+   * LVGL draws the pages through a terminal TFT
+   */
+  NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_LVGL = 2,
+  /*
+   * A terminal TFT with LVGL switched off (lvgl_ui false): the TFT's own waiting page
+   */
+  NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_TERMINAL_IDLE = 3
+    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE)
+} NSPanelStatusReport__NSPanelDisplayMode;
 typedef enum _NSPanelRoomEntitiesPage__EntitySlot__EntityType {
   NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE__ENTITY_TYPE_UNSPECIFIED = 0,
   NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE__ENTITY_TYPE_LIGHT = 1,
@@ -252,10 +271,22 @@ struct  NSPanelConfig
    */
   char *button1_entity_page_topic;
   char *button2_entity_page_topic;
+  /*
+   * The look of a panel that draws its pages with LVGL (a terminal TFT, see docs/LVGL_PANEL_MODE.md). Empty means
+   * the manager does not manage it: keep the panel's own saved value. Panels without LVGL ignore these.
+   */
+  /*
+   * Palette: auto, dark, grey, ocean, dusk, aurora or peaks
+   */
+  char *lvgl_theme;
+  /*
+   * Page background: none, ocean, dusk, aurora or peaks
+   */
+  char *lvgl_background;
 };
 #define NSPANEL_CONFIG__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_config__descriptor) \
-    , (char *)protobuf_c_empty_string, 0, NSPANEL_CONFIG__NSPANEL_DEFAULT_PAGE__HOME, 0, 0, 0, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND, 0, 0, 0, 0, 0, 0,NULL, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, 0,NULL, 0, 0, 0, 0,NULL, 0,NULL, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
+    , (char *)protobuf_c_empty_string, 0, NSPANEL_CONFIG__NSPANEL_DEFAULT_PAGE__HOME, 0, 0, 0, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND, 0, 0, 0, 0, 0, 0,NULL, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, 0,NULL, 0, 0, 0, 0,NULL, 0,NULL, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
 
 
 struct  NSPanelWarning
@@ -288,10 +319,19 @@ struct  NSPanelStatusReport
   float humidity;
   protobuf_c_boolean has_pressure;
   float pressure;
+  NSPanelStatusReport__NSPanelDisplayMode display_mode;
+  /*
+   * The palette in use in LVGL mode ("light" reported as "grey"), empty otherwise
+   */
+  char *lvgl_theme;
+  /*
+   * The page background in use in LVGL mode, empty otherwise
+   */
+  char *lvgl_background;
 };
 #define NSPANEL_STATUS_REPORT__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_status_report__descriptor) \
-    , NSPANEL_STATUS_REPORT__STATE__ONLINE, 0, 0, 0, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, 0, 0 }
+    , NSPANEL_STATUS_REPORT__STATE__ONLINE, 0, 0, 0, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, 0, 0, NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
 
 
 struct  NSPanelRoomEntitiesPage__EntitySlot
@@ -853,6 +893,7 @@ extern const ProtobufCEnumDescriptor    nspanel_config__nspanel_sound_event__des
 extern const ProtobufCMessageDescriptor nspanel_warning__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_status_report__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_status_report__state__descriptor;
+extern const ProtobufCEnumDescriptor    nspanel_status_report__nspanel_display_mode__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_room_entities_page__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_room_entities_page__entity_slot__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_room_entities_page__entity_slot__entity_type__descriptor;
