@@ -277,6 +277,13 @@ void gradient_slider(SliderCard &card, lv_color_t from, lv_color_t to, bool vert
   lv_obj_set_style_bg_grad_color(slider, vertical ? from : to, LV_PART_MAIN);
   lv_obj_set_style_bg_grad_dir(slider, vertical ? LV_GRAD_DIR_VER : LV_GRAD_DIR_HOR, LV_PART_MAIN);
   ring_knob(slider);
+  // A white ring vanishes on the gradient's pale end: draw it in the theme's accent, which stands
+  // out from both ends and is the colour "on" tiles take.
+  lv_obj_set_style_border_color(slider, Theme::accent(), LV_PART_KNOB);
+  // A dark edge too, for an accent close to the track's colour (dusk's peach on its warm end).
+  lv_obj_set_style_outline_width(slider, 2, LV_PART_KNOB);
+  lv_obj_set_style_outline_color(slider, Theme::background(), LV_PART_KNOB);
+  lv_obj_set_style_outline_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
   // Keep the knob on the track at either end: its travel stops a knob's radius short of each.
   if (vertical) {
     lv_obj_set_style_pad_ver(slider, KNOB_INSET, LV_PART_MAIN);
