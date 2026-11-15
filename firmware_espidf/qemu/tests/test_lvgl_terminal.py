@@ -16,13 +16,18 @@ pytestmark = pytest.mark.skipif(TERMINAL is None, reason="needs NSPM_QEMU_TERMIN
 
 
 def settle(nextion, quiet: float = 1.5, timeout: float = 60) -> None:
-    """Until the receiver's framebuffer has not changed for `quiet` seconds."""
+    """Until a terminal session runs and its framebuffer has not changed for `quiet` seconds.
+
+    A session can end and be restarted at any time under QEMU (a stalled guest misses the
+    firmware's reverse timeout), and nothing changes while none runs: that is not settled.
+    """
     deadline = time.time() + timeout
-    last, since = nextion.terminal.changes, time.time()
+    last, since = None, time.time()
     while time.time() < deadline:
         time.sleep(0.1)
-        now = nextion.terminal.changes
-        if now != last:
+        terminal = nextion.terminal
+        now = (id(terminal), terminal.changes) if nextion.terminal_active else None
+        if now is None or now != last:
             last, since = now, time.time()
         elif time.time() - since >= quiet:
             return
@@ -75,6 +80,7 @@ def test_ceiling_tile_turns_on_ceiling_lights(lvgl_home):
     Cmd = pb.NSPanelMQTTManagerCommand
     mark = lvgl_home.manager.command_mark()
 
+    settle(lvgl_home.nextion)
     lvgl_home.nextion.tap_screen(*US_CEILING_TILE)
 
     cmd = lvgl_home.manager.wait_for_command(lambda c: c.WhichOneof("CommandData") == "first_page_turn_on", since=mark)
@@ -85,6 +91,7 @@ def test_ceiling_tile_turns_on_ceiling_lights(lvgl_home):
 
 
 def test_room_state_from_manager_redraws_ceiling_tile(lvgl_home):
+    settle(lvgl_home.nextion)
     before = region(lvgl_home.nextion, US_CEILING_TILE_BOX)
     room = lvgl_home.manager.rooms[1]
     room.num_ceiling_lights_on = 1
@@ -98,6 +105,7 @@ def test_room_state_from_manager_redraws_ceiling_tile(lvgl_home):
 
 
 def test_all_rooms_switch_redraws_footer(lvgl_home):
+    settle(lvgl_home.nextion)
     before = region(lvgl_home.nextion, US_FOOTER_BOX)
     lvgl_home.nextion.tap_screen(*US_MODE_ALL)
     lvgl_home.nextion.wait_for(lambda n: (region(n, US_FOOTER_BOX) != before).any(), timeout=30,

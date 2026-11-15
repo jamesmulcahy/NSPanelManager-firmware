@@ -176,7 +176,7 @@ page prints `0x92` and the panel goes to its screensaver, as a real one would.
 ## The LVGL UI (terminal TFT)
 
 ```
-NSPM_QEMU_TERMINAL=us NEXTION_TOOLS=~/nspanel/nextion-tools firmware_espidf/qemu/run_tests.sh -k lvgl
+NSPM_QEMU_TERMINAL=us firmware_espidf/qemu/run_tests.sh -k lvgl
 firmware_espidf/qemu/web_panel.sh --terminal us
 ```
 
@@ -189,8 +189,7 @@ screen as a screenshot shows it. `tests/test_lvgl_terminal.py` runs only in this
 otherwise); its touch coordinates are for the US layout. Without the variable, the rest of the
 suite runs against NSPM's TFT as before; with it, the Nextion-page tests do not apply.
 
-The receiver needs nextion-tools with the terminal emulation (`NEXTION_TOOLS=<checkout>` until a
-release has it).
+The receiver comes from nextion-tools 0.2.0 or later (pinned in `requirements.txt`).
 
 Two things differ from a panel:
 
