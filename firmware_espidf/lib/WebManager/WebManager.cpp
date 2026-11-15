@@ -85,8 +85,9 @@ void WebManager::start() {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
     WebManager::_config.max_uri_handlers = 12;
     // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
-    // chunked send. See the "Screenshot ..." log line for what is left unused.
-    WebManager::_config.stack_size = 8192;
+    // chunked send, and 8 KB left only 412 bytes unused on a panel (PNG). See the
+    // "Screenshot ..." log line for what is left unused.
+    WebManager::_config.stack_size = 12288;
     // The stock config keeps an idle client connection open forever: the 5 s timeouts only cover
     // reading/sending a request. When Wi-Fi drops while a client (e.g. a periodic scraper) has a
     // connection open, its FIN never arrives and the session holds an lwIP socket indefinitely.
