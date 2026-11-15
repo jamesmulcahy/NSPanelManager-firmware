@@ -170,7 +170,7 @@ void LvglRenderer::_build_screens() {
   Theme::screen(screen);
   lv_obj_t *root = Theme::group(screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_size(root, lv_pct(100), lv_pct(100));
-  lv_obj_set_style_pad_gap(root, 12, 0);
+  lv_obj_set_style_pad_gap(root, Theme::SPACE_L, 0);
   BootScreen::build(root, landscape);
   if (LvglRenderer::on_pages_rebuilt != nullptr) {
     LvglRenderer::on_pages_rebuilt();

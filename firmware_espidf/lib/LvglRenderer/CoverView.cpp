@@ -29,7 +29,7 @@ void CoverView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_flex_grow(status, 1);
   lv_obj_set_flex_flow(status, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(status, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(status, 12, 0);
+  lv_obj_set_style_pad_gap(status, Theme::SPACE_L, 0);
   if (landscape) {
     lv_obj_set_height(status, lv_pct(100));
   } else {

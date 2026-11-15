@@ -55,6 +55,20 @@ inline lv_color_t on() { return lv_color_hex(0xF8C000); }
 // Behind the screensaver and the clean screen when they have no background: black, or a light
 // palette's background, as its dark text would not show on black.
 inline lv_color_t blank() { return palette().light ? background() : lv_color_black(); }
+// Corner radii: containers (cards, tiles, the room list), the controls in them (buttons, sliders),
+// a control inset in a container's padding (outer radius minus padding), and thin bars.
+constexpr int32_t RADIUS_CARD = 12;
+constexpr int32_t RADIUS_CONTROL = 10;
+constexpr int32_t RADIUS_INSET = 8;
+constexpr int32_t RADIUS_BAR = 3;
+// Gaps and padding: a 4 px scale and a hairline. Odd values that place one thing (a label's
+// indent, a list's row pitch) stay where they are used.
+constexpr int32_t SPACE_XS = 2;
+constexpr int32_t SPACE_S = 4;
+constexpr int32_t SPACE_M = 8;
+constexpr int32_t SPACE_L = 12;
+constexpr int32_t SPACE_XL = 16;
+
 // How opaque cards and tiles are: solid, or see-through over a page background (Background.hpp).
 // Read when a card is built.
 lv_opa_t card_opa();

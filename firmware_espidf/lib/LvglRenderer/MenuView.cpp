@@ -68,7 +68,7 @@ void CleanScreenView::build(lv_obj_t *parent, bool landscape) {
 
   lv_obj_t *middle = Ui::fill(parent, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(middle, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(middle, 12, 0);
+  lv_obj_set_style_pad_gap(middle, Theme::SPACE_L, 0);
   lv_obj_t *logo = Theme::group(middle, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(logo, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   Ui::icon(logo, NSPM_ICON_LAMP, 40, Theme::on());
@@ -104,7 +104,7 @@ static lv_obj_t *dialog_button(lv_obj_t *parent, bool confirm) {
   lv_obj_remove_style_all(button);
   lv_obj_set_flex_grow(button, 1);
   lv_obj_set_height(button, 44);
-  lv_obj_set_style_radius(button, 10, 0);
+  lv_obj_set_style_radius(button, Theme::RADIUS_CONTROL, 0);
   lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(button, Theme::track(), 0);
   lv_obj_set_style_bg_color(button, Theme::pressed(), LV_STATE_PRESSED);
@@ -131,7 +131,7 @@ void DialogView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_center(card);
   lv_obj_set_style_border_width(card, 2, 0);
   lv_obj_set_style_border_color(card, Theme::muted(), 0);
-  lv_obj_set_style_pad_all(card, 16, 0);
+  lv_obj_set_style_pad_all(card, Theme::SPACE_XL, 0);
   lv_obj_set_style_pad_row(card, 10, 0);
   DialogView::_title = Theme::label(card, "", Theme::title_font(), Theme::text());
   DialogView::_message = Theme::label(card, "", Theme::body_font(), Theme::muted());
