@@ -49,6 +49,9 @@ class Room:
     ceiling_lights_dim_level: int = 0
     table_lights_dim_level: int = 0
     color_temperature: int = 50
+    # How many lights can change colour temperature. None: not sent at all, as by a manager from
+    # before the field (the panel must then show the colour-temperature slider).
+    num_color_temperature_lights: Optional[int] = None
     entity_page_ids: List[int] = field(default_factory=list)
     scene_page_ids: List[int] = field(default_factory=list)
 
@@ -71,6 +74,22 @@ class Room:
             num_table_lights_on=self.num_table_lights_on,
             entity_page_ids=self.entity_page_ids,
         )
+
+    def status_bytes(self) -> bytes:
+        """The status as published: with the colour-temperature count, whether or not the pinned
+        schema has its fields (num_color_temperature_lights = 14, color_temperature_lights_known = 15)."""
+        status = self.status()
+        if self.num_color_temperature_lights is None:
+            return status.SerializeToString()
+        fields = status.DESCRIPTOR.fields_by_name
+        if "color_temperature_lights_known" in fields:
+            status.num_color_temperature_lights = self.num_color_temperature_lights
+            status.color_temperature_lights_known = True
+            return status.SerializeToString()
+        extra = _varint_field(15, 1)
+        if self.num_color_temperature_lights:
+            extra = _varint_field(14, self.num_color_temperature_lights) + extra
+        return status.SerializeToString() + extra
 
 
 def default_rooms() -> List[Room]:
@@ -149,18 +168,25 @@ def lvgl_look_of(command_payload: bytes) -> Optional[Dict[str, str]]:
     return None
 
 
+def _varint(n: int) -> bytes:
+    out = b""
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        if n:
+            out += bytes([byte | 0x80])
+        else:
+            return out + bytes([byte])
+
+
 def _string_field(number: int, value: str) -> bytes:
     """A protobuf string field, encoded by hand (for fields the pinned .proto may not have yet)."""
-    def varint(n: int) -> bytes:
-        out = b""
-        while True:
-            byte, n = n & 0x7F, n >> 7
-            if n:
-                out += bytes([byte | 0x80])
-            else:
-                return out + bytes([byte])
     data = value.encode()
-    return varint(number << 3 | 2) + varint(len(data)) + data
+    return _varint(number << 3 | 2) + _varint(len(data)) + data
+
+
+def _varint_field(number: int, value: int) -> bytes:
+    """A protobuf int32/bool field (non-negative), encoded by hand, as _string_field()."""
+    return _varint(number << 3) + _varint(value)
 
 
 class FakeManager:
@@ -250,7 +276,7 @@ class FakeManager:
         return config.SerializeToString() + extra
 
     def publish_room(self, room_id: int) -> None:
-        self.broker.publish("%s/room/%d/state" % (self.base, room_id), self.rooms[room_id].status().SerializeToString(), retain=True)
+        self.broker.publish("%s/room/%d/state" % (self.base, room_id), self.rooms[room_id].status_bytes(), retain=True)
 
     def publish_all_rooms(self) -> None:
         rooms = list(self.rooms.values())
@@ -259,7 +285,9 @@ class FakeManager:
                       num_table_lights=sum(r.num_table_lights for r in rooms),
                       num_ceiling_lights_on=sum(r.num_ceiling_lights_on for r in rooms),
                       num_table_lights_on=sum(r.num_table_lights_on for r in rooms))
-        self.broker.publish(self.base + "/all_rooms_status", merged.status().SerializeToString(), retain=True)
+        if all(r.num_color_temperature_lights is not None for r in rooms):
+            merged.num_color_temperature_lights = sum(r.num_color_temperature_lights for r in rooms)
+        self.broker.publish(self.base + "/all_rooms_status", merged.status_bytes(), retain=True)
 
     def publish_entity_page(self, page_id: int) -> None:
         self.broker.publish("%s/entity_pages/%d/state" % (self.base, page_id), self.entity_pages[page_id].SerializeToString(), retain=True)

@@ -110,6 +110,63 @@ def test_room_state_from_manager_redraws_ceiling_tile(lvgl_home):
     lvgl_home.nextion.screenshot("ceiling-40")
 
 
+# The warm end of the colour-temperature slider's gradient (HomeView::build), as the screen shows it.
+KELVIN_AMBER = (0xF8, 0xA0, 0x38)
+
+
+def kelvin_pixels(nextion) -> int:
+    """How many pixels are near the colour-temperature slider's amber: none once it is hidden."""
+    snapshot = nextion.terminal_snapshot()[..., :3].astype(int)
+    return int((abs(snapshot - KELVIN_AMBER).sum(axis=2) < 40).sum())
+
+
+def test_colour_temperature_slider_shows_for_a_manager_that_does_not_say(lvgl_home):
+    # The fake manager's rooms leave out the colour-temperature count, as a manager from before it:
+    # the slider must stay, rather than the missing count being read as "none".
+    settle(lvgl_home.nextion)
+    assert lvgl_home.manager.rooms[1].num_color_temperature_lights is None
+    assert kelvin_pixels(lvgl_home.nextion) > 200
+
+
+def test_colour_temperature_slider_hides_in_a_room_without_such_lights(lvgl_home):
+    settle(lvgl_home.nextion)
+    assert kelvin_pixels(lvgl_home.nextion) > 200
+    room = lvgl_home.manager.rooms[1]
+    room.num_color_temperature_lights = 0
+    lvgl_home.manager.publish_room(1)
+
+    lvgl_home.nextion.wait_for(lambda n: kelvin_pixels(n) == 0, timeout=30, what="the slider hidden")
+    settle(lvgl_home.nextion)
+    lvgl_home.nextion.screenshot("no-colour-temperature")
+
+    # And back, once the room has one.
+    room.num_color_temperature_lights = 1
+    lvgl_home.manager.publish_room(1)
+    lvgl_home.nextion.wait_for(lambda n: kelvin_pixels(n) > 200, timeout=30, what="the slider shown again")
+    assert not lvgl_home.nextion.terminal.faults
+
+
+def test_room_with_only_table_lights_shows_one_tile_for_them(lvgl_home):
+    from nspm_qemu.proto import nspanel as pb
+    Cmd = pb.NSPanelMQTTManagerCommand
+    settle(lvgl_home.nextion)
+    before = region(lvgl_home.nextion, US_CEILING_TILE_BOX)
+    room = lvgl_home.manager.rooms[1]
+    room.num_ceiling_lights = 0
+    lvgl_home.manager.publish_room(1)
+    lvgl_home.nextion.wait_for(lambda n: (region(n, US_CEILING_TILE_BOX) != before).any(), timeout=30,
+                               what="the ceiling tile gone")
+    settle(lvgl_home.nextion)
+    lvgl_home.nextion.screenshot("table-only")
+
+    # The table tile now spans the row: where the ceiling tile was turns the table lights on.
+    mark = lvgl_home.manager.command_mark()
+    lvgl_home.nextion.tap_screen(*US_CEILING_TILE)
+    cmd = lvgl_home.manager.wait_for_command(lambda c: c.WhichOneof("CommandData") == "first_page_turn_on", since=mark)
+    assert cmd.first_page_turn_on.affect_lights == Cmd.TABLE_LIGHTS
+    assert not lvgl_home.nextion.terminal.faults
+
+
 def test_all_rooms_switch_redraws_footer(lvgl_home):
     settle(lvgl_home.nextion)
     before = region(lvgl_home.nextion, US_FOOTER_BOX)
