@@ -24,9 +24,8 @@ on:
 
 env:
   NSPM_REPO: jamesmulcahy/NSPanelManager
-  # The manager under test: the fork's dev stack (docker/dev), from jamesmulcahy/NSPanelManager#1.
-  # Once that is merged, use the manager's fork branch here.
-  NSPM_REF: ${{ inputs.nspm_ref || 'feat/dev-stack-fork' }}
+  # The manager under test: the fork branch, with its dev stack (docker/dev).
+  NSPM_REF: ${{ inputs.nspm_ref || 'fork' }}
   # Where the stack's broker and web UI are published on the runner.
   NSPM_DEV_MQTT_PORT: "18830"
   NSPM_DEV_MQTT_BIND: "127.0.0.1"
