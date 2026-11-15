@@ -96,6 +96,7 @@ jobs:
           pio run --environment qemu --target buildfs
 
       - name: Wait for MQTTManager
+        id: wait-mqttmanager
         timeout-minutes: 90
         run: |
           # `nspm-dev up` builds the images, then starts the stack and returns.
@@ -150,14 +151,17 @@ jobs:
           if-no-files-found: ignore
 
       # Saved even when the tests fail, so a failing test does not cost another dependency
-      # build. The container writes the cache as root, so make it readable first.
+      # build, but only once MQTTManager has built: a stack that never came up leaves the
+      # cache empty or partial, and saving that would make later runs restore it through
+      # the restore-keys prefix and build everything from source again. The container
+      # writes the cache as root, so make it readable first.
       - name: Make the Conan cache readable
-        if: always() && steps.conan-cache.outputs.cache-hit != 'true'
+        if: always() && steps.wait-mqttmanager.outcome == 'success' && steps.conan-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: sudo chown -R "$(id -u):$(id -g)" "$NSPM_CONAN_CACHE"
 
       - name: Save Conan packages
-        if: always() && steps.conan-cache.outputs.cache-hit != 'true'
+        if: always() && steps.wait-mqttmanager.outcome == 'success' && steps.conan-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: ${{ env.NSPM_CONAN_CACHE }}
