@@ -62,6 +62,12 @@ public:
   static inline void (*on_pages_rebuilt)() = nullptr;
 
   /**
+   * GUI task: build the boot screen again, then call on_pages_rebuilt, as a region change does.
+   * For a new palette (Theme.hpp), which every screen takes when it is built.
+   */
+  static void rebuild_screens() { LvglRenderer::_build_screens(); }
+
+  /**
    * Terminal task: sees every touch edge and move (screen coordinates) before LVGL does; returning
    * true keeps it from LVGL (e.g. the touch that wakes the screen).
    */

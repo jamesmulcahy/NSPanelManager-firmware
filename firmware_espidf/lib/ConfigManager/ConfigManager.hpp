@@ -131,4 +131,7 @@ public:
   static inline bool lvgl_ui = true;
   // The page background preset with LVGL as the UI (Background.hpp): "none", "ocean", "dusk", "aurora" or "peaks".
   static inline std::string lvgl_background = "none";
+  // The LVGL screens' palette (Theme.hpp): "auto" (the background preset's own, dark without one),
+  // "dark", "light", "ocean", "dusk", "aurora" or "peaks".
+  static inline std::string lvgl_theme = "auto";
 };

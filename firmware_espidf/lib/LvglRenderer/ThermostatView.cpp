@@ -52,7 +52,7 @@ void ThermostatView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_t *down = Ui::icon_button(set, NSPM_ICON_CHEVRON_LEFT, 40);
   lv_obj_t *value = Theme::group(set, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(value, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(value, 2, 0);
+  lv_obj_set_style_pad_gap(value, Theme::SPACE_XS, 0);
   ThermostatView::_set_label = Theme::label(value, "", Theme::body_font(), Theme::muted());
   ThermostatView::_set_value = Theme::label(value, "", Theme::large_font(), Theme::on());
   lv_obj_t *up = Ui::icon_button(set, NSPM_ICON_CHEVRON_RIGHT, 40);
@@ -63,8 +63,8 @@ void ThermostatView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_t *options = Theme::card(parent);
   lv_obj_set_size(options, lv_pct(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(options, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_all(options, 4, 0);
-  lv_obj_set_style_pad_gap(options, 4, 0);
+  lv_obj_set_style_pad_all(options, Theme::SPACE_S, 0);
+  lv_obj_set_style_pad_gap(options, Theme::SPACE_S, 0);
   for (int i = 0; i < ThermostatState::MAX_OPTIONS; i++) {
     lv_obj_t *option = Ui::tile(options, "", 24, "", false);
     lv_obj_set_flex_grow(option, 1);

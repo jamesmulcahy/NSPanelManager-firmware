@@ -18,10 +18,10 @@ static lv_obj_t *bar(lv_obj_t *parent, lv_color_t color) {
   lv_obj_t *b = lv_bar_create(parent);
   lv_obj_remove_style_all(b);
   lv_obj_set_height(b, 6);
-  lv_obj_set_style_radius(b, 3, LV_PART_MAIN);
+  lv_obj_set_style_radius(b, Theme::RADIUS_BAR, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, Theme::track(), LV_PART_MAIN);
-  lv_obj_set_style_radius(b, 3, LV_PART_INDICATOR);
+  lv_obj_set_style_radius(b, Theme::RADIUS_BAR, LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(b, color, LV_PART_INDICATOR);
   return b;
@@ -44,7 +44,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   // The art beside everything else on a landscape screen, above it on a portrait one.
   lv_obj_t *body = Ui::fill(parent, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(body, landscape ? 12 : 8, 0);
+  lv_obj_set_style_pad_gap(body, landscape ? Theme::SPACE_L : Theme::SPACE_M, 0);
 
   lv_obj_t *art = lv_obj_create(body);
   lv_obj_remove_style_all(art);
@@ -52,6 +52,9 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_size(art, ART_SIZE, ART_SIZE);
   lv_obj_set_style_bg_opa(art, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(art, Theme::card(), 0);
+  // Rounded as the cards are, behind the placeholder. Art covers the box and stays square: clipping
+  // its corners (clip_corner) would mask every pixel of it.
+  lv_obj_set_style_radius(art, Theme::RADIUS_CARD, 0);
   lv_obj_add_flag(art, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(art, clicked, LV_EVENT_CLICKED, (void *)(intptr_t)Action::ART);
   MediaPlayerView::_art_box = art;
@@ -63,7 +66,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_t *info = Theme::group(body, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_grow(info, 1);
   lv_obj_set_flex_align(info, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(info, 4, 0);
+  lv_obj_set_style_pad_gap(info, Theme::SPACE_S, 0);
   if (landscape) {
     lv_obj_set_height(info, lv_pct(100));
   } else {
@@ -71,7 +74,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   }
   lv_obj_t *text = Theme::group(info, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_width(text, lv_pct(100));
-  lv_obj_set_style_pad_gap(text, 2, 0);
+  lv_obj_set_style_pad_gap(text, Theme::SPACE_XS, 0);
   MediaPlayerView::_song = line(text, Theme::title_font(), Theme::text());
   MediaPlayerView::_artist = line(text, Theme::body_font(), Theme::text());
   MediaPlayerView::_album = line(text, Theme::body_font(), Theme::muted());
@@ -83,8 +86,8 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
 
   lv_obj_t *position = Theme::group(info, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_width(position, lv_pct(100));
-  lv_obj_set_style_pad_row(position, 2, 0);
-  MediaPlayerView::_position = bar(position, Theme::text());
+  lv_obj_set_style_pad_row(position, Theme::SPACE_XS, 0);
+  MediaPlayerView::_position = bar(position, Theme::indicator());
   lv_obj_set_width(MediaPlayerView::_position, lv_pct(100));
   MediaPlayerView::_elapsed = Theme::label(position, "", Theme::body_font(), Theme::muted());
   lv_obj_set_flex_grow(MediaPlayerView::_elapsed, 1);
@@ -105,7 +108,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_size(volume, lv_pct(100), LV_SIZE_CONTENT);
   lv_obj_set_flex_flow(volume, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(volume, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(volume, 2, 0);
+  lv_obj_set_style_pad_all(volume, Theme::SPACE_XS, 0);
   lv_obj_set_style_pad_gap(volume, 0, 0);
   MediaPlayerView::_mute = button(volume, NSPM_ICON_VOLUME_HIGH, 24, Action::MUTE);
   MediaPlayerView::_down = button(volume, NSPM_ICON_MINUS, 24, Action::VOLUME_DOWN);

@@ -158,18 +158,20 @@ struct Rect {
   uint16_t color;
 };
 
-// Name, design, and how opaque cards are over it: see-through (179) where the art is calm, nearly
-// solid where it is busy (aurora's curtains) or bright behind text (dusk's horizon glow).
+// Name, design, how opaque cards are over it (see-through, 179, where the art is calm; nearly solid
+// where it is busy, as aurora's curtains, or bright behind text, as dusk's horizon glow), and the
+// palette "auto" picks for it: its colours, so the cards sit on the art rather than over it.
 const struct {
   Background::Preset preset;
   const char *name;
   void (*render)(int y, uint16_t *row);
   uint8_t card_opa;
+  const Theme::Palette *palette;
 } presets[] = {
-    {Background::Preset::OCEAN, "ocean", ocean, 179},
-    {Background::Preset::DUSK, "dusk", dusk, 217},
-    {Background::Preset::AURORA, "aurora", aurora, 230},
-    {Background::Preset::PEAKS, "peaks", peaks, 179},
+    {Background::Preset::OCEAN, "ocean", ocean, 179, &Theme::OCEAN},
+    {Background::Preset::DUSK, "dusk", dusk, 217, &Theme::DUSK},
+    {Background::Preset::AURORA, "aurora", aurora, 230, &Theme::AURORA},
+    {Background::Preset::PEAKS, "peaks", peaks, 179, &Theme::PEAKS},
 };
 
 Background::Preset current_preset = Background::Preset::NONE;
@@ -276,7 +278,24 @@ void Background::attach(lv_obj_t *screen) {
   lv_obj_add_event_cb(screen, draw, LV_EVENT_DRAW_MAIN_END, NULL);
 }
 
-void Background::set(Preset preset) {
+const Theme::Palette &Background::palette_for(Preset preset, const Theme::Palette *theme) {
+  if (theme != nullptr) {
+    return *theme;
+  }
+  for (const auto &p : presets) {
+    if (p.preset == preset) {
+      return *p.palette;
+    }
+  }
+  return Theme::DARK;
+}
+
+void Background::set(Preset preset, const Theme::Palette *theme) {
+  const Theme::Palette &palette = palette_for(preset, theme);
+  Theme::set_palette(palette);
+  if (palette.light) {
+    preset = Preset::NONE;
+  }
   if (preset == current_preset && (rects != nullptr || preset == Preset::NONE)) {
     return;
   }

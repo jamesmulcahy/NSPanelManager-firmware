@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <lvgl.h>
 
+#include "Theme.hpp"
+
 // Built-in page backgrounds: generated art, drawn with LVGL fills behind a screen's children, with
 // the cards made see-through over it. The art changes colour only down the screen or at a few edges
 // per row, so over the terminal link (which compresses runs along rows) it costs a few percent more
@@ -20,9 +22,14 @@ const char *name(Preset preset);
 // GUI task: draw the current preset behind `screen`'s children from now on (once per screen).
 void attach(lv_obj_t *screen);
 
-// GUI task: the preset drawn, and the card opacity Theme gives cards built after this (see-through
-// with a background, solid without). Views built before keep theirs: rebuild them.
-void set(Preset preset);
+// GUI task: the preset drawn, the card opacity Theme gives cards built after this (see-through
+// with a background, solid without), and the palette (palette_for()). Views built before keep
+// theirs: rebuild them.
+void set(Preset preset, const Theme::Palette *theme = nullptr);
+// The palette set() applies: `theme`, or for nullptr ("auto") the one `preset` carries, DARK for
+// NONE. Touches nothing, so it may run before LVGL starts.
+const Theme::Palette &palette_for(Preset preset, const Theme::Palette *theme);
+// The preset drawn: NONE under a light palette, whatever was asked for.
 Preset current();
 
 // The art's pixels in row y (0-479) of a 320x480 screen, RGB565, into row[320]. For tests and the

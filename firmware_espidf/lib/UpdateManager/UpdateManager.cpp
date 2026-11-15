@@ -641,7 +641,16 @@ void UpdateManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, 
           if (json.contains("preset") && json["preset"].is_string()) {
             ConfigManager::lvgl_background = json["preset"].get<std::string>();
             ConfigManager::save_config();
-            LvglUi::set_background(ConfigManager::lvgl_background);
+            LvglUi::set_look(ConfigManager::lvgl_background, ConfigManager::lvgl_theme);
+          }
+        } else if (command_string.compare("lvgl_theme") == 0) {
+          // {"command": "lvgl_theme", "theme": "light"}: the colours with LVGL as the UI: "auto" (the
+          // background preset's own, dark without one), "dark", "light", "ocean", "dusk", "aurora" or
+          // "peaks". Saved, and applied at once.
+          if (json.contains("theme") && json["theme"].is_string()) {
+            ConfigManager::lvgl_theme = json["theme"].get<std::string>();
+            ConfigManager::save_config();
+            LvglUi::set_look(ConfigManager::lvgl_background, ConfigManager::lvgl_theme);
           }
         } else if (command_string.compare("lvgl_ui") == 0) {
           // {"command": "lvgl_ui", "enable": false}: keep the Nextion pages whatever TFT the display runs

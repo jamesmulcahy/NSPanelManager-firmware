@@ -7,6 +7,9 @@
 // OUT/us-bg-<preset>-<page>.ppm for the pages over each background preset, and every frame's cost
 // to OUT/costs.csv. Page fixtures (mock data) are
 // in Pages.cpp.
+//
+// NSPM_THEME=<palette> (Theme.hpp: dark, light, ocean, ...) draws everything in that palette, as the
+// lvgl_theme command does; unset, or "auto", each background takes its own (dark without one).
 #include "Background.hpp"
 #include "BootScreen.hpp"
 #include "Pages.hpp"
@@ -14,6 +17,7 @@
 #include "Theme.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -27,6 +31,7 @@ static std::vector<uint16_t> frame; // What the display shows
 static size_t wire_bytes, records;
 static uint32_t ticks;
 static std::vector<std::string> csv;
+static const Theme::Palette *theme; // NSPM_THEME; nullptr for auto
 
 // A band as NextionTerminal sends it: one rectangle, its pixels PackBits-encoded into DATA records.
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map) {
@@ -90,6 +95,7 @@ static void run(bool landscape, const char *out) {
   lv_display_set_default(display);
   lv_obj_t *screen = lv_screen_active();
   Background::attach(screen);
+  Theme::set_palette(Background::palette_for(Background::Preset::NONE, theme));
 
   // The boot screen, as LvglRenderer builds it.
   Theme::screen(screen);
@@ -120,7 +126,7 @@ static void run(bool landscape, const char *out) {
     presets.insert(presets.end(), {Background::Preset::OCEAN, Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS});
   }
   for (Background::Preset preset : presets) {
-    Background::set(preset);
+    Background::set(preset, theme);
     const bool plain = preset == Background::Preset::NONE;
     int n = 0;
     for (const PageCase &page : page_cases()) {
@@ -140,12 +146,13 @@ static void run(bool landscape, const char *out) {
       }
     }
   }
-  Background::set(Background::Preset::NONE);
+  Background::set(Background::Preset::NONE, theme);
   lv_display_delete(display);
 }
 
 int main(int argc, char **argv) {
   const char *out = argc > 1 ? argv[1] : ".";
+  theme = Theme::palette_from_name(getenv("NSPM_THEME"));
   lv_init();
   lv_tick_set_cb([]() -> uint32_t { return ticks; });
   run(false, out);

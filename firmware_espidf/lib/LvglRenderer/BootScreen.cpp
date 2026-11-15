@@ -15,7 +15,7 @@ lv_obj_t *BootScreen::_row(lv_obj_t *parent, const char *symbol) {
 
 void BootScreen::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_flex_flow(parent, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_gap(parent, 12, 0);
+  lv_obj_set_style_pad_gap(parent, Theme::SPACE_L, 0);
 
   lv_obj_t *clock = Theme::card(parent);
   lv_obj_set_flex_align(clock, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

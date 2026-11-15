@@ -40,8 +40,6 @@ static void on_click(lv_obj_t *obj, HomeView::Action action, lv_event_code_t cod
 static lv_obj_t *light_tile(lv_obj_t *parent, const char *glyph, const char *name, lv_obj_t **value) {
   lv_obj_t *tile = Ui::tile(parent, glyph, 40, name, false);
   lv_obj_set_flex_grow(tile, 1);
-  lv_obj_set_style_border_color(tile, Theme::on(), 0);
-  lv_obj_set_style_border_width(tile, 0, 0);
   lv_obj_set_style_text_color(Ui::tile_label(tile), Theme::muted(), 0);
   *value = Theme::label(tile, "", Theme::title_font(), Theme::text());
   return tile;
@@ -50,7 +48,7 @@ static lv_obj_t *light_tile(lv_obj_t *parent, const char *glyph, const char *nam
 void HomeView::build(lv_obj_t *parent, bool landscape) {
   // Header: scenes on the left, the clock on the right.
   Ui::Header header = Ui::header(parent, false, false);
-  lv_obj_set_style_pad_left(header.bar, 2, 0);
+  lv_obj_set_style_pad_left(header.bar, Theme::SPACE_XS, 0);
   HomeView::_scenes = Ui::icon_button(header.bar, NSPM_ICON_PALETTE_SWATCH, 24);
   lv_obj_move_to_index(HomeView::_scenes, 0);
   on_click(HomeView::_scenes, Action::SCENES, LV_EVENT_CLICKED);
@@ -120,17 +118,19 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   HomeView::_room_text.clear();
   HomeView::_catcher = NULL;
   Ui::popup_open = false;
+  // Styled from scratch, as Ui's buttons are: the default theme would animate the press, darken it
+  // with a recolor and clip the list's corners (see Ui.cpp, flat()).
+  lv_obj_remove_style_all(room);
   lv_obj_set_flex_grow(room, 3);
   lv_obj_set_height(room, lv_pct(100));
-  lv_obj_set_style_radius(room, 12, 0);
-  lv_obj_set_style_border_width(room, 0, 0);
-  lv_obj_set_style_shadow_width(room, 0, 0);
+  lv_obj_set_style_radius(room, Theme::RADIUS_CARD, 0);
   lv_obj_set_style_bg_color(room, Theme::card(), 0);
   lv_obj_set_style_bg_opa(room, Theme::card_opa(), 0);
+  Theme::bottom_lip(room);
   lv_obj_set_style_bg_color(room, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_set_style_text_font(room, Theme::body_font(), 0);
   lv_obj_set_style_text_color(room, Theme::text(), 0);
-  lv_obj_set_style_pad_left(room, 16, 0);
+  lv_obj_set_style_pad_left(room, Theme::SPACE_XL, 0);
   lv_obj_set_style_pad_right(room, 10, 0);
   lv_obj_set_style_pad_ver(room, 0, 0);
   // The label sits mid-height: LVGL draws the button text from the top padding.
@@ -140,23 +140,37 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_text_font(room, Theme::icon_font(24), LV_PART_INDICATOR);
   lv_obj_set_style_text_color(room, Theme::muted(), LV_PART_INDICATOR);
   lv_obj_t *list = lv_dropdown_get_list(room);
+  lv_obj_remove_style_all(list);
   lv_obj_set_style_bg_color(list, Theme::card(), 0);
   lv_obj_set_style_bg_opa(list, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(list, Theme::track(), 0);
   lv_obj_set_style_border_width(list, 1, 0);
-  lv_obj_set_style_radius(list, 12, 0);
-  lv_obj_set_style_shadow_width(list, 0, 0);
+  // The border over the row highlights, which span the list's width: without clip_corner (a mask
+  // on every pixel the list draws) the highlights take the list's radius instead.
+  lv_obj_set_style_border_post(list, true, 0);
+  lv_obj_set_style_radius(list, Theme::RADIUS_CARD, 0);
   lv_obj_set_style_text_font(list, Theme::body_font(), 0);
   lv_obj_set_style_text_color(list, Theme::text(), 0);
   // Rows a finger can hit: 14 px text 26 px apart, six rows before the list scrolls.
   lv_obj_set_style_text_line_space(list, 26, 0);
   lv_obj_set_style_pad_ver(list, 14, 0);
-  lv_obj_set_style_pad_hor(list, 16, 0);
+  lv_obj_set_style_pad_hor(list, Theme::SPACE_XL, 0);
   lv_obj_set_style_max_height(list, 6 * (lv_font_get_line_height(Theme::body_font()) + 26) + 2, 0);
+  // The selected room's row, and the row under a finger.
+  lv_obj_set_style_radius(list, Theme::RADIUS_CARD, LV_PART_SELECTED);
+  lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED);
+  lv_obj_set_style_text_color(list, Theme::text(), LV_PART_SELECTED);
   lv_obj_set_style_bg_color(list, Theme::track(), (lv_style_selector_t)LV_PART_SELECTED | (lv_style_selector_t)LV_STATE_CHECKED);
   lv_obj_set_style_bg_color(list, Theme::pressed(), (lv_style_selector_t)LV_PART_SELECTED | (lv_style_selector_t)LV_STATE_PRESSED);
   lv_obj_set_style_text_color(list, Theme::on(), (lv_style_selector_t)LV_PART_SELECTED | (lv_style_selector_t)LV_STATE_CHECKED);
+  // A thin pill along the right edge while the list scrolls, as the default theme's, but without
+  // its fade.
   lv_obj_set_style_bg_color(list, Theme::muted(), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(list, LV_OPA_40, LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(list, LV_OPA_COVER, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_SCROLLED);
+  lv_obj_set_style_radius(list, LV_RADIUS_CIRCLE, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(list, 4, LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_all(list, 6, LV_PART_SCROLLBAR);
   for (lv_event_code_t code : {LV_EVENT_READY, LV_EVENT_CANCEL, LV_EVENT_VALUE_CHANGED, LV_EVENT_DELETE}) {
     lv_obj_add_event_cb(room, HomeView::_room_event, code, NULL);
   }
@@ -166,16 +180,17 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_height(mode, lv_pct(100));
   lv_obj_set_style_bg_color(mode, Theme::card(), 0);
   lv_obj_set_style_bg_opa(mode, Theme::card_opa(), 0);
-  lv_obj_set_style_radius(mode, 12, 0);
-  lv_obj_set_style_pad_all(mode, 4, 0);
-  lv_obj_set_style_pad_gap(mode, 4, 0);
+  lv_obj_set_style_radius(mode, Theme::RADIUS_CARD, 0);
+  Theme::top_highlight(mode);
+  lv_obj_set_style_pad_all(mode, Theme::SPACE_S, 0);
+  lv_obj_set_style_pad_gap(mode, Theme::SPACE_S, 0);
   for (int i = 0; i < 2; i++) {
     lv_obj_t *half = lv_button_create(mode);
+    // No default theme: it would grow the half and animate the press (see Ui.cpp, flat()).
+    lv_obj_remove_style_all(half);
     lv_obj_set_flex_grow(half, 1);
     lv_obj_set_height(half, lv_pct(100));
-    lv_obj_set_style_radius(half, 9, 0);
-    lv_obj_set_style_shadow_width(half, 0, 0);
-    lv_obj_set_style_bg_opa(half, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(half, Theme::RADIUS_INSET, 0);
     lv_obj_set_style_bg_opa(half, LV_OPA_COVER, LV_STATE_CHECKED);
     lv_obj_set_style_bg_color(half, Theme::track(), LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(half, LV_OPA_COVER, LV_STATE_PRESSED);
@@ -233,10 +248,7 @@ static void show_tile(lv_obj_t *tile, lv_obj_t *value, int level, bool editing) 
   snprintf(text, sizeof(text), level > 0 ? "%d%%" : "Off", level);
   Ui::set_text(value, text);
   Ui::set_tile_on(tile, level > 0);
-  int32_t border = editing ? 2 : 0;
-  if (lv_obj_get_style_border_width(tile, LV_PART_MAIN) != border) {
-    lv_obj_set_style_border_width(tile, border, 0);
-  }
+  Ui::set_tile_outlined(tile, editing);
 }
 
 void HomeView::show(const HomeState &state) {
@@ -247,7 +259,7 @@ void HomeView::show(const HomeState &state) {
   show_tile(HomeView::_table, HomeView::_table_value, state.table, state.edit == HomeState::Edit::TABLE);
 
   // The brightness slider goes amber while it changes only one group, as on the Nextion page.
-  lv_color_t indicator = state.edit == HomeState::Edit::ALL ? Theme::text() : Theme::on();
+  lv_color_t indicator = state.edit == HomeState::Edit::ALL ? Theme::indicator() : Theme::on();
   if (!lv_color_eq(lv_obj_get_style_bg_color(HomeView::_brightness, LV_PART_INDICATOR), indicator)) {
     lv_obj_set_style_bg_color(HomeView::_brightness, indicator, LV_PART_INDICATOR);
   }

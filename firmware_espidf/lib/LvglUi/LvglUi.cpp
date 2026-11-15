@@ -49,6 +49,10 @@ bool LvglUi::init() {
              identity.empty() ? "no connect reply" : identity.c_str());
     return false;
   }
+  // The palette before the first screen is built; Background::set() below applies the same one.
+  Background::Preset preset = Background::from_name(ConfigManager::lvgl_background.c_str());
+  const Theme::Palette *theme = Theme::palette_from_name(ConfigManager::lvgl_theme.c_str());
+  Theme::set_palette(Background::palette_for(preset, theme));
   esp_err_t started = LvglRenderer::start();
   if (started != ESP_OK) {
     // The TFT has no Nextion pages either: the display will show its "waiting for connection".
@@ -85,10 +89,9 @@ bool LvglUi::init() {
   // GUI task, after a region change rebuilt the screens: build the last view again.
   LvglRenderer::on_pages_rebuilt = LvglUi::_rebuild;
   // The page background (Background.hpp), drawn behind the pages screen's children.
-  std::string background = ConfigManager::lvgl_background;
-  LvglRenderer::post([background]() {
+  LvglRenderer::post([preset, theme]() {
     Background::attach(LvglRenderer::pages_screen());
-    Background::set(Background::from_name(background.c_str()));
+    Background::set(preset, theme);
   });
   PlaceholderView::on_action = [](PlaceholderView::Action action) {
     LvglUi::defer([]() { InterfaceManager::show_default_page(); });
@@ -141,13 +144,15 @@ void LvglUi::_rebuild() {
   }
 }
 
-void LvglUi::set_background(const std::string &name) {
-  Background::Preset preset = Background::from_name(name.c_str());
-  ESP_LOGI(TAG, "Page background: %s.", Background::name(preset));
-  LvglRenderer::post([preset]() {
-    Background::set(preset);
-    LvglUi::_rebuild();
-    lv_obj_invalidate(LvglRenderer::pages_screen());
+void LvglUi::set_look(const std::string &background, const std::string &theme) {
+  Background::Preset preset = Background::from_name(background.c_str());
+  const Theme::Palette *palette = Theme::palette_from_name(theme.c_str());
+  ESP_LOGI(TAG, "Page background: %s; theme: %s.", Background::name(preset), palette != nullptr ? palette->name : "auto");
+  LvglRenderer::post([preset, palette]() {
+    Background::set(preset, palette);
+    // Every screen takes its colours when it is built: the boot screen as well as the page.
+    LvglRenderer::rebuild_screens();
+    lv_obj_invalidate(lv_screen_active());
   });
 }
 

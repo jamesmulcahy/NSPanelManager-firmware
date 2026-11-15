@@ -5,21 +5,76 @@
 // headers (see BootScreen.hpp).
 
 namespace Theme {
-// Colours, chosen to be exact in RGB565 so what the planner sends is what was meant.
-inline lv_color_t background() { return lv_color_hex(0x10141C); }
-inline lv_color_t card() { return lv_color_hex(0x1C2230); }
-inline lv_color_t text() { return lv_color_hex(0xF0F0F0); }
-inline lv_color_t muted() { return lv_color_hex(0x8890A0); }
-inline lv_color_t accent() { return lv_color_hex(0x38A8F8); }
+/**
+ * The colours that make a theme. New colours are exact in RGB565, so what the planner sends is
+ * what was meant (DARK keeps its original values). What colours mean is not in it and stays the
+ * same in every palette: amber "on", warm, good, and the kelvin, saturation and hue gradients.
+ */
+struct Palette {
+  const char *name;
+  // Dark text on light cards. The background presets are dark art, so none is drawn under it.
+  bool light;
+  uint32_t background; // Behind everything
+  uint32_t card;       // Cards and tiles
+  uint32_t text;
+  uint32_t muted;  // Secondary text
+  uint32_t accent; // Highlights that are not "on": the boot screen's symbols, dialog buttons
+  uint32_t track;  // Slider and bar tracks, the selected option
+  uint32_t pressed;
+  uint32_t disabled; // Controls the device can't use now
+  uint32_t danger;
+  uint32_t indicator; // A plain slider's value
+  uint32_t highlight; // Cards' top edge (top_highlight())
+  uint32_t lip;       // The edge under what can be pressed (bottom_lip())
+  uint32_t on_tint;   // A tile whose thing is on: the card tinted towards amber
+};
+// The default; a light one; and one per background preset (Background.hpp), tinted to sit on its art.
+extern const Palette DARK, LIGHT, OCEAN, DUSK, AURORA, PEAKS;
+
+namespace detail {
+extern const Palette *palette;
+}
+inline const Palette &palette() { return *detail::palette; }
+// GUI task (or before LVGL starts). Views built before keep their colours: rebuild them.
+void set_palette(const Palette &palette);
+// "dark", "light", "ocean", "dusk", "aurora", "peaks"; nullptr for anything else ("auto").
+const Palette *palette_from_name(const char *name);
+
+inline lv_color_t background() { return lv_color_hex(palette().background); }
+inline lv_color_t card() { return lv_color_hex(palette().card); }
+inline lv_color_t text() { return lv_color_hex(palette().text); }
+inline lv_color_t muted() { return lv_color_hex(palette().muted); }
+inline lv_color_t accent() { return lv_color_hex(palette().accent); }
+inline lv_color_t track() { return lv_color_hex(palette().track); }
+inline lv_color_t pressed() { return lv_color_hex(palette().pressed); }
+inline lv_color_t disabled() { return lv_color_hex(palette().disabled); }
+inline lv_color_t danger() { return lv_color_hex(palette().danger); }
+inline lv_color_t indicator() { return lv_color_hex(palette().indicator); }
+inline lv_color_t highlight() { return lv_color_hex(palette().highlight); }
+inline lv_color_t lip() { return lv_color_hex(palette().lip); }
+inline lv_color_t on_tint() { return lv_color_hex(palette().on_tint); }
+// The same in every palette.
 inline lv_color_t warm() { return lv_color_hex(0xF8A038); }
 inline lv_color_t good() { return lv_color_hex(0x48C878); }
 // "On", as the Nextion pages' amber (RGB565 65024): lights that are on, the control being edited.
 inline lv_color_t on() { return lv_color_hex(0xF8C000); }
-// Slider and bar tracks, pressed buttons, and controls the device can't use now.
-inline lv_color_t track() { return lv_color_hex(0x283448); }
-inline lv_color_t pressed() { return lv_color_hex(0x303C50); }
-inline lv_color_t disabled() { return lv_color_hex(0x586070); }
-inline lv_color_t danger() { return lv_color_hex(0xF85048); }
+// Behind the screensaver and the clean screen when they have no background: black, or a light
+// palette's background, as its dark text would not show on black.
+inline lv_color_t blank() { return palette().light ? background() : lv_color_black(); }
+// Corner radii: containers (cards, tiles, the room list), the controls in them (buttons, sliders),
+// a control inset in a container's padding (outer radius minus padding), and thin bars.
+constexpr int32_t RADIUS_CARD = 12;
+constexpr int32_t RADIUS_CONTROL = 10;
+constexpr int32_t RADIUS_INSET = 8;
+constexpr int32_t RADIUS_BAR = 3;
+// Gaps and padding: a 4 px scale and a hairline. Odd values that place one thing (a label's
+// indent, a list's row pitch) stay where they are used.
+constexpr int32_t SPACE_XS = 2;
+constexpr int32_t SPACE_S = 4;
+constexpr int32_t SPACE_M = 8;
+constexpr int32_t SPACE_L = 12;
+constexpr int32_t SPACE_XL = 16;
+
 // How opaque cards and tiles are: solid, or see-through over a page background (Background.hpp).
 // Read when a card is built.
 lv_opa_t card_opa();
@@ -45,13 +100,26 @@ const lv_font_t *large_font();
 const lv_font_t *icon_font(int size);
 
 /**
+ * Depth without shadows, both free on the wire as they add rows of one colour rather than colour
+ * changes along every row: a 1 px lighter top edge on cards, as if lit from above, and a 3 px
+ * darker lip under what can be pressed. Each is the object's border (one side of it), and takes
+ * that much from its content box on that side. Not full borders, outlines or shadows: in the
+ * simulator those cost 12-27% more bytes per page.
+ */
+constexpr int32_t HIGHLIGHT_WIDTH = 1;
+constexpr int32_t LIP_WIDTH = 3;
+void top_highlight(lv_obj_t *obj);
+void bottom_lip(lv_obj_t *obj);
+
+/**
  * Style `obj` as the screen behind everything: background colour, padding, no scrolling.
  */
 void screen(lv_obj_t *obj);
 
 /**
- * A rounded card, a flex column. The default theme's dark text colour is overridden here, as
- * every child would inherit it.
+ * A rounded card with a top highlight, a flex column. The default theme's dark text colour is
+ * overridden here, as every child would inherit it. A card made see-through (bg_opa 0) to group
+ * things should drop the highlight too (border_width 0).
  */
 lv_obj_t *card(lv_obj_t *parent);
 

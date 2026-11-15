@@ -78,7 +78,7 @@ lv_obj_t *icon(lv_obj_t *parent, const char *glyph, int size, lv_color_t color) 
 static void flat(lv_obj_t *obj) {
   lv_obj_remove_style_all(obj);
   lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_radius(obj, 10, 0);
+  lv_obj_set_style_radius(obj, Theme::RADIUS_CONTROL, 0);
   lv_obj_set_style_text_color(obj, Theme::text(), 0);
   lv_obj_set_style_text_color(obj, Theme::on(), LV_STATE_PRESSED);
   lv_obj_set_style_text_color(obj, Theme::disabled(), LV_STATE_DISABLED);
@@ -88,6 +88,9 @@ lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size) {
   lv_obj_t *button = lv_button_create(parent);
   flat(button);
   lv_obj_set_size(button, size + 20, size + 12);
+  // Pressed: the glyph turns amber (flat()) on the pressed colour, for one frame; no transition.
+  lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(button, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_t *label = lv_label_create(button);
   lv_label_set_text(label, glyph);
   lv_obj_set_style_text_font(label, Theme::icon_font(size), 0);
@@ -113,7 +116,7 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
   lv_obj_set_size(h.bar, lv_pct(100), 44);
   lv_obj_set_flex_flow(h.bar, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(h.bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_all(h.bar, 2, 0);
+  lv_obj_set_style_pad_all(h.bar, Theme::SPACE_XS, 0);
   lv_obj_set_style_pad_gap(h.bar, 0, 0);
   if (back) {
     h.back = icon_button(h.bar, NSPM_ICON_CHEVRON_LEFT, 24);
@@ -124,7 +127,7 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
     lv_obj_set_style_bg_color(divider, Theme::track(), 0);
     lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
   } else {
-    lv_obj_set_style_pad_left(h.bar, 12, 0);
+    lv_obj_set_style_pad_left(h.bar, Theme::SPACE_L, 0);
   }
   if (paging) {
     h.prev = icon_button(h.bar, NSPM_ICON_CHEVRON_LEFT, 24);
@@ -161,17 +164,18 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
 lv_obj_t *tile(lv_obj_t *parent, const char *glyph, int icon_size, const char *text, bool row) {
   lv_obj_t *card = lv_button_create(parent);
   flat(card);
-  lv_obj_set_style_radius(card, 12, 0);
+  lv_obj_set_style_radius(card, Theme::RADIUS_CARD, 0);
   lv_obj_set_style_bg_opa(card, Theme::card_opa(), 0);
   lv_obj_set_style_bg_color(card, Theme::card(), 0);
   lv_obj_set_style_bg_color(card, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_set_style_text_color(card, Theme::text(), LV_STATE_PRESSED);
   lv_obj_set_style_pad_all(card, 6, 0);
-  lv_obj_set_style_pad_gap(card, row ? 12 : 2, 0);
+  Theme::bottom_lip(card);
+  lv_obj_set_style_pad_gap(card, row ? Theme::SPACE_L : Theme::SPACE_XS, 0);
   lv_obj_set_flex_flow(card, row ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(card, row ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   if (row) {
-    lv_obj_set_style_pad_left(card, 16, 0);
+    lv_obj_set_style_pad_left(card, Theme::SPACE_XL, 0);
   }
   lv_obj_t *image = Theme::label(card, glyph != NULL ? glyph : "", Theme::icon_font(icon_size), Theme::text());
   lv_obj_t *label = Theme::label(card, text, Theme::body_font(), Theme::text());
@@ -191,18 +195,33 @@ lv_obj_t *tile_label(lv_obj_t *tile) { return lv_obj_get_child(tile, 1); }
 
 void set_tile_on(lv_obj_t *tile, bool on) {
   set_text_color(tile_icon(tile), on ? Theme::on() : Theme::text());
+  set_bg_color(tile, on ? Theme::on_tint() : Theme::card());
+}
+
+void set_tile_outlined(lv_obj_t *tile, bool outlined) {
+  int32_t width = outlined ? 2 : Theme::LIP_WIDTH;
+  if (tile == NULL || lv_obj_get_style_border_width(tile, LV_PART_MAIN) == width) {
+    return;
+  }
+  if (outlined) {
+    lv_obj_set_style_border_side(tile, LV_BORDER_SIDE_FULL, 0);
+    lv_obj_set_style_border_width(tile, width, 0);
+    lv_obj_set_style_border_color(tile, Theme::on(), 0);
+  } else {
+    Theme::bottom_lip(tile);
+  }
 }
 
 static void style_slider(lv_obj_t *slider, bool vertical) {
   lv_obj_remove_style_all(slider);
   lv_obj_remove_flag(slider, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
   lv_slider_set_orientation(slider, vertical ? LV_SLIDER_ORIENTATION_VERTICAL : LV_SLIDER_ORIENTATION_HORIZONTAL);
-  lv_obj_set_style_radius(slider, 10, LV_PART_MAIN);
+  lv_obj_set_style_radius(slider, Theme::RADIUS_CONTROL, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(slider, Theme::track(), LV_PART_MAIN);
-  lv_obj_set_style_radius(slider, 10, LV_PART_INDICATOR);
+  lv_obj_set_style_radius(slider, Theme::RADIUS_CONTROL, LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(slider, Theme::text(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(slider, Theme::indicator(), LV_PART_INDICATOR);
   // A wide touch area: the slider responds a little outside its track.
   lv_obj_set_ext_click_area(slider, 8);
 }
@@ -263,7 +282,7 @@ void hue_slider(SliderCard &card, bool vertical) {
   lv_obj_remove_style_all(strip);
   lv_obj_remove_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_remove_flag(strip, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_radius(strip, 10, 0);
+  lv_obj_set_style_radius(strip, Theme::RADIUS_CONTROL, 0);
   lv_obj_set_style_clip_corner(strip, true, 0);
   lv_obj_set_flex_flow(strip, vertical ? LV_FLEX_FLOW_COLUMN_REVERSE : LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_grow(strip, 1);
