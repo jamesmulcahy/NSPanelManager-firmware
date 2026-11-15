@@ -21,6 +21,30 @@ Threads: LVGL runs on its own task (core 1) and nothing else calls it; other tas
 it. View actions run there too, so they `LvglUi::defer()` anything that publishes or changes pages.
 The terminal task (core 0) encodes and sends while LVGL renders the next band.
 
+## The home page's controls
+
+The home page shows only the controls the room's lights need (or every room's, in "All rooms"
+mode), from the room status (`NSPanelRoomStatus`), counting only lights controlled from the main
+page:
+
+| Control | Shown when | Hidden |
+|---|---|---|
+| Ceiling tile | `num_ceiling_lights > 0` | the Table tile takes the row |
+| Table tile | `num_table_lights > 0` | the Ceiling tile takes the row |
+| Colour-temperature slider | `num_color_temperature_lights > 0`, or `color_temperature_lights_known` unset | the tiles take its share of the height (width, landscape); the brightness card keeps its size |
+| Tiles and both sliders | either group has a light | "No lights in this room" in their place |
+
+Until a status arrives everything is shown. Every manager sends the two group counts, so they are
+used as they are. The colour-temperature count is newer: a manager from before it sends neither it
+nor `color_temperature_lights_known`, and a missing count must not read as 0 (the slider shows, as
+it always has). `average_color_temperature` can't tell either: it is 0 both without such lights and
+in a room turned fully warm.
+
+The Nextion home page is unchanged. Its cards, icons and slider tracks are drawn in the page's
+background picture, and the controls are crops of it (`sta = 0`, `picc` = the background), so
+`vis` would leave the card and its artwork in place with nothing to drag. Hiding them cleanly needs
+new background pictures for every combination, i.e. an HMI change.
+
 ## Commands
 
 On `nspanel/<MAC>/command`:

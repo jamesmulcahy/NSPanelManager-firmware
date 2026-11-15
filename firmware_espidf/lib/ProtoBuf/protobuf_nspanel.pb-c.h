@@ -397,16 +397,30 @@ struct  NSPanelRoomStatus
   int32_t average_color_temperature;
   int32_t ceiling_lights_color_temperature_value;
   int32_t table_lights_color_temperature_value;
+  /*
+   * The lights controlled from the main page, in the room (or in every room, for "All rooms").
+   * A panel hides a group's control when its count is 0; every manager that sends this message
+   * sends these.
+   */
   int32_t num_ceiling_lights;
   int32_t num_table_lights;
   int32_t num_ceiling_lights_on;
   int32_t num_table_lights_on;
   size_t n_entity_page_ids;
   int32_t *entity_page_ids;
+  /*
+   * How many of the lights counted in num_ceiling_lights and num_table_lights can change colour
+   * temperature. The panel hides the colour-temperature slider when this is 0, but only if
+   * color_temperature_lights_known is set: a manager from before these fields never sends either,
+   * and a missing count must read as "not known" (show the slider, as panels always have), not as
+   * "none". (Not proto3 `optional`: protoc-gen-c 1.4, which builds the firmware's code, can't.)
+   */
+  int32_t num_color_temperature_lights;
+  protobuf_c_boolean color_temperature_lights_known;
 };
 #define NSPANEL_ROOM_STATUS__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_room_status__descriptor) \
-    , 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,NULL }
+    , 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,NULL, 0, 0 }
 
 
 struct  NSPanelWeatherUpdate__ForecastItem

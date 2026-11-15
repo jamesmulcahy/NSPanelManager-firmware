@@ -24,6 +24,11 @@ struct HomeState {
   int brightness = 0;       // The slider: the average, or the edited group's
   int color_temperature = 0; // 0-100, warm to cool
   bool entities = true;      // The room's entities button (room mode only, as on the Nextion page)
+  // What the room's main-page lights have (NSPanelRoomStatus): a control for what it has none of is
+  // hidden. All true until known, so that a panel with an older manager shows everything, as before.
+  bool has_ceiling = true;          // Ceiling lights: the Ceiling tile
+  bool has_table = true;            // Table lights: the Table tile
+  bool has_color_temperature = true; // A light that can change colour temperature: its slider
 };
 
 class HomeView {
@@ -60,6 +65,13 @@ private:
   static inline lv_obj_t *_time = NULL;
   static inline lv_obj_t *_scenes = NULL;
   static inline lv_obj_t *_entities = NULL;
+  static inline bool _landscape = false;
+  static inline lv_obj_t *_lights = NULL;  // The tiles' group
+  static inline lv_obj_t *_sliders = NULL; // The slider cards' group
+  static inline lv_obj_t *_brightness_card = NULL;
+  static inline lv_obj_t *_kelvin_card = NULL;
+  static inline lv_obj_t *_no_lights = NULL; // In place of all of them, for a room without lights
+  static inline lv_obj_t *_no_lights_text = NULL;
   static inline lv_obj_t *_ceiling = NULL;
   static inline lv_obj_t *_table = NULL;
   static inline lv_obj_t *_ceiling_value = NULL;
@@ -77,4 +89,5 @@ private:
   static inline std::string _room_text;
 
   static void _room_event(lv_event_t *event);
+  static void _show_controls(const HomeState &state);
 };
