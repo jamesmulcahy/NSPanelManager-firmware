@@ -16,6 +16,9 @@ using the same topics and retained-message conventions as the real manager
   manager -> nspanel/mqttmanager_<addr>/entity_pages/<id>/state NSPanelRoomEntitiesPage (retained)
   manager -> nspanel/mqttmanager_<addr>/status/weather          NSPanelWeatherUpdate (retained)
   panel   -> nspanel/mqttmanager_<addr>/command      NSPanelMQTTManagerCommand
+  panel   -> nspanel/<mac>/lvgl_look                 a look chosen on the panel (JSON); with
+                                                     confirm_looks, answered as the manager does:
+                                                     the config again, with that look
 """
 
 import json
@@ -107,6 +110,20 @@ def default_entity_pages() -> Dict[int, "pb.NSPanelRoomEntitiesPage"]:
     return pages
 
 
+def _string_field(number: int, value: str) -> bytes:
+    """A protobuf string field, encoded by hand (for fields the pinned .proto may not have yet)."""
+    def varint(n: int) -> bytes:
+        out = b""
+        while True:
+            byte, n = n & 0x7F, n >> 7
+            if n:
+                out += bytes([byte | 0x80])
+            else:
+                return out + bytes([byte])
+    data = value.encode()
+    return varint(number << 3 | 2) + varint(len(data)) + data
+
+
 class FakeManager:
     def __init__(self, broker: Broker, address: str = QEMU_HOST_ADDRESS, port: int = 8000,
                  rooms: Optional[List[Room]] = None, nspanel_id: int = 1):
@@ -125,6 +142,12 @@ class FakeManager:
         self.panel_mac: Optional[str] = None
         self.panel_name: Optional[str] = None
         self.config = self.default_config()
+        # The LVGL look the config carries (NSPanelConfig.lvgl_theme 49, lvgl_background 50): None for
+        # not managed, as the manager sends for a panel left on "Keep the panel's own".
+        self.lvgl_look: Optional[Dict[str, str]] = None
+        # Answer a look report as MQTTManager does (NSPanel::_handle_lvgl_look_report).
+        self.confirm_looks = True
+        self.look_reports: List[dict] = []
         broker.add_listener(self._on_message)
 
     # ---- topics ------------------------------------------------------------
@@ -170,7 +193,22 @@ class FakeManager:
     def publish_config(self, config: Optional["pb.NSPanelConfig"] = None) -> None:
         if config is not None:
             self.config = config
-        self.broker.publish(self.config_topic(), self.config.SerializeToString(), retain=True)
+        self.broker.publish(self.config_topic(), self.config_bytes(), retain=True)
+
+    def config_bytes(self) -> bytes:
+        """The config as published: with the LVGL look, whether or not the pinned schema has its fields."""
+        config = pb.NSPanelConfig()
+        config.CopyFrom(self.config)
+        extra = b""
+        if self.lvgl_look is not None:
+            fields = config.DESCRIPTOR.fields_by_name
+            for name, number in (("lvgl_theme", 49), ("lvgl_background", 50)):
+                value = self.lvgl_look[name.split("_", 1)[1]]
+                if name in fields:
+                    setattr(config, name, value)
+                else:
+                    extra += _string_field(number, value)
+        return config.SerializeToString() + extra
 
     def publish_room(self, room_id: int) -> None:
         self.broker.publish("%s/room/%d/state" % (self.base, room_id), self.rooms[room_id].status().SerializeToString(), retain=True)
@@ -229,6 +267,16 @@ class FakeManager:
                                    % (timeout, [c.WhichOneof("CommandData") for c in self.commands[since:]]))
         return found[0]
 
+    def wait_for_look_report(self, since: int = 0, timeout: float = 30) -> dict:
+        with self._cond:
+            if not wait_for(self._cond, lambda: len(self.look_reports) > since, timeout, self.abort_check):
+                raise TimeoutError("panel reported no look within %.0fs" % timeout)
+            return self.look_reports[since]
+
+    def look_mark(self) -> int:
+        with self._cond:
+            return len(self.look_reports)
+
     def command_mark(self) -> int:
         with self._cond:
             return len(self.commands)
@@ -243,6 +291,19 @@ class FakeManager:
         # Broker listeners only see what the panel published, never the harness's own messages.
         if msg.topic == "nspanel/mqttmanager/command":
             self._on_register_request(msg)
+        elif self.panel_mac is not None and msg.topic == "nspanel/%s/lvgl_look" % self.panel_mac:
+            try:
+                report = json.loads(msg.payload)
+            except ValueError:
+                log.warning("unparseable look report: %r", msg.payload[:64])
+                return
+            log.info("look from panel: %s", report)
+            with self._cond:
+                self.look_reports.append(report)
+                self._cond.notify_all()
+            if self.confirm_looks:
+                self.lvgl_look = {"theme": report["theme"], "background": report["background"]}
+                self.publish_config()
         elif msg.topic == self.command_topic:
             cmd = pb.NSPanelMQTTManagerCommand()
             try:

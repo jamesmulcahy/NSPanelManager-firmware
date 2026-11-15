@@ -7,6 +7,7 @@ the suite runs against NSPM's own TFT as usual.
 """
 
 import io
+import json
 import struct
 import time
 import urllib.error
@@ -257,3 +258,98 @@ def test_screenshot_leaves_the_ui_responsive(lvgl_home):
 def test_screenshot_rejects_an_unknown_format(booted):
     status, headers, body = get_screenshot(booted, "jpeg")
     assert status == 400 and b"png, bmp or raw" in body
+
+
+# ---- The look picker (docs/LVGL.md, "The look") ------------------------------------------------
+
+# On the US screen (test/host/lvgl_sim: us-17-menu, us-19-look).
+US_MENU_LOOK = (238, 267)
+US_LOOKS = {"ocean": (82, 127), "dusk": (238, 127), "aurora": (82, 267), "peaks": (238, 267),
+            "dark": (82, 407), "grey": (238, 407)}
+
+
+def swipe_down(rig) -> None:
+    """A swipe down the middle of the screen, through the firmware's own touch path (lvgl_tap)."""
+    rig.broker.publish("nspanel/%s/command" % rig.mac,
+                       json.dumps({"command": "lvgl_tap", "x": 160, "y": 60, "x2": 160, "y2": 300, "hold_ms": 300}))
+
+
+def open_look_picker(rig) -> None:
+    mark = rig.panel.mark()
+    swipe_down(rig)
+    rig.panel.wait_for_log(r"MenuPage: Showing the menu", since=mark, timeout=30)
+    settle(rig.nextion)
+    rig.nextion.screenshot("menu")
+    mark = rig.panel.mark()
+    rig.nextion.tap_screen(*US_MENU_LOOK)
+    rig.panel.wait_for_log(r"LookPage: Showing the look picker", since=mark, timeout=30)
+    settle(rig.nextion)
+    rig.nextion.screenshot("look-picker")
+
+
+def test_register_request_lists_the_lvgl_look_feature(booted):
+    assert "lvgl_look" in booted.manager.register_requests[0].get("features", [])
+
+
+def test_look_picked_on_the_panel_is_applied_reported_and_confirmed(lvgl_home):
+    import numpy as np
+    rig = lvgl_home
+    open_look_picker(rig)
+    before = upright_rgb565(rig.nextion)
+    reports, mark = rig.manager.look_mark(), rig.panel.mark()
+
+    rig.nextion.tap_screen(*US_LOOKS["dusk"])
+
+    rig.panel.wait_for_log(r"LvglUi: Page background: dusk; theme: auto\.", since=mark, timeout=30)
+    assert rig.manager.wait_for_look_report(since=reports) == {"background": "dusk", "theme": "auto"}
+    # The fake manager answers as MQTTManager does: the config again, with the panel's look.
+    rig.panel.wait_for_log(r"LvglLook: The manager confirmed look dusk/auto", since=mark, timeout=60)
+    rig.nextion.wait_for(lambda n: (upright_rgb565(n) != before).mean() > 0.5, timeout=60,
+                         what="the screen redrawn in the new look")
+    settle(rig.nextion)
+    rig.nextion.screenshot("look-dusk")
+    # Still the picker, now in dusk, with nothing applied twice.
+    assert len(rig.panel.log_lines(r"LvglUi: Page background:", since=mark)) == 1
+    assert not rig.nextion.terminal.faults
+
+
+def test_stale_config_does_not_undo_a_look_picked_on_the_panel(lvgl_home):
+    rig = lvgl_home
+    rig.manager.confirm_looks = False  # A manager that has not seen the report yet
+    open_look_picker(rig)
+    reports, mark = rig.manager.look_mark(), rig.panel.mark()
+    rig.nextion.tap_screen(*US_LOOKS["peaks"])
+    assert rig.manager.wait_for_look_report(since=reports) == {"background": "peaks", "theme": "auto"}
+    rig.panel.wait_for_log(r"LvglUi: Page background: peaks; theme: auto\.", since=mark, timeout=30)
+
+    # A config sent before the manager had the report (a settings save crossing the pick).
+    rig.manager.lvgl_look = {"theme": "auto", "background": "ocean"}
+    rig.manager.publish_config()
+    rig.panel.wait_for_log(r"LvglLook: Config has look 'ocean'/'auto', not the panel's unconfirmed peaks/auto: keeping the panel's",
+                           since=mark, timeout=60)
+    assert not rig.panel.log_lines(r"LvglUi: Page background: ocean", since=mark)
+
+    # The manager has the report now: its config carries the pick, which confirms it.
+    rig.manager.lvgl_look = {"theme": "auto", "background": "peaks"}
+    rig.manager.publish_config()
+    rig.panel.wait_for_log(r"LvglLook: The manager confirmed look peaks/auto", since=mark, timeout=60)
+    assert len(rig.panel.log_lines(r"LvglUi: Page background:", since=mark)) == 1
+
+    # Confirmed: the manager's next change is applied again.
+    mark = rig.panel.mark()
+    rig.manager.lvgl_look = {"theme": "grey", "background": "none"}
+    rig.manager.publish_config()
+    rig.panel.wait_for_log(r"LvglUi: Page background: none; theme: grey\.", since=mark, timeout=60)
+
+
+def test_look_from_the_config_is_applied_and_not_reported(booted):
+    rig = booted
+    reports, mark = rig.manager.look_mark(), rig.panel.mark()
+    rig.manager.lvgl_look = {"theme": "auto", "background": "aurora"}
+    rig.manager.publish_config()
+    rig.panel.wait_for_log(r"LvglUi: Page background: aurora; theme: auto\.", since=mark, timeout=60)
+    # The same config again changes nothing.
+    rig.manager.publish_config()
+    time.sleep(5)
+    assert len(rig.panel.log_lines(r"LvglUi: Page background:", since=mark)) == 1
+    assert rig.manager.look_mark() == reports
