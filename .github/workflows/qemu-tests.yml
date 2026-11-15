@@ -27,16 +27,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # NSPM's own TFT: the whole suite (the LVGL tests skip themselves).
+          # NSPM's own TFT: the suite (the LVGL tests skip themselves), less the update tests.
           - display: nextion
             terminal: ""
-            select: ""
+            tests: "not test_gui_update_faults and not test_littlefs_update"
+            timeout: 60
+          # The firmware, LittleFS and GUI update tests, also on NSPM's TFT. Each flashes the panel
+          # and reboots it, so they get a job of their own that runs beside the rest.
+          - display: updates
+            terminal: ""
+            tests: "test_gui_update_faults or test_littlefs_update"
+            timeout: 90
           # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
           # receiver. Only the LVGL tests; the rest drive NSPM's Nextion pages.
           - display: terminal-us
             terminal: us
-            select: "-k test_lvgl_terminal"
-    timeout-minutes: 60
+            tests: "test_lvgl_terminal"
+            timeout: 60
+    timeout-minutes: ${{ matrix.timeout }}
     defaults:
       run:
         working-directory: firmware_espidf
@@ -83,7 +91,8 @@ jobs:
         env:
           NSPM_QEMU_GDB: "1"
           NSPM_QEMU_TERMINAL: ${{ matrix.terminal }}
-        run: qemu/run_tests.sh ${{ matrix.select }}
+          TESTS: ${{ matrix.tests }}
+        run: qemu/run_tests.sh -k "$TESTS"
 
       - name: Upload test logs
         if: always()
