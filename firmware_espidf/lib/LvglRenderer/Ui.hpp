@@ -41,8 +41,8 @@ lv_obj_t *fill(lv_obj_t *parent, lv_flex_flow_t flow);
 lv_obj_t *icon(lv_obj_t *parent, const char *glyph, int size, lv_color_t color);
 
 /**
- * A flat button holding an icon (its first child), white, amber while pressed, grey when
- * disabled (LV_STATE_DISABLED), as the Nextion pages' buttons are.
+ * A flat button holding an icon (its first child), white, amber on the pressed colour while
+ * pressed, grey when disabled (LV_STATE_DISABLED), as the Nextion pages' buttons are.
  */
 lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size);
 void set_icon(lv_obj_t *button, const char *glyph);
@@ -63,13 +63,16 @@ struct Header {
 Header header(lv_obj_t *parent, bool back, bool paging);
 
 /**
- * A card that can be pressed: an icon over (or, if `row`, beside) a label. The icon goes amber
- * with set_tile_on(). Returns the card; its children are the icon then the label.
+ * A card that can be pressed, with a lip: an icon over (or, if `row`, beside) a label. With
+ * set_tile_on() the icon goes amber and the card takes the on tint; set_tile_outlined() swaps the
+ * lip for a 2 px amber outline (the control being edited). Returns the card; its children are the
+ * icon then the label.
  */
 lv_obj_t *tile(lv_obj_t *parent, const char *glyph, int icon_size, const char *text, bool row);
 lv_obj_t *tile_icon(lv_obj_t *tile);
 lv_obj_t *tile_label(lv_obj_t *tile);
 void set_tile_on(lv_obj_t *tile, bool on);
+void set_tile_outlined(lv_obj_t *tile, bool outlined);
 
 /**
  * A slider in a card, with an icon and the value: a row (icon, slider, value) when `vertical` is

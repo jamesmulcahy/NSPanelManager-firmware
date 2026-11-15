@@ -16,18 +16,21 @@ LV_FONT_DECLARE(nspm_font_icon_64);
 namespace Theme {
 
 // clang-format off
-//                       name      light  background card      text      muted     accent    track     pressed   disabled  danger    indicator
-const Palette DARK   = {"dark",   false, 0x10141C, 0x1C2230, 0xF0F0F0, 0x8890A0, 0x38A8F8, 0x283448, 0x303C50, 0x586070, 0xF85048, 0xF0F0F0};
-const Palette LIGHT  = {"light",  true,  0xE0E4E8, 0xF8F8F8, 0x182028, 0x687080, 0x1078D0, 0xD0D4D8, 0xC0C8D0, 0xA0A8B0, 0xD03028, 0x1078D0};
+//                       name      light  background card      text      muted     accent    track     pressed   disabled  danger    indicator  highlight lip       on_tint
+const Palette DARK   = {"dark",   false, 0x10141C, 0x1C2230, 0xF0F0F0, 0x8890A0, 0x38A8F8, 0x283448, 0x303C50, 0x586070, 0xF85048, 0xF0F0F0, 0x303840, 0x080C10, 0x383020};
+const Palette LIGHT  = {"light",  true,  0xE0E4E8, 0xF8F8F8, 0x182028, 0x687080, 0x1078D0, 0xD0D4D8, 0xC0C8D0, 0xA0A8B0, 0xD03028, 0x1078D0, 0xF8FCF8, 0xC8CCD0, 0xF8ECC8};
 // Navy, with a cyan accent.
-const Palette OCEAN  = {"ocean",  false, 0x081420, 0x102438, 0xF0F8F8, 0x80A0B8, 0x40C8F0, 0x183850, 0x284860, 0x506878, 0xF85048, 0xF0F8F8};
+const Palette OCEAN  = {"ocean",  false, 0x081420, 0x102438, 0xF0F8F8, 0x80A0B8, 0x40C8F0, 0x183850, 0x284860, 0x506878, 0xF85048, 0xF0F8F8, 0x283848, 0x001018, 0x303028};
 // Violet, with a peach accent.
-const Palette DUSK   = {"dusk",   false, 0x181428, 0x282038, 0xF8F0F0, 0xA090A8, 0xF89060, 0x383048, 0x484058, 0x686078, 0xF85048, 0xF8F0F0};
+const Palette DUSK   = {"dusk",   false, 0x181428, 0x282038, 0xF8F0F0, 0xA090A8, 0xF89060, 0x383048, 0x484058, 0x686078, 0xF85048, 0xF8F0F0, 0x383448, 0x100C18, 0x403028};
 // Deep teal, with a green accent.
-const Palette AURORA = {"aurora", false, 0x081418, 0x102828, 0xF0F8F8, 0x80A8A8, 0x40D0A8, 0x184040, 0x285050, 0x507070, 0xF85048, 0xF0F8F8};
+const Palette AURORA = {"aurora", false, 0x081418, 0x102828, 0xF0F8F8, 0x80A8A8, 0x40D0A8, 0x184040, 0x285050, 0x507070, 0xF85048, 0xF0F8F8, 0x283C38, 0x001010, 0x303020};
 // Slate blue, with a sky accent.
-const Palette PEAKS  = {"peaks",  false, 0x101828, 0x182840, 0xF0F4F8, 0x8898B0, 0x70B0F0, 0x283C58, 0x304868, 0x586880, 0xF85048, 0xF0F4F8};
+const Palette PEAKS  = {"peaks",  false, 0x101828, 0x182840, 0xF0F4F8, 0x8898B0, 0x70B0F0, 0x283C58, 0x304868, 0x586880, 0xF85048, 0xF0F4F8, 0x283C50, 0x081018, 0x383028};
 // clang-format on
+// Highlight and lip are the card mixed 10% towards white and 55% towards black, rounded to RGB565
+// (LIGHT's by eye). on_tint is a dark amber-brown, by eye: mixing amber into the blue and teal cards
+// turns olive.
 
 const Palette *detail::palette = &DARK;
 
@@ -64,6 +67,20 @@ void screen(lv_obj_t *obj) {
   lv_obj_set_style_pad_gap(obj, SPACE_L, 0);
 }
 
+void top_highlight(lv_obj_t *obj) {
+  lv_obj_set_style_border_side(obj, LV_BORDER_SIDE_TOP, 0);
+  lv_obj_set_style_border_width(obj, HIGHLIGHT_WIDTH, 0);
+  lv_obj_set_style_border_color(obj, highlight(), 0);
+  lv_obj_set_style_border_opa(obj, LV_OPA_COVER, 0);
+}
+
+void bottom_lip(lv_obj_t *obj) {
+  lv_obj_set_style_border_side(obj, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(obj, LIP_WIDTH, 0);
+  lv_obj_set_style_border_color(obj, lip(), 0);
+  lv_obj_set_style_border_opa(obj, LV_OPA_COVER, 0);
+}
+
 static lv_opa_t card_opacity = LV_OPA_COVER;
 lv_opa_t card_opa() { return card_opacity; }
 void set_card_opa(lv_opa_t opa) { card_opacity = opa; }
@@ -74,7 +91,7 @@ lv_obj_t *card(lv_obj_t *parent) {
   lv_obj_set_style_bg_color(card, Theme::card(), 0);
   lv_obj_set_style_bg_opa(card, card_opacity, 0);
   lv_obj_set_style_text_color(card, text(), 0);
-  lv_obj_set_style_border_width(card, 0, 0);
+  top_highlight(card);
   lv_obj_set_style_radius(card, RADIUS_CARD, 0);
   lv_obj_set_style_pad_all(card, SPACE_L, 0);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);

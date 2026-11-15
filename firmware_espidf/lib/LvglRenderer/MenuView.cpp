@@ -48,6 +48,7 @@ void MenuView::show(const MenuState &state) {
     Ui::set_text(lv_obj_get_child(tile, 1), item.icon);
     Ui::set_text(lv_obj_get_child(tile, 2), item.label);
     Ui::set_text_color(lv_obj_get_child(tile, 1), item.on ? Theme::on() : Theme::text());
+    Ui::set_bg_color(tile, item.on ? Theme::on_tint() : Theme::card());
   }
 }
 
@@ -129,6 +130,7 @@ void DialogView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_t *card = Theme::card(overlay);
   lv_obj_set_size(card, landscape ? 320 : 288, LV_SIZE_CONTENT);
   lv_obj_center(card);
+  lv_obj_set_style_border_side(card, LV_BORDER_SIDE_FULL, 0);
   lv_obj_set_style_border_width(card, 2, 0);
   lv_obj_set_style_border_color(card, Theme::muted(), 0);
   lv_obj_set_style_pad_all(card, Theme::SPACE_XL, 0);

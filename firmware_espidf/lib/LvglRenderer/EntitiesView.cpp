@@ -123,7 +123,7 @@ void EntitiesView::show(const EntitiesState &state) {
     Ui::set_visible(icon, slot.icon != NULL);
     Ui::set_text(icon, slot.icon != NULL ? slot.icon : "");
     Ui::set_text(label, slot.name);
-    Ui::set_text_color(icon, slot.on ? Theme::on() : Theme::text());
+    Ui::set_tile_on(tile, slot.on);
     // Text-only slots (media sources) mark the current one by the name's colour.
     Ui::set_text_color(label, slot.icon == NULL && slot.on ? Theme::on() : Theme::text());
     // Text-only slots use the larger font where the tiles are wide enough for it.

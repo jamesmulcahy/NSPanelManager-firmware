@@ -23,6 +23,7 @@ static lv_obj_t *panel(lv_obj_t *parent, bool background) {
   lv_obj_t *card = Theme::card(parent);
   if (!background) {
     lv_obj_set_style_bg_opa(card, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(card, 0, 0);
   }
   lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
   return card;

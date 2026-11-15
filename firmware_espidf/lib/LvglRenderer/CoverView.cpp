@@ -44,6 +44,7 @@ void CoverView::build(lv_obj_t *parent, bool landscape) {
   Ui::SliderCard position = Ui::slider_card(status, NSPM_ICON_ARROW_UP, landscape);
   // The slider is part of the status card, not a card of its own.
   lv_obj_set_style_bg_opa(position.card, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(position.card, 0, 0);
   lv_obj_set_style_pad_all(position.card, 0, 0);
   if (landscape) {
     lv_obj_set_flex_grow(position.card, 0);

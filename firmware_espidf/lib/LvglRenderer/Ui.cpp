@@ -88,6 +88,9 @@ lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size) {
   lv_obj_t *button = lv_button_create(parent);
   flat(button);
   lv_obj_set_size(button, size + 20, size + 12);
+  // Pressed: the glyph turns amber (flat()) on the pressed colour, for one frame; no transition.
+  lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(button, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_t *label = lv_label_create(button);
   lv_label_set_text(label, glyph);
   lv_obj_set_style_text_font(label, Theme::icon_font(size), 0);
@@ -167,6 +170,7 @@ lv_obj_t *tile(lv_obj_t *parent, const char *glyph, int icon_size, const char *t
   lv_obj_set_style_bg_color(card, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_set_style_text_color(card, Theme::text(), LV_STATE_PRESSED);
   lv_obj_set_style_pad_all(card, 6, 0);
+  Theme::bottom_lip(card);
   lv_obj_set_style_pad_gap(card, row ? Theme::SPACE_L : Theme::SPACE_XS, 0);
   lv_obj_set_flex_flow(card, row ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(card, row ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -191,6 +195,21 @@ lv_obj_t *tile_label(lv_obj_t *tile) { return lv_obj_get_child(tile, 1); }
 
 void set_tile_on(lv_obj_t *tile, bool on) {
   set_text_color(tile_icon(tile), on ? Theme::on() : Theme::text());
+  set_bg_color(tile, on ? Theme::on_tint() : Theme::card());
+}
+
+void set_tile_outlined(lv_obj_t *tile, bool outlined) {
+  int32_t width = outlined ? 2 : Theme::LIP_WIDTH;
+  if (tile == NULL || lv_obj_get_style_border_width(tile, LV_PART_MAIN) == width) {
+    return;
+  }
+  if (outlined) {
+    lv_obj_set_style_border_side(tile, LV_BORDER_SIDE_FULL, 0);
+    lv_obj_set_style_border_width(tile, width, 0);
+    lv_obj_set_style_border_color(tile, Theme::on(), 0);
+  } else {
+    Theme::bottom_lip(tile);
+  }
 }
 
 static void style_slider(lv_obj_t *slider, bool vertical) {

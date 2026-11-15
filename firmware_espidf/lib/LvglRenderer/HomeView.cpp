@@ -40,8 +40,6 @@ static void on_click(lv_obj_t *obj, HomeView::Action action, lv_event_code_t cod
 static lv_obj_t *light_tile(lv_obj_t *parent, const char *glyph, const char *name, lv_obj_t **value) {
   lv_obj_t *tile = Ui::tile(parent, glyph, 40, name, false);
   lv_obj_set_flex_grow(tile, 1);
-  lv_obj_set_style_border_color(tile, Theme::on(), 0);
-  lv_obj_set_style_border_width(tile, 0, 0);
   lv_obj_set_style_text_color(Ui::tile_label(tile), Theme::muted(), 0);
   *value = Theme::label(tile, "", Theme::title_font(), Theme::text());
   return tile;
@@ -128,6 +126,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_radius(room, Theme::RADIUS_CARD, 0);
   lv_obj_set_style_bg_color(room, Theme::card(), 0);
   lv_obj_set_style_bg_opa(room, Theme::card_opa(), 0);
+  Theme::bottom_lip(room);
   lv_obj_set_style_bg_color(room, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_set_style_text_font(room, Theme::body_font(), 0);
   lv_obj_set_style_text_color(room, Theme::text(), 0);
@@ -182,6 +181,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_bg_color(mode, Theme::card(), 0);
   lv_obj_set_style_bg_opa(mode, Theme::card_opa(), 0);
   lv_obj_set_style_radius(mode, Theme::RADIUS_CARD, 0);
+  Theme::top_highlight(mode);
   lv_obj_set_style_pad_all(mode, Theme::SPACE_S, 0);
   lv_obj_set_style_pad_gap(mode, Theme::SPACE_S, 0);
   for (int i = 0; i < 2; i++) {
@@ -248,10 +248,7 @@ static void show_tile(lv_obj_t *tile, lv_obj_t *value, int level, bool editing) 
   snprintf(text, sizeof(text), level > 0 ? "%d%%" : "Off", level);
   Ui::set_text(value, text);
   Ui::set_tile_on(tile, level > 0);
-  int32_t border = editing ? 2 : 0;
-  if (lv_obj_get_style_border_width(tile, LV_PART_MAIN) != border) {
-    lv_obj_set_style_border_width(tile, border, 0);
-  }
+  Ui::set_tile_outlined(tile, editing);
 }
 
 void HomeView::show(const HomeState &state) {
