@@ -66,7 +66,7 @@ public:
 
   /**
    * From any task: draw the pages over background preset `background` ("none", "ocean", "dusk",
-   * "aurora", "peaks"; Background.hpp) in palette `theme` ("dark", "light", "ocean", "dusk", "aurora",
+   * "aurora", "peaks"; Background.hpp) in palette `theme` ("dark", "grey", "ocean", "dusk", "aurora",
    * "peaks"; Theme.hpp; anything else is "auto", the background's own), rebuilding the screens.
    */
   static void set_look(const std::string &background, const std::string &theme);

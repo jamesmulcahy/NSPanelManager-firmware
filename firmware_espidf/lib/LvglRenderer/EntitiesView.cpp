@@ -2,6 +2,31 @@
 #include "Theme.hpp"
 #include "Ui.hpp"
 
+#include <cstring>
+
+// Whether every word of `text` is at most `width` wide in `font`, so a label wraps only between words.
+static bool words_fit(const char *text, const lv_font_t *font, int32_t width) {
+  char word[48];
+  while (*text != '\0') {
+    size_t length = strcspn(text, " \n");
+    if (length > 0) {
+      size_t n = length < sizeof(word) - 1 ? length : sizeof(word) - 1;
+      memcpy(word, text, n);
+      word[n] = '\0';
+      lv_point_t size;
+      lv_text_get_size(&size, word, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      if (size.x > width) {
+        return false;
+      }
+    }
+    text += length;
+    if (*text != '\0') {
+      text++;
+    }
+  }
+  return true;
+}
+
 static void emit(EntitiesView::Action action, int32_t slot) {
   if (EntitiesView::on_action != nullptr) {
     EntitiesView::on_action(action, slot);
@@ -124,10 +149,18 @@ void EntitiesView::show(const EntitiesState &state) {
     Ui::set_text(icon, slot.icon != NULL ? slot.icon : "");
     Ui::set_text(label, slot.name);
     Ui::set_tile_on(tile, slot.on);
-    // Text-only slots (media sources) mark the current one by the name's colour.
-    Ui::set_text_color(label, slot.icon == NULL && slot.on ? Theme::on() : Theme::text());
-    // Text-only slots use the larger font where the tiles are wide enough for it.
-    Ui::set_font(label, slot.icon == NULL && EntitiesView::_columns <= 2 ? Theme::title_font() : Theme::body_font());
+    // Text-only slots (media sources) mark the current one as any tile is marked: the tint.
+    Ui::set_text_color(label, Theme::text());
+    // Text-only slots use the larger font where the tiles are wide enough for it, and every word
+    // fits on a line ("Disconnected" would otherwise break inside the word).
+    const lv_font_t *font = Theme::body_font();
+    if (slot.icon == NULL && EntitiesView::_columns <= 2) {
+      lv_obj_update_layout(tile);
+      if (words_fit(slot.name.c_str(), Theme::title_font(), lv_obj_get_content_width(tile))) {
+        font = Theme::title_font();
+      }
+    }
+    Ui::set_font(label, font);
   }
   lv_opa_t track = state.save_progress >= 0 ? LV_OPA_COVER : LV_OPA_TRANSP;
   if (lv_obj_get_style_bg_opa(EntitiesView::_save, LV_PART_MAIN) != track) {

@@ -26,10 +26,9 @@ struct Palette {
   uint32_t indicator; // A plain slider's value
   uint32_t highlight; // Cards' top edge (top_highlight())
   uint32_t lip;       // The edge under what can be pressed (bottom_lip())
-  uint32_t on_tint;   // A tile whose thing is on: the card tinted towards amber
 };
-// The default; a light one; and one per background preset (Background.hpp), tinted to sit on its art.
-extern const Palette DARK, LIGHT, OCEAN, DUSK, AURORA, PEAKS;
+// The default; a mid grey; and one per background preset (Background.hpp), tinted to sit on its art.
+extern const Palette DARK, GREY, OCEAN, DUSK, AURORA, PEAKS;
 
 namespace detail {
 extern const Palette *palette;
@@ -37,7 +36,7 @@ extern const Palette *palette;
 inline const Palette &palette() { return *detail::palette; }
 // GUI task (or before LVGL starts). Views built before keep their colours: rebuild them.
 void set_palette(const Palette &palette);
-// "dark", "light", "ocean", "dusk", "aurora", "peaks"; nullptr for anything else ("auto").
+// "dark", "grey" (or "light"), "ocean", "dusk", "aurora", "peaks"; nullptr for anything else ("auto").
 const Palette *palette_from_name(const char *name);
 
 inline lv_color_t background() { return lv_color_hex(palette().background); }
@@ -52,7 +51,9 @@ inline lv_color_t danger() { return lv_color_hex(palette().danger); }
 inline lv_color_t indicator() { return lv_color_hex(palette().indicator); }
 inline lv_color_t highlight() { return lv_color_hex(palette().highlight); }
 inline lv_color_t lip() { return lv_color_hex(palette().lip); }
-inline lv_color_t on_tint() { return lv_color_hex(palette().on_tint); }
+// A tile or menu item whose thing is on: the card tinted with the palette's accent, so "on" takes
+// the theme's colour (blue, cyan, peach, green) with the icon and name in the text colour.
+inline lv_color_t on_tint() { return lv_color_mix(accent(), card(), 90); }
 // The same in every palette.
 inline lv_color_t warm() { return lv_color_hex(0xF8A038); }
 inline lv_color_t good() { return lv_color_hex(0x48C878); }

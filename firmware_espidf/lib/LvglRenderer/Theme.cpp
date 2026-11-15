@@ -16,28 +16,30 @@ LV_FONT_DECLARE(nspm_font_icon_64);
 namespace Theme {
 
 // clang-format off
-//                       name      light  background card      text      muted     accent    track     pressed   disabled  danger    indicator  highlight lip       on_tint
-const Palette DARK   = {"dark",   false, 0x10141C, 0x1C2230, 0xF0F0F0, 0x8890A0, 0x38A8F8, 0x283448, 0x303C50, 0x586070, 0xF85048, 0xF0F0F0, 0x303840, 0x080C10, 0x383020};
-const Palette LIGHT  = {"light",  true,  0xE0E4E8, 0xF8F8F8, 0x182028, 0x687080, 0x1078D0, 0xD0D4D8, 0xC0C8D0, 0xA0A8B0, 0xD03028, 0x1078D0, 0xF8FCF8, 0xC8CCD0, 0xF8ECC8};
+//                       name      light  background card      text      muted     accent    track     pressed   disabled  danger    indicator  highlight lip
+const Palette DARK   = {"dark",   false, 0x10141C, 0x1C2230, 0xF0F0F0, 0x8890A0, 0x38A8F8, 0x283448, 0x303C50, 0x586070, 0xF85048, 0xF0F0F0, 0x303840, 0x080C10};
+// Mid grey, for a panel seen from above: no white cards to wash out off-axis, and off-white text.
+const Palette GREY   = {"grey",   false, 0x282C30, 0x383C44, 0xE8E8E8, 0x989CA8, 0x78A8D8, 0x484C58, 0x505460, 0x686C78, 0xF85048, 0xE8E8E8, 0x485058, 0x181C20};
 // Navy, with a cyan accent.
-const Palette OCEAN  = {"ocean",  false, 0x081420, 0x102438, 0xF0F8F8, 0x80A0B8, 0x40C8F0, 0x183850, 0x284860, 0x506878, 0xF85048, 0xF0F8F8, 0x283848, 0x001018, 0x303028};
+const Palette OCEAN  = {"ocean",  false, 0x081420, 0x102438, 0xF0F8F8, 0x80A0B8, 0x40C8F0, 0x183850, 0x284860, 0x506878, 0xF85048, 0xF0F8F8, 0x283848, 0x001018};
 // Violet, with a peach accent.
-const Palette DUSK   = {"dusk",   false, 0x181428, 0x282038, 0xF8F0F0, 0xA090A8, 0xF89060, 0x383048, 0x484058, 0x686078, 0xF85048, 0xF8F0F0, 0x383448, 0x100C18, 0x403028};
+const Palette DUSK   = {"dusk",   false, 0x181428, 0x282038, 0xF8F0F0, 0xA090A8, 0xF89060, 0x383048, 0x484058, 0x686078, 0xF85048, 0xF8F0F0, 0x383448, 0x100C18};
 // Deep teal, with a green accent.
-const Palette AURORA = {"aurora", false, 0x081418, 0x102828, 0xF0F8F8, 0x80A8A8, 0x40D0A8, 0x184040, 0x285050, 0x507070, 0xF85048, 0xF0F8F8, 0x283C38, 0x001010, 0x303020};
+const Palette AURORA = {"aurora", false, 0x081418, 0x102828, 0xF0F8F8, 0x80A8A8, 0x40D0A8, 0x184040, 0x285050, 0x507070, 0xF85048, 0xF0F8F8, 0x283C38, 0x001010};
 // Slate blue, with a sky accent.
-const Palette PEAKS  = {"peaks",  false, 0x101828, 0x182840, 0xF0F4F8, 0x8898B0, 0x70B0F0, 0x283C58, 0x304868, 0x586880, 0xF85048, 0xF0F4F8, 0x283C50, 0x081018, 0x383028};
+const Palette PEAKS  = {"peaks",  false, 0x101828, 0x182840, 0xF0F4F8, 0x8898B0, 0x70B0F0, 0x283C58, 0x304868, 0x586880, 0xF85048, 0xF0F4F8, 0x283C50, 0x081018};
 // clang-format on
-// Highlight and lip are the card mixed 10% towards white and 55% towards black, rounded to RGB565
-// (LIGHT's by eye). on_tint is a dark amber-brown, by eye: mixing amber into the blue and teal cards
-// turns olive.
+// Highlight and lip are the card mixed 10% towards white and 55% towards black, rounded to RGB565.
 
 const Palette *detail::palette = &DARK;
 
 void set_palette(const Palette &palette) { detail::palette = &palette; }
 
 const Palette *palette_from_name(const char *name) {
-  for (const Palette *p : {&DARK, &LIGHT, &OCEAN, &DUSK, &AURORA, &PEAKS}) {
+  if (name != nullptr && strcmp(name, "light") == 0) {
+    return &GREY; // "light" was a white palette, too bright from above; a saved setting gets grey
+  }
+  for (const Palette *p : {&DARK, &GREY, &OCEAN, &DUSK, &AURORA, &PEAKS}) {
     if (name != nullptr && strcmp(name, p->name) == 0) {
       return p;
     }
