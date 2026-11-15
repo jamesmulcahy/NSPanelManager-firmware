@@ -29,6 +29,7 @@ On `nspanel/<MAC>/command`:
 |---|---|
 | `{"command": "lvgl_ui", "enable": false}` | Keep the Nextion pages whatever the TFT (saved; reboots). A kill switch that needs no TFT reinstall; on a terminal TFT the display then shows the TFT's own "waiting" page, but the panel still takes MQTT, firmware and TFT updates |
 | `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once) |
+| `{"command": "lvgl_theme", "theme": "light"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `light`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once). `light` draws no background, as the art is dark; the background setting is kept for when the theme changes back |
 | `{"command": "lvgl_tap", "x": 160, "y": 20, "hold_ms": 100}` | A touch through the LVGL path, for testing without a finger; `x2`/`y2` make it a swipe |
 
 ## Putting a panel on it
@@ -76,5 +77,5 @@ Further room if needed, measured as builds but not run on a panel: trimming mbed
 
 `test/host/lvgl_sim/build.sh [OUT]` draws every view with mock data (`Pages.cpp`) on US and EU
 screens, plain and over each background, and writes the frames as images with each frame's cost
-on the wire (`costs.csv`). It needs LVGL's source, which `pio run` fetches into
+on the wire (`costs.csv`). `NSPM_THEME=light` (or any palette) draws it all in that palette. It needs LVGL's source, which `pio run` fetches into
 `managed_components/`.
