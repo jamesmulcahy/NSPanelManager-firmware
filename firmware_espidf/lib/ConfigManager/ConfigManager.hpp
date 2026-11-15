@@ -132,6 +132,9 @@ public:
   // The page background preset with LVGL as the UI (Background.hpp): "none", "ocean", "dusk", "aurora" or "peaks".
   static inline std::string lvgl_background = "none";
   // The LVGL screens' palette (Theme.hpp): "auto" (the background preset's own, dark without one),
-  // "dark", "light", "ocean", "dusk", "aurora" or "peaks".
+  // "dark", "grey" ("light" is read as "grey"), "ocean", "dusk", "aurora" or "peaks".
   static inline std::string lvgl_theme = "auto";
+  // The look above was chosen on the panel (or by a command) and the manager has not confirmed it
+  // yet: a config with another look is not applied, and the look is reported again (LvglLook).
+  static inline bool lvgl_look_unconfirmed = false;
 };
