@@ -15,7 +15,6 @@ ESP_EVENT_DEFINE_BASE(NEXTION_EVENT);
 
 esp_err_t Nextion::init() {
   esp_log_level_set("Nextion", ConfigManager::log_level);
-  esp_log_level_set("uart", esp_log_level_t::ESP_LOG_DEBUG);
   ESP_LOGI("Nextion", "Initializing Nextion display.");
 
   // Setup initial values and create mutexes:
