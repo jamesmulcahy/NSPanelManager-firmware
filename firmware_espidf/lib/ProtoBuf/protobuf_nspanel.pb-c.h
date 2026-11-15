@@ -36,6 +36,7 @@ typedef struct NSPanelMQTTManagerCommand__ThermostatTemperatureCommand NSPanelMQ
 typedef struct NSPanelMQTTManagerCommand__ThermostatCommand NSPanelMQTTManagerCommand__ThermostatCommand;
 typedef struct NSPanelMQTTManagerCommand__MediaPlayerCommand NSPanelMQTTManagerCommand__MediaPlayerCommand;
 typedef struct NSPanelMQTTManagerCommand__CoverCommand NSPanelMQTTManagerCommand__CoverCommand;
+typedef struct NSPanelMQTTManagerCommand__LvglLook NSPanelMQTTManagerCommand__LvglLook;
 
 
 /* --- enums --- */
@@ -600,6 +601,27 @@ struct  NSPanelMQTTManagerCommand__CoverCommand
     , 0, NSPANEL_MQTTMANAGER_COMMAND__COVER_COMMAND__ACTION__NONE, 0, 0, 0, 0 }
 
 
+/*
+ * A look chosen on the panel (LVGL mode), to be saved as the panel's lvgl_theme and lvgl_background.
+ * The manager confirms it with a config that carries the same look (NSPanelConfig fields 49 and 50).
+ */
+struct  NSPanelMQTTManagerCommand__LvglLook
+{
+  ProtobufCMessage base;
+  /*
+   * auto, dark, grey, ocean, dusk, aurora or peaks
+   */
+  char *theme;
+  /*
+   * none, ocean, dusk, aurora or peaks
+   */
+  char *background;
+};
+#define NSPANEL_MQTTMANAGER_COMMAND__LVGL_LOOK__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&nspanel_mqttmanager_command__lvgl_look__descriptor) \
+    , (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
+
+
 typedef enum {
   NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA__NOT_SET = 0,
   NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_FIRST_PAGE_TURN_ON = 1,
@@ -611,7 +633,8 @@ typedef enum {
   NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_THERMOSTAT_TEMPERATURE_COMMAND = 7,
   NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_THERMOSTAT_COMMAND = 8,
   NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_MEDIA_PLAYER_COMMAND = 9,
-  NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_COVER_COMMAND = 10
+  NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_COVER_COMMAND = 10,
+  NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA_LVGL_LOOK = 11
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_MQTTMANAGER_COMMAND__COMMAND_DATA__CASE)
 } NSPanelMQTTManagerCommand__CommandDataCase;
 
@@ -634,6 +657,7 @@ struct  NSPanelMQTTManagerCommand
     NSPanelMQTTManagerCommand__ThermostatCommand *thermostat_command;
     NSPanelMQTTManagerCommand__MediaPlayerCommand *media_player_command;
     NSPanelMQTTManagerCommand__CoverCommand *cover_command;
+    NSPanelMQTTManagerCommand__LvglLook *lvgl_look;
   };
 };
 #define NSPANEL_MQTTMANAGER_COMMAND__INIT \
@@ -797,6 +821,9 @@ void   nspanel_mqttmanager_command__media_player_command__init
 /* NSPanelMQTTManagerCommand__CoverCommand methods */
 void   nspanel_mqttmanager_command__cover_command__init
                      (NSPanelMQTTManagerCommand__CoverCommand         *message);
+/* NSPanelMQTTManagerCommand__LvglLook methods */
+void   nspanel_mqttmanager_command__lvgl_look__init
+                     (NSPanelMQTTManagerCommand__LvglLook         *message);
 /* NSPanelMQTTManagerCommand methods */
 void   nspanel_mqttmanager_command__init
                      (NSPanelMQTTManagerCommand         *message);
@@ -878,6 +905,9 @@ typedef void (*NSPanelMQTTManagerCommand__MediaPlayerCommand_Closure)
 typedef void (*NSPanelMQTTManagerCommand__CoverCommand_Closure)
                  (const NSPanelMQTTManagerCommand__CoverCommand *message,
                   void *closure_data);
+typedef void (*NSPanelMQTTManagerCommand__LvglLook_Closure)
+                 (const NSPanelMQTTManagerCommand__LvglLook *message,
+                  void *closure_data);
 typedef void (*NSPanelMQTTManagerCommand_Closure)
                  (const NSPanelMQTTManagerCommand *message,
                   void *closure_data);
@@ -918,6 +948,7 @@ extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__media_playe
 extern const ProtobufCEnumDescriptor    nspanel_mqttmanager_command__media_player_command__playback_action__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__cover_command__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_mqttmanager_command__cover_command__action__descriptor;
+extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__lvgl_look__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_mqttmanager_command__affect_lights_options__descriptor;
 
 PROTOBUF_C__END_DECLS

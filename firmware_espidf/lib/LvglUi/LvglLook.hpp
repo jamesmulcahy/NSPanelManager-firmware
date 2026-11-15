@@ -14,8 +14,8 @@
  * - The lvgl_theme and lvgl_background commands (UpdateManager): applied at once.
  * - The person at the panel, on the look picker (LookPage).
  *
- * The last two are changes the manager may not know about yet. The panel reports the look on
- * nspanel/<MAC>/lvgl_look and keeps it "unconfirmed" (also saved) until a config arrives whose look
+ * The last two are changes the manager may not know about yet. The panel reports the look as an
+ * NSPanelMQTTManagerCommand (lvgl_look) and keeps it "unconfirmed" (also saved) until a config arrives whose look
  * is the same. While it is unconfirmed, a config with another look is a stale one (sent before the
  * manager had the report, or retained from before) and is not applied; the report is sent again
  * instead, at most every REPORT_INTERVAL_US. A manager that does not know the report never confirms

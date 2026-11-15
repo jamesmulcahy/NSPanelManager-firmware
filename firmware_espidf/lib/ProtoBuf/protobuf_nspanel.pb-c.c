@@ -361,6 +361,12 @@ void   nspanel_mqttmanager_command__cover_command__init
   static const NSPanelMQTTManagerCommand__CoverCommand init_value = NSPANEL_MQTTMANAGER_COMMAND__COVER_COMMAND__INIT;
   *message = init_value;
 }
+void   nspanel_mqttmanager_command__lvgl_look__init
+                     (NSPanelMQTTManagerCommand__LvglLook         *message)
+{
+  static const NSPanelMQTTManagerCommand__LvglLook init_value = NSPANEL_MQTTMANAGER_COMMAND__LVGL_LOOK__INIT;
+  *message = init_value;
+}
 void   nspanel_mqttmanager_command__init
                      (NSPanelMQTTManagerCommand         *message)
 {
@@ -3183,6 +3189,57 @@ const ProtobufCMessageDescriptor nspanel_mqttmanager_command__cover_command__des
   (ProtobufCMessageInit) nspanel_mqttmanager_command__cover_command__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
+static const ProtobufCFieldDescriptor nspanel_mqttmanager_command__lvgl_look__field_descriptors[2] =
+{
+  {
+    "theme",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelMQTTManagerCommand__LvglLook, theme),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "background",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelMQTTManagerCommand__LvglLook, background),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned nspanel_mqttmanager_command__lvgl_look__field_indices_by_name[] = {
+  1,   /* field[1] = background */
+  0,   /* field[0] = theme */
+};
+static const ProtobufCIntRange nspanel_mqttmanager_command__lvgl_look__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 2 }
+};
+const ProtobufCMessageDescriptor nspanel_mqttmanager_command__lvgl_look__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "NSPanelMQTTManagerCommand.LvglLook",
+  "LvglLook",
+  "NSPanelMQTTManagerCommand__LvglLook",
+  "",
+  sizeof(NSPanelMQTTManagerCommand__LvglLook),
+  2,
+  nspanel_mqttmanager_command__lvgl_look__field_descriptors,
+  nspanel_mqttmanager_command__lvgl_look__field_indices_by_name,
+  1,  nspanel_mqttmanager_command__lvgl_look__number_ranges,
+  (ProtobufCMessageInit) nspanel_mqttmanager_command__lvgl_look__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
 static const ProtobufCEnumValue nspanel_mqttmanager_command__affect_lights_options__enum_values_by_number[3] =
 {
   { "ALL", "NSPANEL_MQTTMANAGER_COMMAND__AFFECT_LIGHTS_OPTIONS__ALL", 0 },
@@ -3213,7 +3270,7 @@ const ProtobufCEnumDescriptor nspanel_mqttmanager_command__affect_lights_options
   nspanel_mqttmanager_command__affect_lights_options__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_mqttmanager_command__field_descriptors[11] =
+static const ProtobufCFieldDescriptor nspanel_mqttmanager_command__field_descriptors[12] =
 {
   {
     "first_page_turn_on",
@@ -3336,6 +3393,18 @@ static const ProtobufCFieldDescriptor nspanel_mqttmanager_command__field_descrip
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
+    "lvgl_look",
+    11,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(NSPanelMQTTManagerCommand, command_data_case),
+    offsetof(NSPanelMQTTManagerCommand, lvgl_look),
+    &nspanel_mqttmanager_command__lvgl_look__descriptor,
+    NULL,
+    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
     "nspanel_id",
     100,
     PROTOBUF_C_LABEL_NONE,
@@ -3354,8 +3423,9 @@ static const unsigned nspanel_mqttmanager_command__field_indices_by_name[] = {
   1,   /* field[1] = first_page_turn_off */
   0,   /* field[0] = first_page_turn_on */
   2,   /* field[2] = light_command */
+  10,   /* field[10] = lvgl_look */
   8,   /* field[8] = media_player_command */
-  10,   /* field[10] = nspanel_id */
+  11,   /* field[11] = nspanel_id */
   4,   /* field[4] = save_scene_command */
   7,   /* field[7] = thermostat_command */
   6,   /* field[6] = thermostat_temperature_command */
@@ -3364,8 +3434,8 @@ static const unsigned nspanel_mqttmanager_command__field_indices_by_name[] = {
 static const ProtobufCIntRange nspanel_mqttmanager_command__number_ranges[2 + 1] =
 {
   { 1, 0 },
-  { 100, 10 },
-  { 0, 11 }
+  { 100, 11 },
+  { 0, 12 }
 };
 const ProtobufCMessageDescriptor nspanel_mqttmanager_command__descriptor =
 {
@@ -3375,7 +3445,7 @@ const ProtobufCMessageDescriptor nspanel_mqttmanager_command__descriptor =
   "NSPanelMQTTManagerCommand",
   "",
   sizeof(NSPanelMQTTManagerCommand),
-  11,
+  12,
   nspanel_mqttmanager_command__field_descriptors,
   nspanel_mqttmanager_command__field_indices_by_name,
   2,  nspanel_mqttmanager_command__number_ranges,
