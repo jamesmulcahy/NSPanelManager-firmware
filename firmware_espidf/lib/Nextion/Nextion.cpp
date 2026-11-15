@@ -530,6 +530,7 @@ void Nextion::_uart_data_handler(void *arg, esp_event_base_t event_base, int32_t
         }
 
         if (Nextion::_event_wait_integer != NULL) {
+          Nextion::_event_wait_integer_seen = true;
           xTaskNotifyGive(Nextion::_event_wait_integer);
         } else {
           ESP_LOGE("Nextion", "Got integer data but _event_wait_integer is NULL. No task to notify about result!");
@@ -617,6 +618,7 @@ esp_err_t Nextion::_wait_for_event(esp_event_base_t event_base, int32_t event_id
     if (Nextion::_event_wait_task == NULL) {
       Nextion::_event_wait_task = xTaskGetCurrentTaskHandle();
       Nextion::_event_wait_id = event_id;
+      Nextion::_event_wait_seen = false;
     }
     xSemaphoreGive(Nextion::_event_wait_mutex);
   } else {
@@ -624,7 +626,7 @@ esp_err_t Nextion::_wait_for_event(esp_event_base_t event_base, int32_t event_id
   }
 
   // Wait for the notification that the event happened
-  BaseType_t result = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout));
+  bool result = Nextion::_wait_for_flag(Nextion::_event_wait_seen, timeout);
 
   // Reset the waiting task handle to NULL
   if (xSemaphoreTake(Nextion::_event_wait_mutex, portMAX_DELAY) == pdTRUE) {
@@ -634,17 +636,33 @@ esp_err_t Nextion::_wait_for_event(esp_event_base_t event_base, int32_t event_id
     return ESP_ERR_TIMEOUT;
   }
 
-  if (result == pdTRUE) {
-    return ESP_OK;
-  } else {
-    return ESP_ERR_TIMEOUT;
+  return result ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+bool Nextion::_wait_for_flag(const std::atomic<bool> &seen, uint32_t timeout_ms) {
+  TickType_t start = xTaskGetTickCount();
+  TickType_t limit = pdMS_TO_TICKS(timeout_ms);
+  uint32_t strays = 0;
+  while (!seen) {
+    TickType_t waited = xTaskGetTickCount() - start;
+    if (waited >= limit) {
+      break;
+    }
+    if (ulTaskNotifyTake(pdTRUE, limit - waited) != 0 && !seen) {
+      strays++;
+    }
   }
+  if (strays > 0) {
+    xTaskNotifyGive(xTaskGetCurrentTaskHandle());
+  }
+  return seen;
 }
 
 void Nextion::_wait_for_event_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
   // Registered for every NEXTION_EVENT; notify the waiting task, if any, when its event arrives.
   if (xSemaphoreTake(Nextion::_event_wait_mutex, pdMS_TO_TICKS(32)) == pdTRUE) {
     if (Nextion::_event_wait_task != NULL && Nextion::_event_wait_id == event_id) {
+      Nextion::_event_wait_seen = true;
       xTaskNotifyGive(Nextion::_event_wait_task);
     }
     xSemaphoreGive(Nextion::_event_wait_mutex);
@@ -803,6 +821,7 @@ esp_err_t Nextion::_get_integer_value(const char *expression, int32_t *result, u
     if (Nextion::_event_wait_integer == NULL) {
       Nextion::_event_wait_integer = xTaskGetCurrentTaskHandle();
       Nextion::_event_wait_integer_result = result;
+      Nextion::_event_wait_integer_seen = false;
       xSemaphoreGive(Nextion::_event_wait_integer_mutex);
     } else {
       ESP_LOGE("Nextion", "Got mutex but _event_wait_integer is not NULL while fetching integer, cancel operation.");
@@ -826,7 +845,7 @@ esp_err_t Nextion::_get_integer_value(const char *expression, int32_t *result, u
   }
 
   // Wait for result
-  BaseType_t wait_result = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout));
+  bool wait_result = Nextion::_wait_for_flag(Nextion::_event_wait_integer_seen, timeout);
 
   if (xSemaphoreTake(Nextion::_event_wait_integer_mutex, portMAX_DELAY) == pdTRUE) {
     Nextion::_event_wait_integer = NULL;
@@ -834,11 +853,7 @@ esp_err_t Nextion::_get_integer_value(const char *expression, int32_t *result, u
     xSemaphoreGive(Nextion::_event_wait_integer_mutex);
   }
 
-  if (wait_result == pdTRUE) {
-    return ESP_OK;
-  } else {
-    return ESP_ERR_TIMEOUT;
-  }
+  return wait_result ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 std::string Nextion::identity() {

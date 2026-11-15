@@ -402,6 +402,9 @@ private:
   // The NEXTION_EVENT id _event_wait_task is waiting for
   static inline int32_t _event_wait_id;
 
+  // Set when the event _event_wait_task waits for has arrived (under _event_wait_mutex)
+  static inline std::atomic<bool> _event_wait_seen = false;
+
   // Mutex to only allow one task at the time to access the variables for "event_wait_integer"
   static inline SemaphoreHandle_t _event_wait_integer_mutex;
 
@@ -413,6 +416,15 @@ private:
 
   // The value that was received from the display
   static inline int32_t *_event_wait_integer_result;
+
+  // Set when the integer _event_wait_integer waits for has arrived (under _event_wait_integer_mutex)
+  static inline std::atomic<bool> _event_wait_integer_seen = false;
+
+  // Waits for this task's notification until `seen` is set or timeout_ms passes. The waits above
+  // share the task's one notification slot with whatever else the task waits for (the terminal
+  // task's draw() wake-ups, say), so a notification alone proves nothing: one left pending would
+  // end the wait at once. Notifications that were not ours are given back. True if `seen`.
+  static bool _wait_for_flag(const std::atomic<bool> &seen, uint32_t timeout_ms);
 
   // Configuration used to initialize uart
   static inline uart_config_t _uart_config;
