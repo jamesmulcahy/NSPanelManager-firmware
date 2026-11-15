@@ -61,6 +61,8 @@ class Rig:
         self.nextion.screenshots_dir = os.path.join(workdir, "screens")
         # Any wait on a fake ends as soon as the firmware panics or QEMU exits.
         for fake in (self.broker, self.manager, self.nextion, self.update_server):
+            if fake is None:
+                continue  # no UpdateServer in a stack rig: the stack's manager serves updates
             fake.abort_check = self.panel.check_alive
 
     def default_panel_config(self) -> dict:
