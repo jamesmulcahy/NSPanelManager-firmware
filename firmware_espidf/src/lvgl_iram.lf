@@ -1,0 +1,23 @@
+# LVGL's per-pixel drawing code and the helpers it calls for every span, in IRAM rather than run
+# from flash through the cache (DIO at 40 MHz, shared with PSRAM). About 28 KB of the ~38 KB of
+# IRAM left over; the object tree, styles and layout stay in flash. See docs/LVGL.md.
+[mapping:lvgl_hot]
+archive: liblvgl__lvgl.a
+entries:
+    lv_draw_sw_blend (noflash)
+    lv_draw_sw_blend_to_rgb565 (noflash)
+    lv_draw_sw (noflash)
+    lv_draw_sw_fill (noflash)
+    lv_draw_sw_border (noflash)
+    lv_draw_sw_letter (noflash)
+    lv_draw_sw_mask (noflash)
+    lv_draw_sw_mask_rect (noflash)
+    lv_draw_sw_grad (noflash)
+    lv_area (noflash)
+    lv_font_fmt_txt (noflash)
+    lv_font (noflash)
+    lv_string_builtin (noflash)
+    lv_color_op (noflash)
+    lv_ll (noflash)
+    lv_mem (noflash)
+    lv_draw_buf (noflash)

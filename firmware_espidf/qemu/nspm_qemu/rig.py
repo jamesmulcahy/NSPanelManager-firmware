@@ -3,9 +3,11 @@ The tests' `rig` fixture (tests/conftest.py) and web_panel.py are both built on 
 
 import json
 import os
+import time
 import urllib.request
 from typing import Optional
 
+from . import fake_nextion
 from .broker import Broker
 from .fake_manager import QEMU_HOST_ADDRESS, FakeManager
 from .panel import QemuPanel
@@ -17,6 +19,9 @@ DEFAULT_BUILD_DIR = os.path.join(PROJECT_DIR, ".pio", "build", "qemu")
 # real time. Boot to "registered" takes ~25 s of guest time; most of it is
 # esp-mqtt's 10 s reconnect delay after its first attempt beats DHCP.
 BOOT_TIMEOUT = 180
+# How long a terminal session the boot-time config save ended takes to be restarted: the
+# firmware notices within ~2 s (its reverse timeout) and retries 1 s later.
+TERMINAL_RESTART_GRACE = 5
 
 
 class Rig:
@@ -25,6 +30,10 @@ class Rig:
         os.makedirs(workdir, exist_ok=True)
         self.broker = Broker(log_path=os.path.join(workdir, "mosquitto.log"))
         self.manager = FakeManager(self.broker)
+        if fake_nextion.TERMINAL is not None:
+            # LvglRenderer lays out for the region the manager's config names, whatever
+            # config.json said at boot: US for the US receiver, EU for the EU one.
+            self.manager.config.is_us_panel = fake_nextion.TERMINAL == "us"
         self.hostname = hostname
         if panel_config is None:
             panel_config = self.default_panel_config()
@@ -65,6 +74,10 @@ class Rig:
         self.start()
         self.manager.wait_for_registration(timeout=BOOT_TIMEOUT)
         self.panel.wait_for_log(r"Manager is online!", timeout=60)
+        if self.nextion.terminal_profile is not None:
+            # The LVGL UI: a terminal session that has drawn something.
+            self.panel.wait_for_log(r"NextionTerminal: Receiver ready", timeout=60)
+            self.nextion.wait_for_rectangles(1, timeout=60)
         self.panel.wait_for_log(r"ScreensaverPage: Showing screensaver", timeout=60)
         # The manager's first config never matches the config.json written
         # above (button timings differ), so ButtonManager saves it to LittleFS
@@ -74,6 +87,12 @@ class Rig:
         # Ethernet RX ring (see "What differs from hardware" in the README),
         # and pages switched meanwhile unshow late.
         self.panel.wait_for_log(r"ConfigManager: Saved \d+ bytes to /littlefs/config.json", timeout=120)
+        if self.nextion.terminal_profile is not None:
+            # That save stops the guest long enough that the terminal session can time out
+            # (the firmware's reverse timeout, on the guest's clock), and the firmware then
+            # starts another. Let it, so that a test's first touch reaches a running session.
+            time.sleep(TERMINAL_RESTART_GRACE)
+            self.nextion.wait_for_terminal(timeout=60)
         self.panel.check_alive()
 
     def wake_to_home(self) -> None:

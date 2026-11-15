@@ -97,6 +97,27 @@ private:
    */
   static void _task_save_scene_progress(void *scene_slot);
 
+  /**
+   * With LVGL as the UI (LvglUi): draw `page` with EntitiesView. Any task.
+   */
+  static void _lvgl_render(const std::shared_ptr<NSPanelRoomEntitiesPage> &page);
+
+  /**
+   * _lvgl_render() of the page shown now, if any (after the save progress or header changed).
+   */
+  static void _lvgl_refresh();
+
+  /**
+   * An EntitiesView action (EntitiesView::Action, as int to keep LVGL out of this header), on
+   * LvglUi's task: the same as the Nextion touch handlers do for the matching component.
+   */
+  static void _lvgl_action(int action, int32_t slot);
+
+  /**
+   * Previous or next page of what is shown (entities, scenes or global scenes).
+   */
+  static void _step_page(bool next);
+
   // Vars
   // Shared between tasks: written by the RoomManager event loop and unshow(), read by the Nextion
   // event loop and the save-scene task.
@@ -127,4 +148,7 @@ private:
 
   // The entities page slot to save the scene.
   static inline std::atomic<bool> _save_scene = false;
+  // LVGL: the save bar (0-100, -1 hidden) and a header shown instead of the page's ("Scene saved").
+  static inline std::atomic<int> _lvgl_save_progress = -1;
+  static inline MutexWrapped<std::string> _lvgl_header_override;
 };

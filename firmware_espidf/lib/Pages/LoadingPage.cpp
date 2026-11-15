@@ -1,6 +1,8 @@
 #include <GUI_data.hpp>
 #include <InterfaceManager.hpp>
 #include <LoadingPage.hpp>
+#include <LvglRenderer.hpp>
+#include <LvglUi.hpp>
 #include <Nextion.hpp>
 
 void LoadingPage::show() {
@@ -10,6 +12,9 @@ void LoadingPage::show() {
 
   InterfaceManager::begin_page(LoadingPage::unshow);
   Nextion::go_to_page(GUI_LOADING_PAGE::page_name, 250);
+  if (LvglUi::active()) {
+    LvglRenderer::activate(LvglRenderer::Screen::BOOT);
+  }
 }
 
 void LoadingPage::unshow() {
@@ -21,9 +26,17 @@ bool LoadingPage::showing() {
 }
 
 void LoadingPage::set_loading_text(std::string text) {
+  if (LvglUi::active()) {
+    LvglRenderer::set_loading_text(text);
+    return;
+  }
   Nextion::set_component_text(GUI_LOADING_PAGE::component_text_name, text.c_str(), pdMS_TO_TICKS(100));
 }
 
 void LoadingPage::set_secondary_text(std::string text) {
+  if (LvglUi::active()) {
+    LvglRenderer::set_secondary_text(text);
+    return;
+  }
   Nextion::set_component_text(GUI_LOADING_PAGE::component_text_ip_text, text.c_str(), pdMS_TO_TICKS(100));
 }

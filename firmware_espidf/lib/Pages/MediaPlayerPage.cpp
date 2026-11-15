@@ -3,6 +3,10 @@
 #include <EntityPage.hpp>
 #include <GUI_data.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglArt.hpp>
+#include <LvglText.hpp>
+#include <LvglUi.hpp>
+#include <MediaPlayerView.hpp>
 #include <MediaPlayerPage.hpp>
 #include <MediaSourcePage.hpp>
 #include <MqttManager.hpp>
@@ -111,7 +115,13 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
 
   if (page_just_opened) {
     MediaPlayerPage::_showing = true;
-    MediaPlayerPage::_resolve_component_ids();
+    if (LvglUi::active()) {
+      MediaPlayerView::on_action = [](MediaPlayerView::Action action) {
+        LvglUi::defer([action]() { MediaPlayerPage::_lvgl_action((int)action); });
+      };
+    } else {
+      MediaPlayerPage::_resolve_component_ids();
+    }
 
     MediaPlayerPage::_position_bar_value = -2;
     if (MediaPlayerPage::_position_task_handle == NULL) {
@@ -177,7 +187,19 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
   {
     std::string album_art_url = media_player->album_art_url != NULL ? media_player->album_art_url : "";
     std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
-    if (page_just_opened || album_art_url != MediaPlayerPage::_album_art_url) {
+    if (LvglUi::active()) {
+      // Whole, in the background (LvglArt); the page shows the placeholder meanwhile.
+      MediaPlayerPage::_album_art_url = album_art_url;
+      if (album_art_url != MediaPlayerPage::_lvgl_art_url) {
+        MediaPlayerPage::_lvgl_art = nullptr;
+        MediaPlayerPage::_lvgl_art_url.clear();
+        if (!album_art_url.empty()) {
+          LvglArt::fetch(album_art_url, MediaPlayerPage::_lvgl_art_done);
+        } else {
+          LvglArt::cancel();
+        }
+      }
+    } else if (page_just_opened || album_art_url != MediaPlayerPage::_album_art_url) {
       MediaPlayerPage::_album_art_url = album_art_url;
       if (!album_art_url.empty()) {
         AlbumArt::render(album_art_url, MediaPlayerPage::_album_art_x, MediaPlayerPage::_album_art_y, MediaPlayerPage::_on_screen);
@@ -188,6 +210,7 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
       }
     }
   }
+  MediaPlayerPage::_lvgl_render(media_player, controlling_source);
 }
 
 int32_t MediaPlayerPage::_position_percent(const NSPanelEntityState__MediaPlayer *media_player) {
@@ -238,7 +261,9 @@ void MediaPlayerPage::_task_position(void *param) {
       std::shared_ptr<NSPanelEntityState> state = EntityPage::get_current_state();
       if (state != nullptr && state->entity_case == NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) {
         playing = state->media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING;
-        if (playing) {
+        if (playing && LvglUi::active()) {
+          MediaPlayerPage::_lvgl_render(state->media_player, MediaPlayerPage::_controlling_source && state->media_player->has_source_volume);
+        } else if (playing) {
           MediaPlayerPage::_update_position_bar(state->media_player);
         }
       }
@@ -535,6 +560,10 @@ void MediaPlayerPage::_toggle_source() {
 }
 
 void MediaPlayerPage::_show_volume_bar(int32_t volume) {
+  if (LvglUi::active()) {
+    MediaPlayerPage::_redraw(); // The LVGL page always shows the volume.
+    return;
+  }
   Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_bar_name, volume, 250);
   Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_bar_name, true, 250);
 
@@ -569,5 +598,85 @@ void MediaPlayerPage::_send_command(NSPanelMQTTManagerCommand__MediaPlayerComman
   } else {
     ESP_LOGE("MediaPlayerPage", "Failed to pack protobuf command.");
     MediaPlayerPage::_redraw(); // Update display to reset values to those stored
+  }
+}
+
+// Seconds as "m:ss", or "h:mm:ss".
+static std::string clock_text(int64_t seconds) {
+  char text[16];
+  if (seconds >= 3600) {
+    snprintf(text, sizeof(text), "%d:%02d:%02d", (int)(seconds / 3600), (int)(seconds / 60 % 60), (int)(seconds % 60));
+  } else {
+    snprintf(text, sizeof(text), "%d:%02d", (int)(seconds / 60), (int)(seconds % 60));
+  }
+  return text;
+}
+
+void MediaPlayerPage::_lvgl_render(const NSPanelEntityState__MediaPlayer *media_player, bool controlling_source) {
+  if (!LvglUi::active() || media_player == NULL || !MediaPlayerPage::_on_screen()) {
+    return;
+  }
+  MediaPlayerState state;
+  state.name = LvglText::utf8(media_player->name);
+  state.title = LvglText::utf8(media_player->media_title);
+  state.artist = LvglText::utf8(media_player->media_artist);
+  {
+    std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
+    state.art = MediaPlayerPage::_lvgl_art;
+  }
+  state.playing = media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING ||
+                  media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__BUFFERING;
+  state.muted = media_player->is_muted;
+  state.volume = MediaPlayerPage::_volume(media_player, controlling_source);
+  state.position = MediaPlayerPage::_position_percent(media_player);
+  if (state.position >= 0) {
+    state.elapsed = clock_text((int64_t)state.position * media_player->media_duration / 100);
+    state.duration = clock_text(media_player->media_duration);
+  }
+  state.has_source = media_player->has_source_volume;
+  state.controlling_source = controlling_source;
+  state.can_previous = MediaPlayerPage::_action_enabled(_action::PREVIOUS_TRACK, media_player, controlling_source);
+  state.can_next = MediaPlayerPage::_action_enabled(_action::NEXT_TRACK, media_player, controlling_source);
+  state.can_play = MediaPlayerPage::_action_enabled(_action::PLAY_PAUSE, media_player, controlling_source);
+  state.can_volume = MediaPlayerPage::_action_enabled(_action::VOLUME_UP, media_player, controlling_source);
+  state.can_mute = MediaPlayerPage::_action_enabled(_action::MUTE, media_player, controlling_source);
+  LvglUi::show(LvglUi::View::MEDIA_PLAYER, MediaPlayerView::build, [state]() { MediaPlayerView::show(state); });
+}
+
+void MediaPlayerPage::_lvgl_art_done(const lv_image_dsc_t *image, const std::string &url) {
+  {
+    std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
+    if (url != MediaPlayerPage::_album_art_url) {
+      return; // The track changed meanwhile; its own fetch is on the way.
+    }
+    MediaPlayerPage::_lvgl_art = image;
+    MediaPlayerPage::_lvgl_art_url = image != NULL ? url : "";
+  }
+  MediaPlayerPage::_redraw();
+}
+
+void MediaPlayerPage::_lvgl_action(int action) {
+  if (!MediaPlayerPage::_on_screen()) {
+    return;
+  }
+  _action wanted;
+  switch ((MediaPlayerView::Action)action) {
+  case MediaPlayerView::Action::BACK: wanted = _action::BACK; break;
+  case MediaPlayerView::Action::ART: wanted = _action::ALBUM_ART; break;
+  case MediaPlayerView::Action::PREVIOUS: wanted = _action::PREVIOUS_TRACK; break;
+  case MediaPlayerView::Action::PLAY_PAUSE: wanted = _action::PLAY_PAUSE; break;
+  case MediaPlayerView::Action::NEXT: wanted = _action::NEXT_TRACK; break;
+  case MediaPlayerView::Action::MUTE: wanted = _action::MUTE; break;
+  case MediaPlayerView::Action::VOLUME_DOWN: wanted = _action::VOLUME_DOWN; break;
+  case MediaPlayerView::Action::VOLUME_UP: wanted = _action::VOLUME_UP; break;
+  case MediaPlayerView::Action::SOURCE_SWITCH: wanted = _action::SOURCE_SWITCH; break;
+  default: return;
+  }
+  // The same path as a release of the Nextion component (enabled check included).
+  for (const _component_t &component : MediaPlayerPage::_components) {
+    if (component.action == wanted) {
+      MediaPlayerPage::handle_touch(component.id, false);
+      return;
+    }
   }
 }

@@ -1,6 +1,11 @@
 #pragma once
 #include <MutexWrapper.hpp>
 #include <atomic>
+#include <esp_timer.h>
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
 #include <esp_event.h>
 #include <list>
 #include <memory>
@@ -59,6 +64,24 @@ public:
    * @return ESP_OK if operation was successful, otherwise ESP_ERR_NOT_FINISHED or ESP_ERR_NOT_FOUND
    */
   static esp_err_t go_to_next_room();
+
+  struct RoomName {
+    uint32_t id;
+    std::string name; // Empty while not yet known
+  };
+
+  /**
+   * @brief The rooms this panel may show, in the config's order, with the names seen so far. A room's
+   * name only arrives with its state, so call request_room_names() to learn the rest.
+   */
+  static std::vector<RoomName> room_names();
+
+  /**
+   * @brief If any allowed room's name is unknown, learn them all: subscribe for a few seconds to
+   * every room's state topic (a wildcard; the states are retained), keep the names, unsubscribe.
+   * Posts ROOM_NAMES_UPDATED when done. The current room's own subscription is untouched. Any task.
+   */
+  static void request_room_names();
 
   /**
    * @brief Navigate to the default room
@@ -175,6 +198,16 @@ public:
   static esp_err_t unregister_handler(int32_t event_id, esp_event_handler_t event_handler);
 
 private:
+  // Remember a room's name; posts ROOM_NAMES_UPDATED if it changed (and `notify`).
+  static void _note_room_name(int32_t room_id, const char *name, bool notify);
+  static void _room_names_scan_done(void *arg);
+  // Room id -> name, for every room whose state has been seen.
+  static inline std::map<int32_t, std::string> _room_names;
+  static inline std::mutex _room_names_mutex;
+  // The wildcard topic while a scan runs, else empty.
+  static inline MutexWrapped<std::string> _room_names_scan_topic;
+  static inline esp_timer_handle_t _room_names_scan_timer = NULL;
+
   /**
    * @brief Handle events triggered from MQTT places.
    */

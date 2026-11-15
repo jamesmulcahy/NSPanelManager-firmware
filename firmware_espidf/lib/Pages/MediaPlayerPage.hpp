@@ -1,4 +1,5 @@
 #pragma once
+#include <lvgl.h>
 
 #include <GUI_data.hpp>
 #include <atomic>
@@ -141,6 +142,22 @@ private:
   // Send a command for the currently displayed media player to the manager. Fills in the media player ID.
   static void _send_command(NSPanelMQTTManagerCommand__MediaPlayerCommand *command);
 
+  /**
+   * With LVGL as the UI (LvglUi): draw the page with MediaPlayerView. Any task.
+   */
+  static void _lvgl_render(const NSPanelEntityState__MediaPlayer *media_player, bool controlling_source);
+
+  /**
+   * A MediaPlayerView action (as int, keeping LVGL out of this header), on LvglUi's task: what a
+   * release of the matching Nextion component does.
+   */
+  static void _lvgl_action(int action);
+
+  /**
+   * LvglArt's result for `url`, on its task: keep it if it is still this page's art, and redraw.
+   */
+  static void _lvgl_art_done(const lv_image_dsc_t *image, const std::string &url);
+
   // Whether the entity page last opened as this media player: set when it opens and cleared by
   // unshow(). unshow() runs late on the unshow task, and not at all while that is held up, so this
   // alone doesn't say the page is on screen. Use _on_screen() for that.
@@ -226,6 +243,9 @@ private:
   // task and from the Nextion handler.
   static inline std::string _album_art_url;
   static inline std::mutex _album_art_url_mutex;
+  // LVGL: the art shown (NULL: placeholder) and the URL it came from. Guarded by _album_art_url_mutex.
+  static inline const lv_image_dsc_t *_lvgl_art = nullptr;
+  static inline std::string _lvgl_art_url;
 
   static inline portMUX_TYPE _spinlock = portMUX_INITIALIZER_UNLOCKED;
 };

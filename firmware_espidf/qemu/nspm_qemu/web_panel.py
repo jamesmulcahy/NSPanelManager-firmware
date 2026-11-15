@@ -3,6 +3,9 @@ to use by hand. QEMU runs the firmware against the fake manager and broker, and 
 viewer shows the display: click and drag on it to touch the panel.
 
     qemu/web_panel.sh [--http 8080] [--bind 127.0.0.1] [--rotation 0|90|180|270] [--weather]
+                      [--terminal us|eu-on-us]
+
+--terminal runs the LVGL UI: the display is nspanel-terminal's TFT (see fake_nextion.py).
 
 It prints the viewer's URL once the panel is up, then each command the panel sends the manager
 as it arrives. Ctrl-C stops everything. The console log, broker log and screenshots are kept in
@@ -27,14 +30,21 @@ def main(argv=None) -> int:
     parser.add_argument("--http", type=int, default=8080, metavar="PORT", help="the viewer's port (default 8080)")
     parser.add_argument("--bind", default="127.0.0.1",
                         help="the viewer's address (default 127.0.0.1; anyone who can reach it can touch the panel)")
-    parser.add_argument("--rotation", type=int, default=0, choices=(0, 90, 180, 270),
-                        help="turn the screen this many degrees clockwise")
+    parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270),
+                        help="turn the screen this many degrees clockwise (default: upright)")
+    parser.add_argument("--terminal", choices=("us", "eu-on-us"),
+                        help="the display runs nspanel-terminal's TFT for this receiver: the LVGL UI")
     parser.add_argument("--weather", action="store_true", help="the weather screensaver, with a forecast")
     parser.add_argument("--workdir", default=os.path.join(QEMU_DIR, "build", "web_panel"))
     args = parser.parse_args(argv)
 
+    if args.terminal:
+        os.environ["NSPM_QEMU_TERMINAL"] = args.terminal
+        from . import fake_nextion, panel
+        fake_nextion.TERMINAL = panel.TERMINAL = args.terminal
     rig = Rig(args.workdir)
-    rig.nextion.rotation = args.rotation
+    if args.rotation is not None:
+        rig.nextion.rotation = args.rotation
     if args.weather:
         rig.manager.config.screensaver_mode = pb.NSPanelConfig.WEATHER_WITH_BACKGROUND
     viewer = Viewer(rig.nextion, args.bind, args.http)

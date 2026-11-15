@@ -16,7 +16,9 @@ enum nextion_state_t {
   INITIALIZING,
   RUNNING,
   INITIALIZING_UPDATE,
-  UPDATING
+  UPDATING,
+  // NextionTerminal owns the UART: raw bytes in both directions, no commands from anyone else.
+  TERMINAL
 };
 
 static constexpr uint16_t NEXTION_UART_EVENT_LOOP_STACK_SIZE = 3096;
@@ -38,6 +40,36 @@ public:
    * @return ESP_OK or ESP_ERR_TIMEOUT
    */
   static esp_err_t go_to_page(const char *page, uint16_t mutex_timeout);
+
+  /**
+   * When set, go_to_page() sends nothing and hands the page's name to `hook` instead, on the
+   * caller's task: the display has no Nextion pages (LvglUi, on a terminal TFT).
+   */
+  static void set_page_redirect(void (*hook)(const char *page)) { Nextion::_page_redirect = hook; }
+
+  /**
+   * When set, set_brightness_level() hands the level to `hook` instead of sending dim= (LvglUi:
+   * the terminal receiver sets the backlight while it owns the display).
+   */
+  static void set_brightness_redirect(void (*hook)(uint8_t brightness)) { Nextion::_brightness_redirect = hook; }
+
+  /**
+   * While set, every command (set_component_*, send_raw_command, fills, ...) is dropped at once
+   * with ESP_ERR_INVALID_STATE: the display has no Nextion pages to send them to (LvglUi). The
+   * terminal, the connect sequence and TFT updates write to the UART by other means.
+   */
+  static void set_commands_blocked(bool blocked) { Nextion::_commands_blocked = blocked; }
+
+  /**
+   * The display's last `connect` reply ("comok 2,30614-0,NX4832F035_011C,94,61744,..."), empty
+   * if it never answered.
+   */
+  static std::string identity();
+
+  /**
+   * Whether the TFT sent NSPanel Manager's "NSPM" flag when the display last started.
+   */
+  static bool nspm_flag_received() { return Nextion::_has_received_nspm_flag; }
 
   /**
    * @brief Send command to set Nextion display in "sleep mode"
@@ -234,6 +266,33 @@ public:
   static void restart();
 
   /**
+   * Hand the UART to the calling task alone, for NextionTerminal. Waits for the writer in flight,
+   * then turns every other writer away (state TERMINAL) and stops reading frames: the caller reads
+   * and writes raw bytes with terminal_read()/terminal_write() until terminal_release().
+   * Only while the display is RUNNING.
+   * @return ESP_OK, or ESP_ERR_INVALID_STATE / ESP_ERR_TIMEOUT.
+   */
+  static esp_err_t terminal_acquire(uint16_t mutex_timeout);
+
+  /**
+   * Raw UART access while acquired. terminal_read() returns as soon as `size` bytes arrived, or
+   * after `timeout` ticks with what there is.
+   */
+  static int terminal_write(const uint8_t *data, size_t size);
+  static int terminal_read(uint8_t *data, size_t size, TickType_t timeout);
+  static void terminal_drain();
+  // Wait for everything written to leave, then move the UART (not the display) to `baud`.
+  static esp_err_t terminal_set_uart_baud(uint32_t baud);
+
+  /**
+   * Give the UART back, from the task that acquired it. With `restart_display`, whatever state the
+   * display was left in, it is power-cycled and connected again exactly as at boot (operating baud
+   * rate included); that blocks for a few seconds. Without, the caller vouches that the display
+   * is still at the link baud rate in its normal command mode (nothing but queries were sent).
+   */
+  static void terminal_release(bool restart_display);
+
+  /**
    * Restart the Nextion display and start the update process.
    * @param comms_baudrate: What serial baud rate to use when sending command to display to start update.
    * @param upload_baudrate: What serial baud rate to use when sending upload data to the screen.
@@ -343,6 +402,9 @@ private:
   // The NEXTION_EVENT id _event_wait_task is waiting for
   static inline int32_t _event_wait_id;
 
+  // Set when the event _event_wait_task waits for has arrived (under _event_wait_mutex)
+  static inline std::atomic<bool> _event_wait_seen = false;
+
   // Mutex to only allow one task at the time to access the variables for "event_wait_integer"
   static inline SemaphoreHandle_t _event_wait_integer_mutex;
 
@@ -354,6 +416,15 @@ private:
 
   // The value that was received from the display
   static inline int32_t *_event_wait_integer_result;
+
+  // Set when the integer _event_wait_integer waits for has arrived (under _event_wait_integer_mutex)
+  static inline std::atomic<bool> _event_wait_integer_seen = false;
+
+  // Waits for this task's notification until `seen` is set or timeout_ms passes. The waits above
+  // share the task's one notification slot with whatever else the task waits for (the terminal
+  // task's draw() wake-ups, say), so a notification alone proves nothing: one left pending would
+  // end the wait at once. Notifications that were not ours are given back. True if `seen`.
+  static bool _wait_for_flag(const std::atomic<bool> &seen, uint32_t timeout_ms);
 
   // Configuration used to initialize uart
   static inline uart_config_t _uart_config;
@@ -368,7 +439,10 @@ private:
   static inline nextion_state_t _current_nextion_state;
 
   // When starting the Nextion display, did we receive the "NSPM" flag indicating that our NSPanel Manager firmware is running on the Nextion display?
-  static inline bool _has_received_nspm_flag;
+  static inline std::atomic<bool> _has_received_nspm_flag = false;
+  // The last comok, for identity(); guarded by _identity_lock.
+  static inline char _identity[96] = {};
+  static inline portMUX_TYPE _identity_lock = portMUX_INITIALIZER_UNLOCKED;
 
   // How the link reached _link_baud.
   enum class link_baud_result_t : uint8_t {
@@ -380,4 +454,7 @@ private:
 
   static inline std::atomic<uint32_t> _link_baud = 0;
   static inline std::atomic<link_baud_result_t> _link_baud_result = link_baud_result_t::NOT_REQUESTED;
+  static inline void (*_page_redirect)(const char *page) = nullptr;
+  static inline std::atomic<bool> _commands_blocked = false;
+  static inline void (*_brightness_redirect)(uint8_t brightness) = nullptr;
 };

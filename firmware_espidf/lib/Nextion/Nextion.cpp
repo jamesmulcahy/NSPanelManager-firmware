@@ -136,6 +136,7 @@ void Nextion::_connect_at_default_baud() {
   // Wait for 'NSPM' flag, if we receive it.
   if (Nextion::_wait_for_event(NEXTION_EVENT, nextion_event_t::RECEIVED_NSPM_FLAG, 2500, 250) == ESP_OK) {
     ESP_LOGI("Nextion", "Received 'NSPM'-flag. You are running the NSPanel Manager GUI/TFT.");
+    Nextion::_has_received_nspm_flag = true;
   } else {
     ESP_LOGW("Nextion", "Did not receive the 'NSPM'-flag on screen startup. Are you running the NSPanel Manager GUI/TFT?");
     Nextion::_has_received_nspm_flag = false;
@@ -348,7 +349,7 @@ void Nextion::_task_uart_event(void *param) {
               Nextion::_post_received_data(uart_buffer);
             }
 #if defined(NSPM_QEMU)
-            else {
+            else if (Nextion::_current_nextion_state != nextion_state_t::TERMINAL) {
               // QEMU emulates no pattern detection, so UART_PATTERN_DET never fires and the display's frames arrive
               // here. Split them as that path does. Read what is buffered, not what the event reports: if an
               // earlier event was lost (queue full) its bytes are still buffered, and later events then describe
@@ -385,9 +386,16 @@ void Nextion::_task_uart_event(void *param) {
 
       case UART_PATTERN_DET: {
         bool updating = false;
+        bool terminal = false;
         if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
           updating = Nextion::_current_nextion_state == nextion_state_t::INITIALIZING_UPDATE || Nextion::_current_nextion_state == nextion_state_t::UPDATING;
+          terminal = Nextion::_current_nextion_state == nextion_state_t::TERMINAL;
           xSemaphoreGive(Nextion::_nextion_state_mutex);
+        }
+        if (terminal) {
+          // The terminal reads its own bytes (pattern detection is off then; this is one raised before).
+          pending_frames.clear();
+          break;
         }
 
         if (!updating) [[likely]] {
@@ -522,6 +530,7 @@ void Nextion::_uart_data_handler(void *arg, esp_event_base_t event_base, int32_t
         }
 
         if (Nextion::_event_wait_integer != NULL) {
+          Nextion::_event_wait_integer_seen = true;
           xTaskNotifyGive(Nextion::_event_wait_integer);
         } else {
           ESP_LOGE("Nextion", "Got integer data but _event_wait_integer is NULL. No task to notify about result!");
@@ -568,6 +577,11 @@ void Nextion::_uart_data_handler(void *arg, esp_event_base_t event_base, int32_t
     esp_event_post(NEXTION_EVENT, nextion_event_t::RECEIVED_NSPM_FLAG, NULL, 0, pdMS_TO_TICKS(16));
   } else if (data->size() >= 5 && strncmp(data->data(), "comok", strlen("comok")) == 0) {
     ESP_LOGD("Nextion", "Connected to Nextion display, comok data: %s", data->data());
+    portENTER_CRITICAL(&Nextion::_identity_lock);
+    size_t length = std::min(data->size(), sizeof(Nextion::_identity) - 1);
+    memcpy(Nextion::_identity, data->data(), length);
+    Nextion::_identity[length] = '\0';
+    portEXIT_CRITICAL(&Nextion::_identity_lock);
     esp_event_post(NEXTION_EVENT, nextion_event_t::CONNECTED, NULL, 0, pdMS_TO_TICKS(16));
   } else if (data->data()[0] == NEX_RET_INVALID_PICTURE_ID) {
     ESP_LOGW("Nextion", "NEX_RET_INVALID_PICTURE_ID (0x04): a command or HMI component references a picture ID that does not exist in the resource list");
@@ -604,6 +618,7 @@ esp_err_t Nextion::_wait_for_event(esp_event_base_t event_base, int32_t event_id
     if (Nextion::_event_wait_task == NULL) {
       Nextion::_event_wait_task = xTaskGetCurrentTaskHandle();
       Nextion::_event_wait_id = event_id;
+      Nextion::_event_wait_seen = false;
     }
     xSemaphoreGive(Nextion::_event_wait_mutex);
   } else {
@@ -611,7 +626,7 @@ esp_err_t Nextion::_wait_for_event(esp_event_base_t event_base, int32_t event_id
   }
 
   // Wait for the notification that the event happened
-  BaseType_t result = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout));
+  bool result = Nextion::_wait_for_flag(Nextion::_event_wait_seen, timeout);
 
   // Reset the waiting task handle to NULL
   if (xSemaphoreTake(Nextion::_event_wait_mutex, portMAX_DELAY) == pdTRUE) {
@@ -621,17 +636,33 @@ esp_err_t Nextion::_wait_for_event(esp_event_base_t event_base, int32_t event_id
     return ESP_ERR_TIMEOUT;
   }
 
-  if (result == pdTRUE) {
-    return ESP_OK;
-  } else {
-    return ESP_ERR_TIMEOUT;
+  return result ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+bool Nextion::_wait_for_flag(const std::atomic<bool> &seen, uint32_t timeout_ms) {
+  TickType_t start = xTaskGetTickCount();
+  TickType_t limit = pdMS_TO_TICKS(timeout_ms);
+  uint32_t strays = 0;
+  while (!seen) {
+    TickType_t waited = xTaskGetTickCount() - start;
+    if (waited >= limit) {
+      break;
+    }
+    if (ulTaskNotifyTake(pdTRUE, limit - waited) != 0 && !seen) {
+      strays++;
+    }
   }
+  if (strays > 0) {
+    xTaskNotifyGive(xTaskGetCurrentTaskHandle());
+  }
+  return seen;
 }
 
 void Nextion::_wait_for_event_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
   // Registered for every NEXTION_EVENT; notify the waiting task, if any, when its event arrives.
   if (xSemaphoreTake(Nextion::_event_wait_mutex, pdMS_TO_TICKS(32)) == pdTRUE) {
     if (Nextion::_event_wait_task != NULL && Nextion::_event_wait_id == event_id) {
+      Nextion::_event_wait_seen = true;
       xTaskNotifyGive(Nextion::_event_wait_task);
     }
     xSemaphoreGive(Nextion::_event_wait_mutex);
@@ -652,6 +683,10 @@ void Nextion::_write_locked(const std::string &command) {
 }
 
 esp_err_t Nextion::_send_command(const std::string &command, uint16_t mutex_timeout, bool bulk) {
+  if (Nextion::_commands_blocked) {
+    ESP_LOGV("Nextion", "Dropped (LVGL is the UI): %s", command.c_str());
+    return ESP_ERR_INVALID_STATE;
+  }
   // Verify that the Nextion state is "running" as we don't want to send data that may interrupt other processes such as updating the GUI
   if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
     if (Nextion::_current_nextion_state != nextion_state_t::RUNNING) {
@@ -672,6 +707,14 @@ esp_err_t Nextion::_send_command(const std::string &command, uint16_t mutex_time
 }
 
 esp_err_t Nextion::go_to_page(const char *page, uint16_t mutex_timeout) {
+  if (Nextion::_page_redirect != nullptr) {
+    Nextion::_page_redirect(page);
+    return ESP_OK;
+  }
+  if (Nextion::_current_nextion_state == nextion_state_t::TERMINAL) {
+    // The terminal owns the display; the page could not be sent, so don't stop what it draws.
+    return ESP_ERR_INVALID_STATE;
+  }
   return Nextion::_send_command(std::string("page ") + page, mutex_timeout);
 }
 
@@ -770,10 +813,15 @@ esp_err_t Nextion::get_integer_value(const char *expression, int32_t *result, ui
 }
 
 esp_err_t Nextion::_get_integer_value(const char *expression, int32_t *result, uint16_t timeout, uint16_t mutex_timeout) {
+  if (Nextion::_commands_blocked) {
+    ESP_LOGV("Nextion", "Dropped (LVGL is the UI): get %s", expression);
+    return ESP_ERR_INVALID_STATE;
+  }
   if (xSemaphoreTake(Nextion::_event_wait_integer_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
     if (Nextion::_event_wait_integer == NULL) {
       Nextion::_event_wait_integer = xTaskGetCurrentTaskHandle();
       Nextion::_event_wait_integer_result = result;
+      Nextion::_event_wait_integer_seen = false;
       xSemaphoreGive(Nextion::_event_wait_integer_mutex);
     } else {
       ESP_LOGE("Nextion", "Got mutex but _event_wait_integer is not NULL while fetching integer, cancel operation.");
@@ -797,7 +845,7 @@ esp_err_t Nextion::_get_integer_value(const char *expression, int32_t *result, u
   }
 
   // Wait for result
-  BaseType_t wait_result = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(timeout));
+  bool wait_result = Nextion::_wait_for_flag(Nextion::_event_wait_integer_seen, timeout);
 
   if (xSemaphoreTake(Nextion::_event_wait_integer_mutex, portMAX_DELAY) == pdTRUE) {
     Nextion::_event_wait_integer = NULL;
@@ -805,14 +853,22 @@ esp_err_t Nextion::_get_integer_value(const char *expression, int32_t *result, u
     xSemaphoreGive(Nextion::_event_wait_integer_mutex);
   }
 
-  if (wait_result == pdTRUE) {
-    return ESP_OK;
-  } else {
-    return ESP_ERR_TIMEOUT;
-  }
+  return wait_result ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+std::string Nextion::identity() {
+  char copy[sizeof(Nextion::_identity)];
+  portENTER_CRITICAL(&Nextion::_identity_lock);
+  memcpy(copy, Nextion::_identity, sizeof(copy));
+  portEXIT_CRITICAL(&Nextion::_identity_lock);
+  return copy;
 }
 
 esp_err_t Nextion::set_brightness_level(uint8_t brightness, uint16_t mutex_timeout) {
+  if (Nextion::_brightness_redirect != nullptr) {
+    Nextion::_brightness_redirect(brightness);
+    return ESP_OK;
+  }
   return Nextion::_send_command("dim=" + std::to_string(brightness), mutex_timeout);
 }
 
@@ -829,6 +885,86 @@ void Nextion::restart() {
   }
   Nextion::_link_baud = ConfigManager::communication_baud_rate;
   gpio_set_level(NEXTION_ON_OFF_GPIO, 0); // Turn on power to the display
+}
+
+esp_err_t Nextion::terminal_acquire(uint16_t mutex_timeout) {
+  // Held until terminal_release(): no other writer gets a byte in.
+  if (xSemaphoreTake(Nextion::_uart_write_mutex, pdMS_TO_TICKS(mutex_timeout)) != pdTRUE) {
+    return ESP_ERR_TIMEOUT;
+  }
+  if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(mutex_timeout)) != pdTRUE) {
+    xSemaphoreGive(Nextion::_uart_write_mutex);
+    return ESP_ERR_TIMEOUT;
+  }
+  if (Nextion::_current_nextion_state != nextion_state_t::RUNNING) {
+    xSemaphoreGive(Nextion::_nextion_state_mutex);
+    xSemaphoreGive(Nextion::_uart_write_mutex);
+    return ESP_ERR_INVALID_STATE;
+  }
+  Nextion::_current_nextion_state = nextion_state_t::TERMINAL;
+  NextionWindow::stop_locked(); // The terminal paces itself with its own credits.
+  xSemaphoreGive(Nextion::_nextion_state_mutex);
+#if !defined(NSPM_QEMU)
+  // The terminal's binary frames are full of 0xFF; nothing must split them.
+  uart_disable_pattern_det_intr(UART_NUM_2);
+#endif
+  Nextion::_flush_uart_input();
+  ESP_LOGI("Nextion", "UART handed to the terminal at %lu baud.", Nextion::_link_baud.load());
+  return ESP_OK;
+}
+
+int Nextion::terminal_write(const uint8_t *data, size_t size) {
+  return uart_write_bytes(UART_NUM_2, data, size);
+}
+
+int Nextion::terminal_read(uint8_t *data, size_t size, TickType_t timeout) {
+  return uart_read_bytes(UART_NUM_2, data, size, timeout);
+}
+
+void Nextion::terminal_drain() {
+  uart_flush_input(UART_NUM_2);
+}
+
+esp_err_t Nextion::terminal_set_uart_baud(uint32_t baud) {
+  uart_wait_tx_done(UART_NUM_2, pdMS_TO_TICKS(500));
+  esp_err_t result = uart_set_baudrate(UART_NUM_2, baud);
+  if (result == ESP_OK) {
+    Nextion::_link_baud = baud;
+  }
+  return result;
+}
+
+void Nextion::terminal_release(bool restart_display) {
+  if (restart_display) {
+    if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      Nextion::_current_nextion_state = nextion_state_t::INITIALIZING;
+      xSemaphoreGive(Nextion::_nextion_state_mutex);
+    }
+    Nextion::restart(); // Back to the display's default baud rate, and the UART with it.
+  }
+#if !defined(NSPM_QEMU)
+  // After restart(): the pattern's timing follows the UART's baud rate.
+  uart_enable_pattern_det_baud_intr(UART_NUM_2, 0xFF, 3, 9, 0, 0);
+#endif
+  Nextion::_flush_uart_input();
+  xSemaphoreGive(Nextion::_uart_write_mutex);
+
+  if (restart_display) {
+    Nextion::_connect_at_default_baud();
+    Nextion::_switch_to_operating_baud();
+  }
+  if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    Nextion::_current_nextion_state = nextion_state_t::RUNNING;
+    xSemaphoreGive(Nextion::_nextion_state_mutex);
+  }
+  if (xSemaphoreTake(Nextion::_uart_write_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    NextionWindow::start_locked();
+    xSemaphoreGive(Nextion::_uart_write_mutex);
+  } else {
+    ESP_LOGE("Nextion", "Failed to take _uart_write_mutex to restart the write window. Writes to the display will not be paced.");
+  }
+  ESP_LOGI("Nextion", "UART back from the terminal%s.", restart_display ? ", display power-cycled" : "");
+  Nextion::log_link_baud();
 }
 
 esp_err_t Nextion::start_update(uint32_t upload_baudrate, bool use_new_upload_protocol, uint64_t upload_file_size) {
@@ -848,8 +984,24 @@ esp_err_t Nextion::start_update(uint32_t upload_baudrate, bool use_new_upload_pr
     // Wait for panel to start
     vTaskDelay(pdMS_TO_TICKS(10000));
 
-    // Send command sequence to clear NSPanel buffer
     uint8_t command_end_sequence[3] = {0xFF, 0xFF, 0xFF};
+    // A TFT's startup code sets the display's baud rate, and some leave it at 9600 (nspanel-terminal's
+    // terminal TFTs do), where nothing below would be heard. Ask such a display, at 9600, to move to
+    // the link's rate until it is next reset. baud=, not bauds=: nothing is saved in the display. One at
+    // the link's rate already sees only noise, which the reset sequence below clears.
+    const uint32_t link_baud = Nextion::_link_baud;
+    if (link_baud != 9600 && uart_set_baudrate(UART_NUM_2, 9600) == ESP_OK) {
+      std::string baud_command = "baud=" + std::to_string(link_baud);
+      uart_write_bytes(UART_NUM_2, command_end_sequence, sizeof(command_end_sequence));
+      uart_write_bytes(UART_NUM_2, baud_command.c_str(), baud_command.length());
+      uart_write_bytes(UART_NUM_2, command_end_sequence, sizeof(command_end_sequence));
+      uart_wait_tx_done(UART_NUM_2, pdMS_TO_TICKS(500));
+      vTaskDelay(pdMS_TO_TICKS(100));
+      uart_set_baudrate(UART_NUM_2, link_baud);
+      vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    // Send command sequence to clear NSPanel buffer
     uart_write_bytes(UART_NUM_2, "DRAKJHSUYDGBNCJHGJKSHBDN", strlen("DRAKJHSUYDGBNCJHGJKSHBDN"));
     uart_write_bytes(UART_NUM_2, command_end_sequence, sizeof(command_end_sequence));
     vTaskDelay(pdMS_TO_TICKS(50));

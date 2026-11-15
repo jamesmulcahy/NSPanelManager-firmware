@@ -5,6 +5,7 @@
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
 #include <LoadingPage.hpp>
+#include <LvglUi.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -30,6 +31,8 @@ void InterfaceManager::init() {
     ESP_LOGE("InterfaceManager", "Failed to initialize Nextion display. Will not continue with InterfaceManager!");
     return;
   }
+  // On an nspanel-terminal TFT, LVGL draws every page (before the first one is shown).
+  LvglUi::init();
 
   std::string base_topic = "nspanel/";
   base_topic.append(WiFiManager::mac_string());
@@ -482,7 +485,9 @@ void InterfaceManager::_nspm_configmanager_event_handler(void *arg, esp_event_ba
 
     std::shared_ptr<NSPanelConfig> config;
     if (NSPM_ConfigManager::get_config(&config) == ESP_OK) [[likely]] {
-      if (InterfaceManager::_nspm_cur_config == nullptr || InterfaceManager::_nspm_cur_config->screensaver_activation_timeout != config->screensaver_activation_timeout) {
+      // With LVGL as the UI there is no HMI timer: LvglUi reads the timeout from the config itself.
+      if (!LvglUi::active() &&
+          (InterfaceManager::_nspm_cur_config == nullptr || InterfaceManager::_nspm_cur_config->screensaver_activation_timeout != config->screensaver_activation_timeout)) {
         if (Nextion::set_timer_value(GUI_HOME_PAGE::timer_screensaver_name, config->screensaver_activation_timeout, pdMS_TO_TICKS(250)) != ESP_OK) {
           ESP_LOGE("InterfaceManager", "Failed to update timer value for screensaver timeout.");
         }

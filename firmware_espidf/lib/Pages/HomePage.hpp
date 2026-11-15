@@ -114,6 +114,17 @@ private:
    */
   static void _special_mode_timeout_timer_callback(void *arg);
 
+  /**
+   * With LVGL as the UI (LvglUi): draw the home page with HomeView from RoomManager's status. Any task.
+   */
+  static void _lvgl_render();
+
+  /**
+   * A HomeView action (HomeView::Action as int, keeping LVGL out of this header) on LvglUi's
+   * task: what the Nextion touch handler does for the matching component.
+   */
+  static void _lvgl_action(int action, int32_t value);
+
   // When pressing something, what are we supposed to affect?
   static inline HomePageAffectMode _current_affect_mode = HomePageAffectMode::ROOM;
 

@@ -2,6 +2,9 @@
 #include <GUI_data.hpp>
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglText.hpp>
+#include <LvglUi.hpp>
+#include <ScreensaverView.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -327,6 +330,7 @@ void ScreensaverPage::_update_displayed_time() {
   // Screensaver without weather
   Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_screensaver_minimal_current_time, ScreensaverPage::_current_time.get().c_str(), 250);
   Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_screensaver_minimal_am_pm_name, ScreensaverPage::_am_pm_string.get().c_str(), 250);
+  ScreensaverPage::_lvgl_render();
 }
 
 void ScreensaverPage::_update_displayed_date() {
@@ -339,6 +343,7 @@ void ScreensaverPage::_update_displayed_date() {
   } else {
     ESP_LOGE("ScreensaverPage", "Unknown screensaver mode %d while processing new date from MQTT.", (int)ScreensaverPage::_current_screensaver_mode.get());
   }
+  ScreensaverPage::_lvgl_render();
 }
 
 void ScreensaverPage::_update_displayed_temperature() {
@@ -351,6 +356,7 @@ void ScreensaverPage::_update_displayed_temperature() {
   } else {
     ESP_LOGE("ScreensaverPage", "Unknown screensaver mode %d while processing new date from MQTT.", (int)ScreensaverPage::_current_screensaver_mode.get());
   }
+  ScreensaverPage::_lvgl_render();
 }
 
 void ScreensaverPage::_task_update_displayed_weather_data(void *param) {
@@ -397,6 +403,7 @@ void ScreensaverPage::_task_update_displayed_weather_data(void *param) {
     }
 
     xSemaphoreGive(ScreensaverPage::_weather_update_data_mutex);
+    ScreensaverPage::_lvgl_render();
   } else {
     ESP_LOGE("ScreensaverPage", "Failed to get _weather_update_data_mutex when updating display.");
   }
@@ -485,6 +492,59 @@ void ScreensaverPage::_go_to_nextion_page() {
     break;
   }
 
-  vTaskDelay(pdMS_TO_TICKS(50)); // Wait for screen to go to page.
+  if (!LvglUi::active()) {
+    vTaskDelay(pdMS_TO_TICKS(50)); // Wait for screen to go to page.
+  }
   ScreensaverPage::_update_display_brightness();
+  ScreensaverPage::_lvgl_render();
+}
+
+void ScreensaverPage::_lvgl_render() {
+  if (!LvglUi::active() || !ScreensaverPage::showing()) {
+    return;
+  }
+  std::shared_ptr<NSPanelConfig> config;
+  if (NSPM_ConfigManager::get_config(&config) != ESP_OK || !config) [[unlikely]] {
+    return;
+  }
+  NSPanelConfig__NSPanelScreensaverMode mode = ScreensaverPage::_current_screensaver_mode.get();
+  ScreensaverState state;
+  state.weather = mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND || mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITHOUT_BACKGROUND;
+  state.background = mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND || mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITH_BACKGROUND;
+  // "No screensaver" turns the backlight off (_update_display_brightness()); draw the plain clock behind it.
+  state.time = LvglText::utf8(ScreensaverPage::_current_time.get());
+  state.am_pm = config->clock_us_style ? LvglText::utf8(ScreensaverPage::_am_pm_string.get()) : "";
+  state.date = LvglText::utf8(ScreensaverPage::_current_date.get());
+  state.show_inside = config->show_screensaver_inside_temperature;
+  // The weather screensaver always shows the outside temperature; the date-time one when asked.
+  state.show_outside = state.weather || config->show_screensaver_outside_temperature;
+  std::string inside = LvglText::utf8(ScreensaverPage::_current_temperature.get());
+  if (!inside.empty() && inside.find("\xC2\xB0") == std::string::npos) {
+    inside += config->use_fahrenheit ? "\xC2\xB0" "F" : "\xC2\xB0" "C"; // The HMI drew the unit as an icon.
+  }
+  state.inside = inside;
+
+  std::shared_ptr<NSPanelWeatherUpdate> weather;
+  if (ScreensaverPage::_weather_update_data_mutex != NULL && xSemaphoreTake(ScreensaverPage::_weather_update_data_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
+    weather = ScreensaverPage::_weather_update_data;
+    xSemaphoreGive(ScreensaverPage::_weather_update_data_mutex);
+  }
+  if (weather) {
+    state.outside_icon = LvglText::weather_icon(weather->current_weather_icon);
+    state.outside = LvglText::utf8(weather->current_temperature_string);
+    state.max_min = LvglText::utf8(weather->current_maxmin_temperature);
+    state.rain = LvglText::utf8(weather->current_precipitation_string);
+    state.wind = LvglText::utf8(weather->current_wind_string);
+    state.sunrise = LvglText::utf8(weather->sunrise_string);
+    state.sunset = LvglText::utf8(weather->sunset_string);
+    for (size_t i = 0; i < weather->n_forecast_items && i < (size_t)ScreensaverState::FORECAST_DAYS; i++) {
+      const NSPanelWeatherUpdate__ForecastItem *item = weather->forecast_items[i];
+      state.forecast[i].day = LvglText::utf8(item->display_string);
+      state.forecast[i].icon = LvglText::weather_icon(item->weather_icon);
+      state.forecast[i].max_min = LvglText::utf8(item->temperature_maxmin_string);
+      state.forecast[i].rain = LvglText::utf8(item->precipitation_string);
+      state.forecast[i].wind = LvglText::utf8(item->wind_string);
+    }
+  }
+  LvglUi::show(LvglUi::View::SCREENSAVER, ScreensaverView::build, [state]() { ScreensaverView::show(state); });
 }

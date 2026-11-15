@@ -1,6 +1,9 @@
 #include <ConfigManager.hpp>
 #include <GUI_data.hpp>
+#include <EntitiesView.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglText.hpp>
+#include <LvglUi.hpp>
 #include <MediaPlayerPage.hpp>
 #include <MediaSourcePage.hpp>
 #include <Nextion.hpp>
@@ -29,6 +32,11 @@ void MediaSourcePage::show(std::string media_player_state_topic, bool source_pla
   MediaSourcePage::_page_type = MediaSourcePage::_sources.size() <= 4 ? 4 : 8;
 
   handlers->add(NEXTION_EVENT, ESP_EVENT_ANY_ID, &MediaSourcePage::_handle_nextion_event);
+  if (LvglUi::active()) {
+    EntitiesView::on_action = [](EntitiesView::Action action, int32_t slot) {
+      LvglUi::defer([action, slot]() { MediaSourcePage::_lvgl_action((int)action, slot); });
+    };
+  }
   MediaSourcePage::_update_display();
 }
 
@@ -38,6 +46,27 @@ void MediaSourcePage::unshow() {
 }
 
 void MediaSourcePage::_update_display() {
+  if (LvglUi::active()) {
+    if (MediaSourcePage::_page_type == 0) {
+      return;
+    }
+    // EntitiesView with text-only slots, the current source in amber.
+    EntitiesState state;
+    state.header = MediaSourcePage::_showing_source_player ? "Favorites" : "Input";
+    state.size = MediaSourcePage::_page_type;
+    state.can_prev = MediaSourcePage::_first_source_index > 0;
+    state.can_next = MediaSourcePage::_first_source_index + MediaSourcePage::_page_type < MediaSourcePage::_sources.size();
+    for (size_t slot = 0; slot < MediaSourcePage::_page_type && slot < (size_t)EntitiesState::MAX_SLOTS; slot++) {
+      size_t index = MediaSourcePage::_first_source_index + slot;
+      if (index < MediaSourcePage::_sources.size()) {
+        state.slots[slot].empty = false;
+        state.slots[slot].name = LvglText::utf8(MediaSourcePage::_sources[index]);
+        state.slots[slot].on = MediaSourcePage::_sources[index] == MediaSourcePage::_current_source;
+      }
+    }
+    LvglUi::show(LvglUi::View::ENTITIES, EntitiesView::build, [state]() { EntitiesView::show(state); });
+    return;
+  }
   switch (MediaSourcePage::_page_type) {
   case 4:
     Nextion::go_to_page(GUI_ITEMS4_PAGE::page_name, 1000);
@@ -147,4 +176,36 @@ void MediaSourcePage::_select_source(size_t source_index) {
 
 void MediaSourcePage::_return_to_media_player() {
   MediaPlayerPage::return_to_media_player(MediaSourcePage::_media_player_state_topic);
+}
+
+void MediaSourcePage::_lvgl_action(int action, int32_t slot) {
+  if (MediaSourcePage::_page_type == 0) {
+    return; // Left the page before the action got here.
+  }
+  switch ((EntitiesView::Action)action) {
+  case EntitiesView::Action::SLOT: {
+    size_t index = MediaSourcePage::_first_source_index + slot;
+    if (slot >= 0 && index < MediaSourcePage::_sources.size()) {
+      MediaSourcePage::_select_source(index);
+    }
+    break;
+  }
+  case EntitiesView::Action::BACK:
+    MediaSourcePage::_return_to_media_player();
+    break;
+  case EntitiesView::Action::PREV:
+    if (MediaSourcePage::_first_source_index >= MediaSourcePage::_page_type) {
+      MediaSourcePage::_first_source_index -= MediaSourcePage::_page_type;
+      MediaSourcePage::_update_display();
+    }
+    break;
+  case EntitiesView::Action::NEXT:
+    if (MediaSourcePage::_first_source_index + MediaSourcePage::_page_type < MediaSourcePage::_sources.size()) {
+      MediaSourcePage::_first_source_index += MediaSourcePage::_page_type;
+      MediaSourcePage::_update_display();
+    }
+    break;
+  default:
+    break;
+  }
 }
