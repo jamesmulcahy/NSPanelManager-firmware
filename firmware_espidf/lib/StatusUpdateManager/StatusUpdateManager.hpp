@@ -126,6 +126,9 @@ private:
   static inline std::string _link_baud_warning_text;
   // Holds the text _status_report.ip_address points at while the report is packed.
   static inline std::string _ip_address_text;
+  // The LVGL look in the report (empty outside LVGL mode), kept for the same reason.
+  static inline std::string _lvgl_theme_text;
+  static inline std::string _lvgl_background_text;
   static inline NSPanelWarning *_warnings[1];
 
 #if defined(BOARD_CUSTOM)

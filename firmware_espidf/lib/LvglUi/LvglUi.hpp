@@ -38,8 +38,20 @@ public:
    */
   static bool active() { return LvglUi::_active; }
 
+  /**
+   * What the display shows, as init() found it, for the status report (the values of
+   * NSPanelStatusReport.NSPanelDisplayMode). UNKNOWN until init() has run.
+   */
+  enum class DisplayMode : uint8_t {
+    UNKNOWN = 0,
+    NEXTION = 1,       // NSPM's Nextion pages
+    LVGL = 2,          // LVGL draws through a terminal TFT
+    TERMINAL_IDLE = 3, // A terminal TFT, but LVGL is off (lvgl_ui) or did not start: the TFT's waiting page
+  };
+  static DisplayMode display_mode() { return LvglUi::_display_mode; }
+
   // The views show() can host; one is built on the pages screen at a time.
-  enum class View : uint8_t { NONE, PLACEHOLDER, SCREENSAVER, ENTITIES, MEDIA_PLAYER, HOME, LIGHT, THERMOSTAT, COVER, MENU, CLEAN_SCREEN };
+  enum class View : uint8_t { NONE, PLACEHOLDER, SCREENSAVER, ENTITIES, MEDIA_PLAYER, HOME, LIGHT, THERMOSTAT, COVER, MENU, CLEAN_SCREEN, LOOK };
 
   /**
    * From any task: show `view`, built with `build` if another view is shown, then run `apply` (which
@@ -95,6 +107,7 @@ private:
   static void _rebuild(); // GUI task: build the last view again and apply its last state
 
   static inline std::atomic<bool> _active = false;
+  static inline std::atomic<DisplayMode> _display_mode = DisplayMode::UNKNOWN;
   static inline std::atomic<bool> _suspended = false;
   static inline QueueHandle_t _work = NULL;
   // The last touch, or the last time the screen woke (esp_timer microseconds).
