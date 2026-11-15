@@ -19,6 +19,7 @@ private:
   static esp_err_t _handle_uri_get_available_networks(httpd_req_t *req);
   static esp_err_t _handle_uri_main_css(httpd_req_t *req);
   static esp_err_t _handle_uri_generate_204(httpd_req_t *req);
+  static esp_err_t _handle_uri_screenshot(httpd_req_t *req);
 
   /**
    * @brief Read a file from LittleFS and send response
@@ -90,5 +91,10 @@ private:
       .uri = "/generate204",
       .method = HTTP_GET,
       .handler = _handle_uri_generate_204,
+      .user_ctx = NULL};
+  static inline httpd_uri_t _uri_screenshot = {
+      .uri = "/screenshot",
+      .method = HTTP_GET,
+      .handler = _handle_uri_screenshot,
       .user_ctx = NULL};
 };

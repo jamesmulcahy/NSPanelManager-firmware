@@ -6,7 +6,12 @@ terminal touch samples (see fake_nextion.py). Without it these tests are skipped
 the suite runs against NSPM's own TFT as usual.
 """
 
+import io
+import struct
 import time
+import urllib.error
+import urllib.request
+import zlib
 
 import pytest
 
@@ -113,3 +118,142 @@ def test_all_rooms_switch_redraws_footer(lvgl_home):
     settle(lvgl_home.nextion)
     lvgl_home.nextion.screenshot("all-rooms")
     lvgl_home.panel.wait_for_log(r"Received new home page state update for 'All rooms' mode", timeout=30)
+
+
+# ---- GET /screenshot ---------------------------------------------------------------------------
+
+SCREENSHOT_TIMEOUT = 180  # QEMU: whatever is still due crosses the ~8 KB/s link first
+
+
+def get_screenshot(rig, fmt=None):
+    """(status, headers, body) of GET /screenshot[?format=fmt]."""
+    url = "http://127.0.0.1:%d/screenshot%s" % (rig.panel.web_port, "" if fmt is None else "?format=" + fmt)
+    try:
+        with urllib.request.urlopen(url, timeout=SCREENSHOT_TIMEOUT) as r:
+            return r.status, r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read()
+
+
+def upright_rgb565(nextion):
+    """The receiver's framebuffer turned upright (as screenshots show it), as RGB565 values."""
+    import numpy as np
+    fb = nextion.framebuffer
+    pixels = np.frombuffer(nextion.terminal_rgb565(), dtype=">u2").reshape(fb.height, fb.width)
+    return np.ascontiguousarray(np.rot90(pixels, k=-(nextion.rotation // 90) % 4)).astype(np.uint16)
+
+
+def widen(rgb565):
+    """RGB565 values as 8-bit RGB, widened as the firmware's PNG and nextion-tools' snapshots do."""
+    import numpy as np
+    r, g, b = (rgb565 >> 11) & 31, (rgb565 >> 5) & 63, rgb565 & 31
+    return np.stack([(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)], axis=-1).astype(np.uint8)
+
+
+def narrow(rgb):
+    """8-bit RGB back to RGB565 values (exact for any widening that keeps the top bits)."""
+    import numpy as np
+    p = rgb.astype(np.uint16)
+    return (p[..., 0] >> 3) << 11 | (p[..., 1] >> 2) << 5 | p[..., 2] >> 3
+
+
+def png_chunks(data):
+    """The PNG's chunks as (type, data), checking the signature and every CRC on the way."""
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    chunks, i = [], 8
+    while i < len(data):
+        (size,) = struct.unpack(">I", data[i:i + 4])
+        kind, body = data[i + 4:i + 8], data[i + 8:i + 8 + size]
+        (crc,) = struct.unpack(">I", data[i + 8 + size:i + 12 + size])
+        assert crc == zlib.crc32(kind + body), "bad CRC on %r" % kind
+        chunks.append((kind, body))
+        i += 12 + size
+    assert chunks[0][0] == b"IHDR" and chunks[-1] == (b"IEND", b"")
+    return chunks
+
+
+def capture_matching_display(rig, fmt, attempts=3):
+    """A screenshot taken while the display held still, with the display's pixels from just
+    before and after it (a minute ticking over on the clock can change the screen meanwhile)."""
+    for _ in range(attempts):
+        settle(rig.nextion)
+        before = upright_rgb565(rig.nextion)
+        status, headers, body = get_screenshot(rig, fmt)
+        assert status == 200, body
+        if (upright_rgb565(rig.nextion) == before).all():
+            return headers, body, before
+    pytest.fail("the display kept changing during the screenshot")
+
+
+def test_screenshot_raw_matches_the_display(lvgl_home):
+    import numpy as np
+    headers, body, display = capture_matching_display(lvgl_home, "raw")
+    assert headers["Content-Type"] == "application/octet-stream"
+    assert headers["X-Pixel-Format"] == "RGB565LE"
+    assert headers["Cache-Control"] == "no-store"
+    w, h = int(headers["X-Width"]), int(headers["X-Height"])
+    assert (w, h) == (320, 480) == (display.shape[1], display.shape[0])
+    assert headers["X-Display-Streaming"] == "1"
+    assert int(headers["X-Capture-Ms"]) > 0
+    assert len(body) == w * h * 2
+    shot = np.frombuffer(body, dtype="<u2").reshape(h, w)
+    mismatched = int((shot != display).sum())
+    assert mismatched == 0, "%d of %d pixels differ from the display" % (mismatched, w * h)
+
+
+def test_screenshot_png_and_bmp_decode_to_the_display(lvgl_home):
+    import numpy as np
+    from PIL import Image
+
+    headers, body, display = capture_matching_display(lvgl_home, None)  # PNG is the default
+    assert headers["Content-Type"] == "image/png"
+    assert headers["Content-Disposition"] == 'inline; filename="%s.png"' % lvgl_home.hostname
+    chunks = png_chunks(body)
+    assert [k for k, _ in chunks].count(b"IDAT") >= 1
+    with Image.open(io.BytesIO(body)) as im:
+        assert im.mode == "RGB" and im.size == (320, 480)
+        png = np.asarray(im)
+    assert (png == widen(display)).all()
+    # What nextion-tools shows for the same screen, widened its own way.
+    assert (png == lvgl_home.nextion.terminal_snapshot()).all()
+    # Kept with the test's logs, as samples of each format.
+    sample_dir = lvgl_home.panel.workdir
+    with open("%s/screenshot.png" % sample_dir, "wb") as f:
+        f.write(body)
+
+    headers, body, display = capture_matching_display(lvgl_home, "bmp")
+    assert headers["Content-Type"] == "image/bmp"
+    assert len(body) == 66 + 320 * 480 * 2
+    with Image.open(io.BytesIO(body)) as im:
+        assert im.size == (320, 480)
+        bmp = np.asarray(im.convert("RGB"))
+    assert (narrow(bmp) == display).all()
+    with open("%s/screenshot.bmp" % sample_dir, "wb") as f:
+        f.write(body)
+
+
+def test_screenshot_leaves_the_ui_responsive(lvgl_home):
+    from nspm_qemu.proto import nspanel as pb
+    status, _, _ = get_screenshot(lvgl_home, "png")
+    assert status == 200
+    # Right after it: a tap still lands, and the display still takes what changes.
+    mark = lvgl_home.manager.command_mark()
+    lvgl_home.nextion.tap_screen(*US_CEILING_TILE)
+    cmd = lvgl_home.manager.wait_for_command(lambda c: c.WhichOneof("CommandData") == "first_page_turn_on", since=mark)
+    assert cmd.first_page_turn_on.affect_lights == pb.NSPanelMQTTManagerCommand.CEILING_LIGHTS
+
+    before = region(lvgl_home.nextion, US_FOOTER_BOX)
+    lvgl_home.nextion.tap_screen(*US_MODE_ALL)
+    lvgl_home.nextion.wait_for(lambda n: (region(n, US_FOOTER_BOX) != before).any(), timeout=30,
+                               what="the mode switch redrawn after a screenshot")
+    # And the next screenshot shows that change too.
+    headers, body, display = capture_matching_display(lvgl_home, "raw")
+    import numpy as np
+    assert (np.frombuffer(body, dtype="<u2").reshape(480, 320) == display).all()
+    assert not lvgl_home.nextion.terminal.faults
+    lvgl_home.panel.wait_for_log(r"WebManager: Screenshot raw 320x480", timeout=10)
+
+
+def test_screenshot_rejects_an_unknown_format(booted):
+    status, headers, body = get_screenshot(booted, "jpeg")
+    assert status == 400 and b"png, bmp or raw" in body
