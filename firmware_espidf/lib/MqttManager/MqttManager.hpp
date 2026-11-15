@@ -2,6 +2,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <esp_timer.h>
 #include <mqtt_client.h>
 #include <atomic>
 #include <string>
@@ -56,21 +57,42 @@ public:
   static esp_err_t publish(std::string topic, const char *data, size_t data_length, bool retain);
 
   /**
-   * @brief Register event handler for MQTT events.
+   * @brief Register Handler for MQTT events, timed as Id (a PanelMetrics::MqttHandler) in
+   * nspanel_mqtt_handler_duration_seconds.
    * @param event_id: The MQTT event id to subscribe to.
-   * @param event_handler: The event handler callback to register
    * @param event_handler_arg: Any argument to the event handler.
    */
-  static esp_err_t register_handler(esp_mqtt_event_id_t event_id, esp_event_handler_t event_handler, void *event_handler_arg);
+  template <esp_event_handler_t Handler, int Id>
+  static esp_err_t register_handler(esp_mqtt_event_id_t event_id, void *event_handler_arg) {
+    return esp_mqtt_client_register_event(MqttManager::_mqtt_client, event_id, &MqttManager::_timed_handler<Handler, Id>, event_handler_arg);
+  }
 
   /**
-   * @brief Unregister event handler for MQTT events.
-   * @param event_id: The MQTT event id to subscribe to.
-   * @param event_handler: The event handler callback to register
+   * @brief Unregister a handler registered with register_handler<Handler, Id>().
+   * @param event_id: The MQTT event id it was registered for.
    */
-  static esp_err_t unregister_handler(esp_mqtt_event_id_t event_id, esp_event_handler_t event_handler);
+  template <esp_event_handler_t Handler, int Id>
+  static esp_err_t unregister_handler(esp_mqtt_event_id_t event_id) {
+    return esp_mqtt_client_unregister_event(MqttManager::_mqtt_client, event_id, &MqttManager::_timed_handler<Handler, Id>);
+  }
 
 private:
+  /**
+   * Runs Handler and records how long it held the MQTT client task. esp_event identifies a handler by
+   * its function pointer, so each (Handler, Id) gets its own wrapper function: registering and
+   * unregistering the same pair always name the same wrapper, with nothing stored and no lock taken.
+   * Recording is relaxed atomics only, as it runs on the MQTT client task.
+   */
+  template <esp_event_handler_t Handler, int Id>
+  static void _timed_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+    int64_t start_us = esp_timer_get_time();
+    Handler(arg, event_base, event_id, event_data);
+    MqttManager::_record_handler_duration(Id, esp_timer_get_time() - start_us);
+  }
+  // In MqttManager.cpp, so this header does not need PanelMetrics.hpp (PlatformIO's LDF does not
+  // follow includes made from another library's headers).
+  static void _record_handler_duration(int id, int64_t elapsed_us);
+
   /**
    * @brief Handle MQTT events.
    */
@@ -95,9 +117,15 @@ private:
   static void _task_manage_subscriptions(void *param);
 
   /**
-   * Handle a SUBACK (MQTT_EVENT_SUBSCRIBED) for the given message id. Must be called with _subscriptions_mutex held.
+   * Handle a SUBACK (MQTT_EVENT_SUBSCRIBED) for the given message id, received at received_ms. Must be called with _subscriptions_mutex held.
    */
-  static void _handle_suback(int msg_id, bool failed);
+  static void _handle_suback(int msg_id, bool failed, int64_t received_ms);
+
+  /**
+   * Log how long the broker took to deliver the retained value of a newly subscribed topic, the first time
+   * one arrives after subscribe() or a reconnect. Called on the MQTT client task for every MQTT_EVENT_DATA.
+   */
+  static void _log_subscribe_latency(esp_mqtt_event_handle_t event);
 
   enum class SubscriptionState {
     PENDING,   // Needs a SUBSCRIBE sent (new, after reconnect, or after a failure).
@@ -112,6 +140,13 @@ private:
     int64_t sent_ms = 0;          // When the in-flight SUBSCRIBE was sent.
     int64_t next_attempt_ms = 0;  // Earliest time to send the next SUBSCRIBE (backoff after failures).
     uint8_t failures = 0;         // Consecutive failed attempts, used for backoff.
+
+    // Latency bookkeeping for _log_subscribe_latency(). Reset by subscribe() and on every reconnect.
+    int64_t requested_ms = 0;     // When subscribe() was called, or when the reconnect happened.
+    int64_t suback_ms = 0;        // When the SUBACK was received, 0 until then.
+    uint8_t attempts = 0;         // SUBSCRIBEs sent since requested_ms.
+    bool after_reconnect = false; // Resubscribed by a reconnect rather than asked for by subscribe().
+    bool retained_seen = false;   // A retained value has arrived since requested_ms, so there is nothing more to log.
   };
 
   /**

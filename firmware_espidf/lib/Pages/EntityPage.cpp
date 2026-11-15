@@ -11,6 +11,7 @@
 #include <ThermostatView.hpp>
 #include <MediaPlayerPage.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <Nextion.hpp>
 #include <Nextion_event.hpp>
@@ -26,7 +27,7 @@ void EntityPage::show(std::string state_topic) {
     EntityPage::_current_state_mutex = xSemaphoreCreateMutex();
   }
 
-  MqttManager::register_handler(MQTT_EVENT_ANY, &EntityPage::_handle_mqtt_event, NULL);
+  MqttManager::register_handler<&EntityPage::_handle_mqtt_event, PanelMetrics::HANDLER_ENTITY_PAGE>(MQTT_EVENT_ANY, NULL);
 
   EntityPage::_current_entity_mqtt_topic = state_topic;
   MqttManager::subscribe(EntityPage::_current_entity_mqtt_topic);
@@ -47,7 +48,7 @@ void EntityPage::show(std::string state_topic) {
 
 void EntityPage::unshow() {
   CoverPage::unshow();
-  MqttManager::unregister_handler(MQTT_EVENT_ANY, &EntityPage::_handle_mqtt_event);
+  MqttManager::unregister_handler<&EntityPage::_handle_mqtt_event, PanelMetrics::HANDLER_ENTITY_PAGE>(MQTT_EVENT_ANY);
   // The Nextion handler stops with the page: InterfaceManager only dispatches to the current page.
   if (!EntityPage::_current_entity_mqtt_topic.empty()) {
     MqttManager::unsubscribe(EntityPage::_current_entity_mqtt_topic);

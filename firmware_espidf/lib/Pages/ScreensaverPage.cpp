@@ -6,6 +6,7 @@
 #include <LvglUi.hpp>
 #include <ScreensaverView.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <Nextion.hpp>
@@ -26,7 +27,7 @@ void ScreensaverPage::init() {
   esp_log_level_set("ScreensaverPage", ConfigManager::log_level);
   ScreensaverPage::_weather_update_data_mutex = xSemaphoreCreateMutex();
 
-  MqttManager::register_handler(MQTT_EVENT_ANY, ScreensaverPage::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<ScreensaverPage::_mqtt_event_handler, PanelMetrics::HANDLER_SCREENSAVER_PAGE>(MQTT_EVENT_ANY, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, ESP_EVENT_ANY_ID, ScreensaverPage::_nspm_config_event_handler, NULL);
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, ScreensaverPage::_new_temperature_event, NULL);
 

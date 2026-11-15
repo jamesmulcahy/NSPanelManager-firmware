@@ -1,4 +1,5 @@
 #include <ConfigManager.hpp>
+#include <PanelMetrics.hpp>
 #include <WiFiManager.hpp>
 #include <esp_event.h>
 #include <esp_log.h>
@@ -190,6 +191,77 @@ void WiFiManager::start_ap(std::string *ssid) {
   WiFiManager::_ap_active = true;
 }
 
+// Bucket a wifi_err_reason_t (IDF 5.5 esp_wifi_types_generic.h) for nspanel_wifi_disconnects_total.
+// Some codes have two names in this IDF; the bucket follows the current (non-deprecated) one.
+//   beacon_timeout:  BEACON_TIMEOUT (200)
+//   no_ap_found:     NO_AP_FOUND (201), NO_AP_FOUND_W_COMPATIBLE_SECURITY (210),
+//                    NO_AP_FOUND_IN_AUTHMODE_THRESHOLD (211), NO_AP_FOUND_IN_RSSI_THRESHOLD (212)
+//   auth_fail:       AUTH_EXPIRE (2), NOT_AUTHED / CLASS2_FRAME_FROM_NONAUTH_STA (6), ASSOC_NOT_AUTHED (9),
+//                    MIC_FAILURE (14), 4WAY_HANDSHAKE_TIMEOUT (15), GROUP_KEY_UPDATE_TIMEOUT (16),
+//                    IE_IN_4WAY_DIFFERS (17), GROUP_CIPHER_INVALID .. CIPHER_SUITE_REJECTED (18-24),
+//                    BAD_CIPHER_OR_AKM (29), INVALID_PMKID (49), AUTH_FAIL (202), HANDSHAKE_TIMEOUT (204),
+//                    SA_QUERY_TIMEOUT (209)
+//   assoc_fail:      ASSOC_TOOMANY (5), NOT_ASSOCED / CLASS3_FRAME_FROM_NONASSOC_STA (7),
+//                    DISASSOC_PWRCAP_BAD (10), DISASSOC_SUPCHAN_BAD (11), IE_INVALID (13), ASSOC_FAIL (203),
+//                    ASSOC_COMEBACK_TIME_TOO_LONG (208)
+//   ap_disassoc:     AUTH_LEAVE (3), DISASSOC_DUE_TO_INACTIVITY / ASSOC_EXPIRE (4), ASSOC_LEAVE (8),
+//                    BSS_TRANSITION_DISASSOC (12), SSP_REQUESTED_DISASSOC (27), PEER_INITIATED (46),
+//                    AP_INITIATED (47)
+//   connection_fail: CONNECTION_FAIL (205)
+//   other:           everything else (UNSPECIFIED, TIMEOUT, AP_TSF_RESET, ROAMING, ...)
+static PanelMetrics::WifiDisconnectReason wifi_disconnect_reason(uint8_t reason) {
+  using namespace PanelMetrics;
+  switch (reason) {
+  case WIFI_REASON_BEACON_TIMEOUT:
+    return WIFI_DISCONNECT_BEACON_TIMEOUT;
+  case WIFI_REASON_NO_AP_FOUND:
+  case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+  case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+  case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+    return WIFI_DISCONNECT_NO_AP_FOUND;
+  case WIFI_REASON_AUTH_EXPIRE:
+  case WIFI_REASON_CLASS2_FRAME_FROM_NONAUTH_STA:
+  case WIFI_REASON_ASSOC_NOT_AUTHED:
+  case WIFI_REASON_MIC_FAILURE:
+  case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+  case WIFI_REASON_GROUP_KEY_UPDATE_TIMEOUT:
+  case WIFI_REASON_IE_IN_4WAY_DIFFERS:
+  case WIFI_REASON_GROUP_CIPHER_INVALID:
+  case WIFI_REASON_PAIRWISE_CIPHER_INVALID:
+  case WIFI_REASON_AKMP_INVALID:
+  case WIFI_REASON_UNSUPP_RSN_IE_VERSION:
+  case WIFI_REASON_INVALID_RSN_IE_CAP:
+  case WIFI_REASON_802_1X_AUTH_FAILED:
+  case WIFI_REASON_CIPHER_SUITE_REJECTED:
+  case WIFI_REASON_BAD_CIPHER_OR_AKM:
+  case WIFI_REASON_INVALID_PMKID:
+  case WIFI_REASON_AUTH_FAIL:
+  case WIFI_REASON_HANDSHAKE_TIMEOUT:
+  case WIFI_REASON_SA_QUERY_TIMEOUT:
+    return WIFI_DISCONNECT_AUTH_FAIL;
+  case WIFI_REASON_ASSOC_TOOMANY:
+  case WIFI_REASON_CLASS3_FRAME_FROM_NONASSOC_STA:
+  case WIFI_REASON_DISASSOC_PWRCAP_BAD:
+  case WIFI_REASON_DISASSOC_SUPCHAN_BAD:
+  case WIFI_REASON_IE_INVALID:
+  case WIFI_REASON_ASSOC_FAIL:
+  case WIFI_REASON_ASSOC_COMEBACK_TIME_TOO_LONG:
+    return WIFI_DISCONNECT_ASSOC_FAIL;
+  case WIFI_REASON_AUTH_LEAVE:
+  case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY:
+  case WIFI_REASON_ASSOC_LEAVE:
+  case WIFI_REASON_BSS_TRANSITION_DISASSOC:
+  case WIFI_REASON_SSP_REQUESTED_DISASSOC:
+  case WIFI_REASON_PEER_INITIATED:
+  case WIFI_REASON_AP_INITIATED:
+    return WIFI_DISCONNECT_AP_DISASSOC;
+  case WIFI_REASON_CONNECTION_FAIL:
+    return WIFI_DISCONNECT_CONNECTION_FAIL;
+  default:
+    return WIFI_DISCONNECT_OTHER;
+  }
+}
+
 void WiFiManager::_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
   if (event_base == WIFI_EVENT) {
     switch (event_id) {
@@ -197,6 +269,8 @@ void WiFiManager::_event_handler(void *arg, esp_event_base_t event_base, int32_t
       esp_wifi_connect(); // WiFi station started, start trying to connect to configured wifi.
       break;
     case WIFI_EVENT_STA_DISCONNECTED:
+      // One relaxed atomic add: this runs on the default loop, ahead of the esp_wifi_connect() below.
+      PanelMetrics::wifi_disconnects[wifi_disconnect_reason(((wifi_event_sta_disconnected_t *)event_data)->reason)].add();
       ESP_LOGI("WiFiManager", "Lost connection to Wifi, will try to reconnect.");
       WiFiManager::_connected = false;
       esp_wifi_connect(); // We lost connection, try to reconnect.
@@ -338,9 +412,11 @@ void WiFiManager::_apply_power_save() {
     esp_err_t result = esp_wifi_set_ps(low_latency ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
     if (result == ESP_OK) {
       WiFiManager::_applied_low_latency = wanted;
+      PanelMetrics::wifi_power_save_applied(low_latency);
       ESP_LOGD("WiFiManager", "Wi-Fi power save set to %s.", low_latency ? "none (low latency)" : "modem sleep (power saving)");
     } else {
       WiFiManager::_applied_low_latency = -1; // Try again on the next call.
+      PanelMetrics::wifi_power_save_failed();
       ESP_LOGW("WiFiManager", "Failed to set Wi-Fi power save to %s: %s", low_latency ? "none" : "modem sleep", esp_err_to_name(result));
     }
   }

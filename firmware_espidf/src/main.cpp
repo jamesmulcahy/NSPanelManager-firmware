@@ -10,12 +10,14 @@
 #include <NSPM_version.hpp>
 #include <Nextion.hpp>
 #include <PanelClock.hpp>
+#include <PanelMetrics.hpp>
 #include <RoomManager.hpp>
 #include <StatusUpdateManager.hpp>
 #include <UpdateManager.hpp>
 #include <WebManager.hpp>
 #include <WiFiManager.hpp>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <algorithm>
 #include <atomic>
 #include <nvs_flash.h>
@@ -90,6 +92,7 @@ int custom_log_vprintf(const char *fmt, va_list args) {
 
   // This runs on whichever task logs, including the MQTT client task while it holds esp-mqtt's lock,
   // so it must never wait: not on the serial port, and not on the queue.
+  int64_t start_us = esp_timer_get_time();
   char *buffer = NULL;
   int len = vasprintf(&buffer, fmt, args);
   if (len != -1) {
@@ -98,7 +101,9 @@ int custom_log_vprintf(const char *fmt, va_list args) {
     // else to go (not connected, so it cannot reach the manager), unless configured otherwise.
     ConfigManager::SerialLogMode serial_log = ConfigManager::serial_log;
     if (serial_log == ConfigManager::SerialLogMode::ALWAYS || (serial_log == ConfigManager::SerialLogMode::AUTO && !connected)) {
+      int64_t serial_start_us = esp_timer_get_time();
       fputs(buffer, stdout);
+      PanelMetrics::log_serial_write_duration.observe_us(esp_timer_get_time() - serial_start_us);
     }
 
     if (!connected) {
@@ -106,8 +111,12 @@ int custom_log_vprintf(const char *fmt, va_list args) {
     } else if (xQueueSend(publish_mqtt_log_messages_queue, &buffer, 0) != pdTRUE) {
       free(buffer);
       dropped_log_lines++;
+      PanelMetrics::log_lines_dropped.add(); // dropped_log_lines is reset when reported; this one is a running total.
+    } else {
+      PanelMetrics::log_queue_high_water.set_max(uxQueueMessagesWaiting(publish_mqtt_log_messages_queue));
     }
   }
+  PanelMetrics::log_call_duration.observe_us(esp_timer_get_time() - start_us);
 
   return len;
 }

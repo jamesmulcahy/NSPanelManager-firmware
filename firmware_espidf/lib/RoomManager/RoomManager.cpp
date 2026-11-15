@@ -2,6 +2,7 @@
 #include "RoomManager.hpp"
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <RoomManager_event.hpp>
@@ -31,7 +32,7 @@ void RoomManager::init() {
   esp_event_loop_create(&RoomManager::_local_event_loop_args, &RoomManager::_local_event_loop);
 
   // Hook into MQTT events
-  MqttManager::register_handler(MQTT_EVENT_ANY, RoomManager::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<RoomManager::_mqtt_event_handler, PanelMetrics::HANDLER_ROOM_MANAGER>(MQTT_EVENT_ANY, NULL);
   // MqttManager::register_handler(MQTT_EVENT_CONNECTED, RoomManager::_mqtt_event_handler_connected, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, &RoomManager::_event_handler, NULL);
 }

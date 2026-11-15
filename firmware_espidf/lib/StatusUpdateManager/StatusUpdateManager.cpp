@@ -8,7 +8,9 @@
 #include <NSPM_ConfigManager_event.hpp>
 #include <StatusUpdateManager.hpp>
 #include <StatusUpdateManager_events.hpp>
+#include <TimedEspTimer.hpp>
 #include <UpdateManager_event.hpp>
+#include <WebManager.hpp>
 #include <WiFiManager.hpp>
 #include <cmath>
 #include <esp_adc/adc_cali.h>
@@ -51,6 +53,9 @@ void StatusUpdateManager::init() {
   StatusUpdateManager::_status_report.md5_tft_gui = (char *)ConfigManager::md5_gui.c_str();
   nspanel_warning__init(&StatusUpdateManager::_link_baud_warning);
   StatusUpdateManager::_link_baud_warning.level = NSPANEL_WARNING_LEVEL__WARNING;
+  // Constant, so set once here rather than in _send_status_update. Repeated from register_request
+  // so a restarted manager relearns it from the next report.
+  StatusUpdateManager::_status_report.metrics_port = WebManager::HTTP_PORT;
 #if defined(BOARD_CUSTOM)
   StatusUpdateManager::_status_report.has_humidity = true;
   StatusUpdateManager::_status_report.has_pressure = true;
@@ -62,9 +67,8 @@ void StatusUpdateManager::init() {
   // Create status update timer
 
   esp_timer_create_args_t status_update_timer_args = {};
-  status_update_timer_args.callback = StatusUpdateManager::_send_status_update;
   status_update_timer_args.name = "status_update_timer";
-  esp_err_t err = esp_timer_create(&status_update_timer_args, &StatusUpdateManager::_status_update_timer);
+  esp_err_t err = timed_esp_timer_create<StatusUpdateManager::_send_status_update, PanelMetrics::TIMER_STATUS_UPDATE>(status_update_timer_args, &StatusUpdateManager::_status_update_timer);
   if (err != ESP_OK) {
     ESP_LOGE("StatusUpdateManager", "Failed to start ESP timer to periodically send status updates! Error: %s", esp_err_to_name(err));
   }

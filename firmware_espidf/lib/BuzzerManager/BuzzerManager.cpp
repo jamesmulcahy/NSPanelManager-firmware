@@ -1,10 +1,12 @@
 #include <BuzzerManager.hpp>
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <Nextion_event.hpp>
 #include <RtttlParser.hpp>
+#include <TimedEspTimer.hpp>
 #include <WiFiManager.hpp>
 #include <esp_log.h>
 
@@ -51,10 +53,9 @@ void BuzzerManager::init() {
   }
 
   esp_timer_create_args_t step_timer_args = {};
-  step_timer_args.callback = BuzzerManager::_step_timer_callback;
   step_timer_args.dispatch_method = ESP_TIMER_TASK;
   step_timer_args.name = "buzzer_step";
-  result = esp_timer_create(&step_timer_args, &BuzzerManager::_step_timer);
+  result = timed_esp_timer_create<BuzzerManager::_step_timer_callback, PanelMetrics::TIMER_BUZZER_STEP>(step_timer_args, &BuzzerManager::_step_timer);
   if (result != ESP_OK) [[unlikely]] {
     ESP_LOGE("BuzzerManager", "Failed to create buzzer step timer. Got error: %s", esp_err_to_name(result));
     return;
@@ -76,7 +77,7 @@ void BuzzerManager::init_mqtt() {
   }
 
   BuzzerManager::_raw_command_topic = std::string("nspanel/") + WiFiManager::mac_string() + "/buzzer_raw_command";
-  MqttManager::register_handler(MQTT_EVENT_DATA, &BuzzerManager::_mqtt_event_handler, NULL);
+  MqttManager::register_handler<&BuzzerManager::_mqtt_event_handler, PanelMetrics::HANDLER_BUZZER_MANAGER>(MQTT_EVENT_DATA, NULL);
   MqttManager::subscribe(BuzzerManager::_raw_command_topic);
 }
 

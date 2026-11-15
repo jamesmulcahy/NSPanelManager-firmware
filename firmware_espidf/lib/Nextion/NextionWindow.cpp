@@ -1,6 +1,7 @@
 #include <ConfigManager.hpp>
 #include <Nextion.hpp>
 #include <NextionWindow.hpp>
+#include <PanelMetrics.hpp>
 #include <Nextion_constans.hpp>
 #include <Nextion_event.hpp>
 #include <driver/uart.h>
@@ -133,8 +134,11 @@ void NextionWindow::wait_for_room(write_class kind) {
     xSemaphoreTake(NextionWindow::_room_sem, 1);
   }
 
+  int64_t waited_us = esp_timer_get_time() - start;
+  // Every write, waited or not, so the histogram's count is the writes and its buckets their waits.
+  PanelMetrics::nextion_window_wait[kind == write_class::BULK ? PanelMetrics::NEXTION_WRITE_BULK : PanelMetrics::NEXTION_WRITE_NORMAL].observe_us(waited ? waited_us : 0);
   if (waited) {
-    uint32_t waited_ms = (uint32_t)((esp_timer_get_time() - start) / 1000);
+    uint32_t waited_ms = (uint32_t)(waited_us / 1000);
     taskENTER_CRITICAL(&NextionWindow::_lock);
     NextionWindow::_stats.waits++;
     if (waited_ms > NextionWindow::_stats.wait_max_ms) {
@@ -142,6 +146,20 @@ void NextionWindow::wait_for_room(write_class kind) {
     }
     taskEXIT_CRITICAL(&NextionWindow::_lock);
   }
+}
+
+NextionWindow::stats_t NextionWindow::stats() {
+  taskENTER_CRITICAL(&NextionWindow::_lock);
+  stats_t stats = NextionWindow::_stats;
+  taskEXIT_CRITICAL(&NextionWindow::_lock);
+  return stats;
+}
+
+uint32_t NextionWindow::inflight_bytes() {
+  taskENTER_CRITICAL(&NextionWindow::_lock);
+  uint32_t inflight = NextionWindow::_inflight_bytes;
+  taskEXIT_CRITICAL(&NextionWindow::_lock);
+  return inflight;
 }
 
 void NextionWindow::write_locked(const std::string &command) {

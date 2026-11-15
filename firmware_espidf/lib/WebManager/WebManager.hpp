@@ -4,6 +4,10 @@
 
 class WebManager {
 public:
+  // TCP port the web server, and so GET /metrics, listens on. Advertised to the manager as
+  // metrics_port in register_request and in every status report.
+  static constexpr uint16_t HTTP_PORT = 80;
+
   /**
    * @brief Start the webserver task and register all URI endpoints
    */
@@ -20,6 +24,8 @@ private:
   static esp_err_t _handle_uri_main_css(httpd_req_t *req);
   static esp_err_t _handle_uri_generate_204(httpd_req_t *req);
   static esp_err_t _handle_uri_screenshot(httpd_req_t *req);
+  // Panel metrics in Prometheus text format, see PanelMetrics.hpp.
+  static esp_err_t _handle_uri_metrics(httpd_req_t *req);
 
   /**
    * @brief Read a file from LittleFS and send response
@@ -96,5 +102,10 @@ private:
       .uri = "/screenshot",
       .method = HTTP_GET,
       .handler = _handle_uri_screenshot,
+      .user_ctx = NULL};
+  static inline httpd_uri_t _uri_metrics = {
+      .uri = "/metrics",
+      .method = HTTP_GET,
+      .handler = _handle_uri_metrics,
       .user_ctx = NULL};
 };
