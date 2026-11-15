@@ -252,6 +252,10 @@ class FakeManager:
             raise_light_level_to_100_above=95,
         )
 
+    def send_command(self, command: str) -> None:
+        """A JSON command on the panel's MAC command topic, as the web UI's buttons send ("firmware_update", ...)."""
+        self.broker.publish("nspanel/%s/command" % self.panel_mac, json.dumps({"command": command}))
+
     def publish_online(self, online: bool = True) -> None:
         self.broker.publish(self.base + "/status/status", "online" if online else "offline", retain=True)
 

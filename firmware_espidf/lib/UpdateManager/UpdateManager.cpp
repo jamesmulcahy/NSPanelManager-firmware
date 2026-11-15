@@ -271,6 +271,10 @@ void UpdateManager::update_gui(void *param) {
   }
 
   WiFiManager::set_update_in_progress(false); // The update ended without a reboot.
+  // Give the screen back. Timeout 0 and back off here: never wait on the default loop's queue.
+  while (esp_event_post(UPDATEMANAGER_EVENT, updatemanager_event_t::UPDATE_ENDED_WITHOUT_REBOOT, NULL, 0, 0) != ESP_OK) {
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
   UpdateManager::_current_update_task = NULL;
 
   vTaskDelete(NULL);
@@ -330,6 +334,10 @@ void UpdateManager::update_firmware(void *param) {
   }
 
   WiFiManager::set_update_in_progress(false); // The update ended without a reboot.
+  // Give the screen back. Timeout 0 and back off here: never wait on the default loop's queue.
+  while (esp_event_post(UPDATEMANAGER_EVENT, updatemanager_event_t::UPDATE_ENDED_WITHOUT_REBOOT, NULL, 0, 0) != ESP_OK) {
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
   UpdateManager::_current_update_task = NULL;
   vTaskDelete(NULL);
 }

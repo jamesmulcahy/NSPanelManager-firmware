@@ -80,6 +80,11 @@ def make_rig(request):
             label = " %d (%s)" % (i, r.mac) if len(rigs) > 1 else ""
             shot = r.nextion.screenshot("failure" if failed else "end")
             if failed:
+                # The panel's log as it reached MQTT: a second copy, independent of the serial console.
+                with open(os.path.join(r.panel.workdir, "mqtt_log.txt"), "wb") as f:
+                    for msg in list(getattr(r.broker, "messages", [])):
+                        if msg.topic == "nspanel/%s/log" % r.mac:
+                            f.write(msg.payload if msg.payload.endswith(b"\n") else msg.payload + b"\n")
                 cpus = r.panel.dump_cpus(os.path.join(r.panel.workdir, "cpus.txt"))
                 if cpus:
                     sys.stderr.write("\n---- what each CPU%s was doing: %s\n" % (label, cpus))

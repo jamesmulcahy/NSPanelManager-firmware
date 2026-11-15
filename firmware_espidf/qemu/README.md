@@ -14,9 +14,11 @@ firmware_espidf/qemu/run_tests.sh            # build, install QEMU if needed, ru
 firmware_espidf/qemu/run_tests.sh -k touch   # extra args go to pytest
 ```
 
-CI runs the same script (`.github/workflows/qemu-tests.yml`). The suite takes about 15 minutes,
-because every test boots a fresh panel. Per-test console and mosquitto logs land in
-`qemu/build/test-logs/`, and CI uploads them as an artifact. So are the screenshots, in each
+CI runs the same script (`.github/workflows/qemu-tests.yml`). The suite takes about 75 minutes,
+because every test boots a fresh panel: about 15 for the core tests, 20 for the LittleFS update
+tests and 40 for the GUI update tests (`-k "not littlefs_update and not gui_update"` skips both).
+Per-test console and mosquitto logs land in `qemu/build/test-logs/`, and CI uploads them as an
+artifact. So are the screenshots, in each
 test's `screens/`: one PNG of every page the test waited for (`wait_for_page()`, taken as the page
 appears, so often before the firmware has filled it in), and one of the screen when the test
 ended (`NN-end.png`) or failed (`NN-failure.png`, also named on stderr). Brightness (`dim`) is not
@@ -47,6 +49,7 @@ on the lights, through the viewer alone.
    UART0 ──────────────► console: captured, crash-checked, saved per test
    UART2 ◄─────────────► FakeNextion       (TCP socket)
    open_eth ── slirp ──► host 10.0.2.2 ──► FaultProxy ──► mosquitto ◄── observer ◄──► FakeManager
+                                       └──► UpdateServer (HTTP: firmware, LittleFS and TFT downloads and checksums)
                          panel :80 forwarded to Rig.panel.web_port
 ```
 
@@ -56,6 +59,7 @@ on the lights, through the viewer alone.
 | `QemuPanel` | `nspm_qemu/panel.py` | Builds the flash and eFuse images, runs QEMU, gives `wait_for_log()`, detects panics. |
 | `FakeNextion` | `nspm_qemu/fake_nextion.py` | The display emulator ([nextion-tools](https://github.com/jamesmulcahy/nextion-tools)' `nextion_tools.emu`, pinned in `requirements.txt`) as the NSPanel Manager TFT: models the screen from the panel's commands and injects user input. |
 | `FakeManager` | `nspm_qemu/fake_manager.py` | Registration handshake, config, room and entity-page state, decoded commands. |
+| `UpdateServer` | `nspm_qemu/update_server.py` | The manager's HTTP side of an update: the firmware, the LittleFS image and the TFT (with Django's Range quirks: 200 with `data[a:b]`, never 206). Records every request and injects faults at a file offset, aimed at one file with `target=`. |
 | `Broker` | `nspm_qemu/broker.py` | A mosquitto per test. A paho client records all traffic, a TCP proxy in front of the panel lets tests cut its connection, and connects and subscriptions are read from mosquitto's log. |
 
 ### Files
@@ -72,6 +76,10 @@ on the lights, through the viewer alone.
 | `nspm_qemu/rig.py`, `panel.py`, `image.py`, `waiting.py` | Library | Running the panel: see the table above. `image.py` builds the flash and eFuse images. |
 | `nspm_qemu/fake_manager.py`, `broker.py`, `fake_nextion.py` | Fake | The manager, broker and display the panel talks to. |
 | `nspm_qemu/stack_manager.py`, `stack_web.py` | Library | The real manager on a dev stack, in place of the fake ([Stack tests](#stack-tests)): watches its MQTT, and accepts and deletes panels through its web API. |
+
+| `nspm_qemu/fake_manager.py`, `broker.py`, `fake_nextion.py`, `update_server.py` | Fake | The manager, broker, display and update downloads the panel talks to. |
+| `nspm_qemu/ota_update.py` | Library | Runs a firmware/LittleFS update on a `Rig` and reads LittleFS back from the flash image ([LittleFS update tests](#littlefs-update-tests)). |
+| `nspm_qemu/gui_update.py` | Library | Runs a GUI (TFT) update on a `Rig` and checks the display's image against the served file ([GUI update tests](#gui-update-tests)). |
 | `nspm_qemu/upstream.py`, `hmi.py`, `proto.py` | Library | Fetch and cache NSPanelManager's HMI and `.proto` files, and load them. |
 | `nspm_qemu/gui.py`, `display_errors.py` | Data | Component names tests touch; display rejections known to be the firmware's. |
 | `nspm_qemu/freertos_tasks.py` | gdb script | The task dump a failing test takes ([Debugging](#debugging)). |
@@ -235,6 +243,72 @@ starts its dev stack, waits for MQTTManager to build, and runs `-m stack`. The N
 repository and branch are set at the top of that workflow (and can be overridden when it is
 run by hand).
 
+## LittleFS update tests
+
+The panel's settings live in `/littlefs/config.json`, on the partition a LittleFS update
+replaces, and the update erases that partition before it downloads anything.
+`tests/test_littlefs_update.py` breaks the download in every way `UpdateServer` can (a reset or a
+clean close mid-body, a refused connection, an error page, no `Content-Length`, an image that
+does not fit) and checks that the panel never comes back without its settings.
+
+Most tests update LittleFS only: `stage_littlefs_only(rig)` stores a firmware md5 in the
+panel's config.json and serves the same md5 from `/checksum_firmware`, so "update firmware" goes
+straight to the LittleFS step. The last two run the whole update, flashing the QEMU build's own
+`firmware.bin`, which reboots the panel twice.
+
+`run_update(rig)` sends `firmware_update` and waits for the panel to reboot and register again.
+The registration carries the panel's name and stored checksums. After the reboot it reads the
+LittleFS partition out of the flash file with littlefs-python (PlatformIO's mklittlefs carries an
+older LittleFS that misses files the firmware wrote, config.json among them). The checks:
+
+- `check_settings_kept`: the panel registers under its own name, and config.json still holds
+  its Wi-Fi and MQTT settings (L1), within the time budget (L3);
+- `check_new_image`: the served image is on flash (a marker in its index.html) and its md5 is
+  stored (L2);
+- `check_fallback`: after every attempt failed, LittleFS holds only the settings, and the
+  stored LittleFS md5 is empty so that the manager offers the image again.
+
+A fault that hits before the erase must leave the panel up on its current LittleFS, without
+rebooting; those tests check that the web UI still serves the old `index.html`.
+
+## GUI update tests
+
+`tests/test_gui_update.py` runs a GUI (TFT) update on each upload protocol, and
+`tests/test_gui_update_faults.py` repeats it with the network, the manager and the display
+misbehaving. `rig.set_tft(data)` stages a TFT on `UpdateServer` and tells the display it is a
+valid GUI. `run_gui_update(rig)` (`nspm_qemu/gui_update.py`) sends `tft_update`, waits for the
+panel to reboot, and returns an `UpdateResult`: every upload the display saw, every download
+request, what the firmware logged and the md5 it stored afterwards. `check_invariants(result)`
+then checks that:
+
+- I1: a stored md5 matches the display's image byte for byte;
+- I2: "Nextion GUI update complete" is only logged for an image the manager served;
+- I3: the update ends (reboot) instead of hanging;
+- I4: every chunk is 4096 bytes except the last, and nothing is sent past the end.
+
+A failure says where the image goes wrong and where the wrong bytes came from in the file
+(for example "chunk 14 of 49 holds the file's bytes from offset 53248", which is what the #45
+bug looked like).
+
+The display's side is nextion-tools' upload model: from `whmi-wri`/`whmi-wris` on it writes TFT
+bytes at its own cursor, acks each 4096-byte chunk (`0x05`, or `0x08 + u32` after the first
+chunk on v1.2), and shows SYSTEM DATA ERROR unless the image's md5 is in `valid_md5s`. It can
+misbehave on request: `ack_delay`, `jump_offset`, `split_jump`, `reject_upload`, `drop_ack_at`,
+`dup_ack_at` and `inject_at` fire once each, and `always_drop_ack_at` fires on every attempt.
+`UpdateServer`'s offset faults (`reset_at`, `fin_at`, `stall_at`, `swap_file_at`) fire when a
+ranged download reaches a file offset. Its request faults (`drop_next`, `respond_next`,
+`ignore_range_next`, `no_content_length_next`) apply to the next requests, including the
+panel's first GET, which has no Range and only reads the file's size.
+
+The firmware power-cycles the display when an update starts (`Nextion::restart()`), and the fake
+follows the `Power-cycling Nextion display` log line, since it cannot see the GPIO: an upload in
+progress is lost, and the TFT announces itself again.
+
+`run_gui_update` gives up after 180 s, or after 60 s in which the display sees no new bytes and
+no new upload. The longest legitimate quiet spell is a 20 s ack timeout plus the 10 s display
+restart. Tests for bugs that are not fixed yet are marked `xfail(strict=True)`, so a fix
+shows up as a failure until its marker is removed.
+
 ## What differs from hardware
 
 The `qemu` PlatformIO env is `original_sonoff` with `-DNSPM_QEMU` and
@@ -262,17 +336,22 @@ Consequences:
 - **The Nextion receive path is triggered differently.** Frames are split by the same
   `_post_received_frames()` as on hardware, but on `UART_DATA` events rather than
   `UART_PATTERN_DET`. Bugs in the pattern-detect events themselves are out of reach.
+- **A reset is a fresh QEMU.** QEMU runs with `-no-reboot`, so `esp_restart()` (after an update,
+  for example) ends the process, and `QemuPanel` starts a new one on the same flash file: a clean
+  power-on, because QEMU's in-place reset leaves stale interrupt state behind. The fake display
+  stays up across it, and the new boot power-cycles it as on hardware (`Nextion::restart()`).
 - **Timing is not real.** QEMU runs the guest slower than real time and not cycle-accurately.
   Races may appear or vanish compared with hardware.
 - **Buttons, relays and the buzzer** are GPIO/LEDC writes into models no test reads yet.
 
 ## Debugging
 
-- `NSPM_QEMU_GDB=1` exposes a gdbstub on `:3333`. `NSPM_QEMU_GDB=wait` also halts at reset
-  until GDB attaches:
+- `NSPM_QEMU_GDB=1` exposes a gdbstub on a free port, logged as `gdbstub on :<port>`, so suites
+  can run side by side. `run_tests.sh` sets it unless it is already set; `NSPM_QEMU_GDB=0` turns
+  it off. `NSPM_QEMU_GDB=wait` uses `:3333` and halts at reset until GDB attaches:
   `~/.platformio/packages/tool-xtensa-esp-elf-gdb/bin/xtensa-esp32-elf-gdb .pio/build/qemu/firmware.elf -ex "target remote :3333"`.
   `thread apply all bt` shows both CPUs, which is how the ADC hang was found.
-- **A failing test records what the guest was doing.** With `NSPM_QEMU_GDB` set (CI sets it), a test
+- **A failing test records what the guest was doing.** With `NSPM_QEMU_GDB` on (the default with `run_tests.sh`, and in CI), a test
   that fails while the guest is still running, which is how a hang or deadlock shows up, gets
   `cpus.txt` beside its console log, taken before the guest is stopped: both CPUs' backtraces,
   registers and running task, the kernel and flash locks, and every FreeRTOS task with its state,
@@ -281,6 +360,8 @@ Consequences:
   the console log. The task list needs a gdb with Python scripting, which needs Python 3.8–3.11
   from `uv` or on `PATH`.
 - `NSPM_QEMU_SKIP_BUILD=1 qemu/run_tests.sh` reruns against the existing build.
+  `NSPM_QEMU_BUILD_DIR=<dir>` runs against another build, for example a tree with a fix
+  reverted to check that its test fails without it.
 - QEMU comes from `install_qemu.sh`, pinned by release and SHA-256, into `~/.cache/nspm-qemu`.
   Set `QEMU_XTENSA` to use another binary.
 

@@ -11,7 +11,9 @@ from . import fake_nextion
 from .broker import Broker
 from .fake_manager import QEMU_HOST_ADDRESS, FakeManager
 from .panel import QemuPanel
+from .proto import nspanel as pb
 from .stack_manager import Stack, StackManager
+from .update_server import UpdateServer
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_BUILD_DIR = os.path.join(PROJECT_DIR, ".pio", "build", "qemu")
@@ -36,12 +38,16 @@ class Rig:
         os.makedirs(workdir, exist_ok=True)
         if stack is None:
             self.broker = Broker(log_path=os.path.join(workdir, "mosquitto.log"))
-            self.manager = FakeManager(self.broker)
+            # The manager's HTTP side (update downloads), on the port register_accept advertises.
+            self.update_server = UpdateServer()
+            self.manager = FakeManager(self.broker, port=self.update_server.port)
             if fake_nextion.TERMINAL is not None:
                 # LvglRenderer lays out for the region the manager's config names, whatever
                 # config.json said at boot: US for the US receiver, EU for the EU one.
                 self.manager.config.is_us_panel = fake_nextion.TERMINAL == "us"
         else:
+            # The stack's own manager serves updates.
+            self.update_server = None
             self.broker = Broker(external=stack.mqtt)
             self.manager = StackManager(self.broker, stack, mac)
         self.stack = stack
@@ -54,7 +60,9 @@ class Rig:
         # Every page a test waits for, and the screen when it fails (tests/conftest.py).
         self.nextion.screenshots_dir = os.path.join(workdir, "screens")
         # Any wait on a fake ends as soon as the firmware panics or QEMU exits.
-        for fake in (self.broker, self.manager, self.nextion):
+        for fake in (self.broker, self.manager, self.nextion, self.update_server):
+            if fake is None:
+                continue  # no UpdateServer in a stack rig: the stack's manager serves updates
             fake.abort_check = self.panel.check_alive
 
     def default_panel_config(self) -> dict:
@@ -120,6 +128,18 @@ class Rig:
         # on first show; once it is there the page is fully rendered.
         self.nextion.wait_for(lambda n: n.get("home.room.txt") is not None, what="home page rendered")
 
+    def set_tft(self, data: bytes) -> None:
+        """Stage a TFT on the manager, and have the display accept it as a valid GUI."""
+        self.update_server.data = data
+        self.nextion.valid_md5s.add(self.update_server.md5)
+
+    def status_report(self, since: int = 0, timeout: float = 60) -> "pb.NSPanelStatusReport":
+        """The first status report the panel publishes after broker message index `since`."""
+        msg = self.broker.wait_for_message("nspanel/%s/status_report" % self.mac, timeout=timeout, since=since)
+        report = pb.NSPanelStatusReport()
+        report.ParseFromString(msg.payload)
+        return report
+
     def http_get(self, path: str, timeout: float = 30):
         with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.panel.web_port, path), timeout=timeout) as r:
             body = r.read()
@@ -135,4 +155,6 @@ class Rig:
                     self.manager.forget()
             finally:
                 self.manager.close()
+        if self.update_server is not None:
+            self.update_server.close()
         self.broker.close()

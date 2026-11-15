@@ -876,6 +876,7 @@ nextion_state_t Nextion::get_current_state() {
 }
 
 void Nextion::restart() {
+  ESP_LOGI("Nextion", "Power-cycling Nextion display.");
   gpio_set_level(NEXTION_ON_OFF_GPIO, 1); // Turn off power to the display
   vTaskDelay(pdMS_TO_TICKS(250));         // Wait for screen to turn off
   // The display will come back at its stored default, whatever baud= set before.

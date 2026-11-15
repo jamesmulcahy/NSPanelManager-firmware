@@ -213,6 +213,10 @@ void InterfaceManager::_finish_unshow(ShownPage *page) {
 
 void InterfaceManager::show_default_page() {
   ESP_LOGD("InterfaceManager", "show_default_page called.");
+  if (InterfaceManager::_update_holds_screen) {
+    ESP_LOGD("InterfaceManager", "An update holds the screen; staying on the loading page.");
+    return;
+  }
   std::shared_ptr<NSPanelConfig> config;
   if (NSPM_ConfigManager::get_config(&config) == ESP_OK) [[likely]] {
     switch (config->default_page) {
@@ -298,7 +302,9 @@ void InterfaceManager::_task_page_transitions(void *param) {
     if (requested & PAGE_TRANSITION_ASSOCIATE) {
       InterfaceManager::_associate_with_manager_if_ready();
     }
-    if (requested & PAGE_TRANSITION_SHOW_PAGE) {
+    if (requested & PAGE_TRANSITION_SHOW_PAGE && InterfaceManager::_update_holds_screen) {
+      ESP_LOGD("InterfaceManager", "An update holds the screen; dropping page request %d.", static_cast<int>(InterfaceManager::_requested_page.exchange(PageRequest::NONE)));
+    } else if (requested & PAGE_TRANSITION_SHOW_PAGE) {
       switch (InterfaceManager::_requested_page.exchange(PageRequest::NONE)) {
       case PageRequest::HOME:
         HomePage::show();
@@ -409,6 +415,7 @@ void InterfaceManager::_nextion_event_handler(void *arg, esp_event_base_t event_
 void InterfaceManager::_update_manager_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
   switch (event_id) {
   case updatemanager_event_t::FIRMWARE_UPDATE_STARTED: {
+    InterfaceManager::_update_holds_screen = true;
     std::shared_ptr<NSPanelConfig> config;
     if (NSPM_ConfigManager::get_config(&config) == ESP_OK) {
       Nextion::set_brightness_level(config->screen_dim_level, 1000);
@@ -424,6 +431,7 @@ void InterfaceManager::_update_manager_event_handler(void *arg, esp_event_base_t
   }
 
   case updatemanager_event_t::LITTLEFS_UPDATE_STARTED: {
+    InterfaceManager::_update_holds_screen = true;
     std::shared_ptr<NSPanelConfig> config;
     if (NSPM_ConfigManager::get_config(&config) == ESP_OK) {
       Nextion::set_brightness_level(config->screen_dim_level, 1000);
@@ -460,10 +468,14 @@ void InterfaceManager::_update_manager_event_handler(void *arg, esp_event_base_t
     break;
   }
 
-  case updatemanager_event_t::FIRMWARE_UPDATE_FAILED: {
-    // The running firmware is untouched, go back to normal operation.
-    InterfaceManager::_screensaver_blocked = false;
-    InterfaceManager::show_default_page();
+  case updatemanager_event_t::FIRMWARE_UPDATE_FAILED:
+  case updatemanager_event_t::UPDATE_ENDED_WITHOUT_REBOOT: {
+    // The running firmware is untouched, go back to normal operation. Only if an update took the
+    // screen: the boot-time check that finds nothing to update must not leave the loading page early.
+    if (InterfaceManager::_update_holds_screen.exchange(false)) {
+      InterfaceManager::_screensaver_blocked = false;
+      InterfaceManager::show_default_page();
+    }
     break;
   }
 
@@ -546,7 +558,9 @@ void InterfaceManager::_nspm_configmanager_event_handler(void *arg, esp_event_ba
   }
 
   case nspm_configmanager_event::MANAGER_STATE_CHANGE: {
-    if (NSPM_ConfigManager::get_manager_online()) {
+    if (InterfaceManager::_update_holds_screen) {
+      ESP_LOGD("InterfaceManager", "Manager state changed during an update; the update keeps the screen.");
+    } else if (NSPM_ConfigManager::get_manager_online()) {
       // Manager became online again after being offline.
       InterfaceManager::_screensaver_blocked = false;
 
