@@ -176,6 +176,34 @@ static void build_home_all(lv_obj_t *root, bool landscape) {
   HomeView::show(home);
 }
 
+// Rooms without some of the controls (HomeState::has_*): the others take the space.
+static void build_home_with(lv_obj_t *root, bool landscape, bool ceiling, bool table, bool kelvin) {
+  HomeView::build(root, landscape);
+  fill_home();
+  home.has_ceiling = ceiling;
+  home.has_table = table;
+  home.has_color_temperature = kelvin;
+  if (!table) {
+    home.table = 0;
+  }
+  if (!ceiling) {
+    home.ceiling = 0;
+    home.table = home.brightness = 60;
+  }
+  HomeView::show(home);
+}
+static void build_home_no_kelvin(lv_obj_t *root, bool landscape) { build_home_with(root, landscape, true, true, false); }
+static void build_home_ceiling_only(lv_obj_t *root, bool landscape) { build_home_with(root, landscape, true, false, true); }
+static void build_home_table_only(lv_obj_t *root, bool landscape) { build_home_with(root, landscape, false, true, true); }
+static void build_home_no_lights(lv_obj_t *root, bool landscape) { build_home_with(root, landscape, false, false, false); }
+// Another room, with every control.
+static void update_home_all_controls() {
+  fill_home();
+  home.room = "Lounge";
+  home.room_index = 2;
+  HomeView::show(home);
+}
+
 static EntitiesState entities;
 static void slot(int i, const char *name, const char *icon, bool on) {
   entities.slots[i].name = name;
@@ -496,6 +524,10 @@ const std::vector<PageCase> &page_cases() {
       {"home", build_home, "brightness 80 -> 55", update_home},
       {"home-rooms", build_home_rooms, "room list opens", open_room_list},
       {"home-all", build_home_all, nullptr, nullptr},
+      {"home-no-kelvin", build_home_no_kelvin, "to a room with every control", update_home_all_controls},
+      {"home-ceiling-only", build_home_ceiling_only, "to a room with every control", update_home_all_controls},
+      {"home-table-only", build_home_table_only, nullptr, nullptr},
+      {"home-no-lights", build_home_no_lights, "to a room with every control", update_home_all_controls},
       {"entities-4", build_entities4, "toggle a light", update_toggle_slot},
       {"entities-8", build_entities8, "toggle a light", update_toggle_slot},
       {"scenes-12", build_scenes, "scene saved", update_scenes},

@@ -63,9 +63,11 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
 
   // Body: the light groups and the sliders, side by side on a landscape screen, stacked on a
   // portrait one; each slider runs along its card's long side.
+  // The groups' shares of the body are set by _show_controls(), from which controls the room needs.
+  HomeView::_landscape = landscape;
   lv_obj_t *body = Ui::fill(parent, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
   lv_obj_t *lights = Theme::group(body, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_grow(lights, landscape ? 1 : 2);
+  HomeView::_lights = lights;
   if (landscape) {
     lv_obj_set_height(lights, lv_pct(100));
   } else {
@@ -92,7 +94,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   }
 
   lv_obj_t *sliders = Theme::group(body, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_grow(sliders, landscape ? 1 : 3);
+  HomeView::_sliders = sliders;
   if (landscape) {
     lv_obj_set_height(sliders, lv_pct(100));
   } else {
@@ -101,12 +103,26 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   Ui::SliderCard brightness = Ui::slider_card(sliders, NSPM_ICON_BRIGHTNESS_6, landscape);
   Ui::SliderCard kelvin = Ui::slider_card(sliders, NSPM_ICON_THERMOMETER, landscape);
   Ui::gradient_slider(kelvin, lv_color_hex(0xF8A038), lv_color_hex(0xC8E0F8), landscape);
+  HomeView::_brightness_card = brightness.card;
+  HomeView::_kelvin_card = kelvin.card;
   HomeView::_brightness = brightness.slider;
   HomeView::_brightness_value = brightness.value;
   HomeView::_kelvin = kelvin.slider;
   HomeView::_kelvin_value = kelvin.value;
   lv_obj_add_event_cb(brightness.slider, slider_released, LV_EVENT_RELEASED, (void *)(intptr_t)Action::BRIGHTNESS);
   lv_obj_add_event_cb(kelvin.slider, slider_released, LV_EVENT_RELEASED, (void *)(intptr_t)Action::COLOR_TEMPERATURE);
+
+  // A room without main-page lights: nothing for the tiles or the sliders to change.
+  HomeView::_no_lights = Theme::card(body);
+  lv_obj_set_flex_grow(HomeView::_no_lights, 1);
+  lv_obj_set_size(HomeView::_no_lights, lv_pct(100), lv_pct(100));
+  lv_obj_set_flex_flow(HomeView::_no_lights, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(HomeView::_no_lights, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(HomeView::_no_lights, Theme::SPACE_M, 0);
+  Ui::icon(HomeView::_no_lights, NSPM_ICON_LIGHTBULB_OUTLINE, 40, Theme::muted()); // In the 40 px font (gen_fonts.sh)
+  HomeView::_no_lights_text = Theme::label(HomeView::_no_lights, "", Theme::body_font(), Theme::muted());
+  lv_obj_add_flag(HomeView::_no_lights, LV_OBJ_FLAG_HIDDEN);
+  HomeView::_show_controls(HomeState());
 
   // Footer: the room, picked from a list that opens upwards, and the mode, a two-way switch.
   lv_obj_t *footer = Theme::group(parent, LV_FLEX_FLOW_ROW);
@@ -251,7 +267,34 @@ static void show_tile(lv_obj_t *tile, lv_obj_t *value, int level, bool editing) 
   Ui::set_tile_outlined(tile, editing);
 }
 
+// Only the controls the room's lights need, and the space shared out between them.
+void HomeView::_show_controls(const HomeState &state) {
+  const bool any = state.has_ceiling || state.has_table;
+  // A room with no ceiling or table lights has no main-page lights at all (every light is one or
+  // the other), so the brightness slider would change nothing either.
+  Ui::set_visible(HomeView::_ceiling, state.has_ceiling);
+  Ui::set_visible(HomeView::_table, state.has_table);
+  Ui::set_visible(HomeView::_lights, any);
+  Ui::set_visible(HomeView::_sliders, any);
+  Ui::set_visible(HomeView::_kelvin_card, any && state.has_color_temperature);
+  Ui::set_visible(HomeView::_no_lights, !any);
+  Ui::set_text(HomeView::_no_lights_text, state.all_rooms ? "No lights" : "No lights in this room");
+  // Each slider card keeps the size it has with both: without the colour-temperature card, the
+  // sliders give its share to the tiles, rather than stretch one card over two cards' space.
+  // Portrait: tiles 2 : sliders 3 (1.5 per card); landscape: 1 : 1 (0.5 per card). In halves.
+  const int cards = state.has_color_temperature ? 2 : 1;
+  const int lights_grow = HomeView::_landscape ? 2 : 4;
+  const int sliders_grow = (HomeView::_landscape ? 1 : 3) * cards;
+  if (lv_obj_get_style_flex_grow(HomeView::_lights, LV_PART_MAIN) != lights_grow) {
+    lv_obj_set_flex_grow(HomeView::_lights, lights_grow);
+  }
+  if (lv_obj_get_style_flex_grow(HomeView::_sliders, LV_PART_MAIN) != sliders_grow) {
+    lv_obj_set_flex_grow(HomeView::_sliders, sliders_grow);
+  }
+}
+
 void HomeView::show(const HomeState &state) {
+  HomeView::_show_controls(state);
   Ui::set_text(HomeView::_time, state.time);
   Ui::set_icon(HomeView::_scenes, state.all_rooms ? NSPM_ICON_LIGHTBULB_GROUP : NSPM_ICON_PALETTE_SWATCH);
   Ui::set_visible(HomeView::_entities, state.entities);

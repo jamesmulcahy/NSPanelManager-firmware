@@ -1011,6 +1011,12 @@ void HomePage::_lvgl_render() {
     state.time = text[0] == ' ' ? text + 1 : text;
   }
   if (status != nullptr) {
+    // Only the controls the lights need. Every manager sends the group counts; the colour-temperature
+    // count only counts if the manager says it sent one (an older manager doesn't: show the slider).
+    // Until a status arrives, HomeState shows everything.
+    state.has_ceiling = status->num_ceiling_lights > 0;
+    state.has_table = status->num_table_lights > 0;
+    state.has_color_temperature = !status->color_temperature_lights_known || status->num_color_temperature_lights > 0;
     switch (HomePage::_current_edit_mode) {
     case HomePageEditMode::CEILING_LIGHTS:
       // Only the group being edited shows its level, as on the Nextion page.
