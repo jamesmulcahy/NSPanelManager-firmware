@@ -32,6 +32,51 @@ On `nspanel/<MAC>/command`:
 | `{"command": "lvgl_theme", "theme": "light"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `light`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once). `light` draws no background, as the art is dark; the background setting is kept for when the theme changes back |
 | `{"command": "lvgl_tap", "x": 160, "y": 20, "hold_ms": 100}` | A touch through the LVGL path, for testing without a finger; `x2`/`y2` make it a swipe |
 
+## Screenshots
+
+`GET http://<panel>/screenshot` on the panel's own web server returns the screen as LVGL draws it,
+upright and in screen coordinates (320x480 US, 480x320 EU), whatever the receiver's rotation. No
+auth, like the rest of that server. There is no MQTT command for it yet.
+
+```
+curl -o office.png http://<panel-ip>/screenshot
+curl -o office.bmp 'http://<panel-ip>/screenshot?format=bmp'
+```
+
+| `format=` | Body | Size (320x480) |
+|---|---|---|
+| `png` (default) | 8-bit RGB, deflate (ROM `tdefl`, fastest setting), chunked | typically 5-50 KB |
+| `bmp` | 16-bit `BI_BITFIELDS` (565 masks), top-down, chunked | 307,266 B |
+| `raw` | RGB565 little-endian, row by row, with `Content-Length` | 307,200 B |
+
+Headers: `X-Width`, `X-Height`, `X-Capture-Ms` (the GUI task's time on it), `X-Display-Streaming`
+(`1` when the receiver was streaming and nothing was left to repaint, so the display shows exactly
+this; `0` while the terminal restarts or after a band failed), `Cache-Control: no-store`,
+`Content-Disposition: inline; filename="<hostname>.<format>"`, and for `raw`
+`X-Pixel-Format: RGB565LE`.
+
+| Status | When |
+|---|---|
+| 200 | The image |
+| 400 | `format` is not `png`, `bmp` or `raw` |
+| 409 | The panel shows NSPM's Nextion pages (`LvglUi` not active): the Nextion draws those itself and nothing can be read back |
+| 503 | Another screenshot is under way, no PSRAM for the 300 KB copy, the GUI queue is full, or the GUI task took over 2 s (`Retry-After: 1`) |
+
+How (`LvglRenderer::capture()`, `lib/LvglUi/LvglScreenshot.cpp`, `WebManager`): neither the ESP32 nor
+the receiver keeps a framebuffer, so the screen is rendered once more on request. The handler
+allocates a 300 KB PSRAM buffer and posts the job to the GUI task, which runs it right after its
+refresh: first it sends whatever is still due to the display, then it invalidates the whole screen
+and refreshes again with `_flush` copying each band into the buffer instead of calling
+`NextionTerminal::draw()`. Nothing runs between the two passes (no animation step, no timer, no
+posted work), so the copy is what the display shows, and the display never sees the second pass.
+The GUI task stalls for about one full render; the encoding and the network run on the web
+server's task. Whichever of the two lets go of the capture last frees it, so a request that times
+out never frees memory the GUI task is still writing. PNG uses the ESP32 ROM's miniz `tdefl` (no
+flash), its ~160 KB of state in PSRAM for the request only, with the PNG framing written by hand
+and one IDAT chunk per deflate block. Nothing is held between requests. Each request logs
+`WebManager: Screenshot <format> WxH, N bytes: capture .. ms (GUI task .. ms), encode .. ms, send ..
+ms` with the web server task's unused stack.
+
 ## Putting a panel on it
 
 1. Stage firmware with LVGL mode. Panels on NSPM's TFT ignore it.

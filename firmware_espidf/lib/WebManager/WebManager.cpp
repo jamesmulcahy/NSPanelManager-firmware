@@ -1,19 +1,92 @@
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
+#include <LvglRenderer.hpp>
+#include <LvglScreenshot.hpp>
+#include <LvglUi.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <Nextion.hpp>
 #include <NSPM_version.hpp>
 #include <WebManager.hpp>
 #include <WiFiManager.hpp>
+#include <cstring>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_wifi.h>
 #include <nlohmann/json.hpp>
+
+// How long /screenshot waits for the GUI task: one refresh of what is due, then one full render. On a
+// panel that is well under a second. Under QEMU the display link runs at ~8 KB/s, so whatever is
+// still due may take many seconds to send first.
+#ifdef NSPM_QEMU
+static constexpr uint32_t SCREENSHOT_TIMEOUT_MS = 60000;
+#else
+static constexpr uint32_t SCREENSHOT_TIMEOUT_MS = 2000;
+#endif
+
+namespace {
+// A chunked response, with small writes (the PNG framing) gathered into one chunk.
+class HttpSink : public LvglScreenshot::Sink {
+public:
+  explicit HttpSink(httpd_req_t *req) : _req(req) {
+    this->_buffer = static_cast<uint8_t *>(heap_caps_malloc(BUFFER_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    this->_ok = this->_buffer != nullptr;
+  }
+  ~HttpSink() { heap_caps_free(this->_buffer); }
+
+  bool write(const void *data, size_t size) override {
+    if (this->_ok && this->_used + size > BUFFER_SIZE) {
+      this->flush();
+    }
+    if (this->_ok && size <= BUFFER_SIZE) {
+      memcpy(this->_buffer + this->_used, data, size);
+      this->_used += size;
+    } else if (this->_ok) {
+      this->_ok = this->send(data, size);
+    }
+    this->sent += size;
+    return this->_ok;
+  }
+
+  // Send what is gathered, then end the response. False if any of it failed.
+  bool finish() {
+    this->flush();
+    return this->send(NULL, 0) && this->_ok;
+  }
+
+  size_t sent = 0;
+  // Time spent sending, so that the log can tell encoding from the network.
+  int64_t send_us = 0;
+
+private:
+  static constexpr size_t BUFFER_SIZE = 1024;
+  void flush() {
+    if (this->_ok && this->_used > 0) {
+      this->_ok = this->send(this->_buffer, this->_used);
+    }
+    this->_used = 0;
+  }
+  bool send(const void *data, size_t size) {
+    int64_t start = esp_timer_get_time();
+    bool ok = httpd_resp_send_chunk(this->_req, static_cast<const char *>(data), size) == ESP_OK;
+    this->send_us += esp_timer_get_time() - start;
+    return ok;
+  }
+  httpd_req_t *_req;
+  uint8_t *_buffer = nullptr;
+  size_t _used = 0;
+  bool _ok = false;
+};
+} // namespace
 
 void WebManager::start() {
   if (WebManager::_server == NULL) {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
     WebManager::_config.max_uri_handlers = 12;
+    // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
+    // chunked send. See the "Screenshot ..." log line for what is left unused.
+    WebManager::_config.stack_size = 8192;
     // The stock config keeps an idle client connection open forever: the 5 s timeouts only cover
     // reading/sending a request. When Wi-Fi drops while a client (e.g. a periodic scraper) has a
     // connection open, its FIN never arrives and the session holds an lwIP socket indefinitely.
@@ -40,6 +113,7 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_static_css);             // Register static CSS uri
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_handle_generate_204);    // Handle /generate_204 for Android captive portal popup
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_handle_generate204);     // Handle /generate204 for Android captive portal popup
+      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_screenshot);             // The LVGL screen as an image
     } else {
       ESP_LOGE("Web", "Failed to start web server!");
     }
@@ -390,4 +464,89 @@ esp_err_t WebManager::_handle_uri_get_available_networks(httpd_req_t *req) {
   httpd_resp_send_chunk(req, NULL, 0);
 
   return ESP_OK;
+}
+
+esp_err_t WebManager::_handle_uri_screenshot(httpd_req_t *req) {
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  if (!LvglUi::active()) {
+    // On NSPM's TFT the Nextion draws its own pages: the pixels never pass through the ESP32.
+    httpd_resp_set_status(req, "409 Conflict");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "No screenshot: this panel shows the Nextion display's own pages, which the firmware cannot read back. "
+                                   "Screenshots need the LVGL UI (an nspanel-terminal TFT).\n");
+  }
+
+  char query[64];
+  char format[8] = "png";
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    char value[sizeof(format)];
+    if (httpd_query_key_value(query, "format", value, sizeof(value)) == ESP_OK) {
+      strcpy(format, value);
+    }
+  }
+  bool png = strcmp(format, "png") == 0, bmp = strcmp(format, "bmp") == 0, raw = strcmp(format, "raw") == 0;
+  if (!png && !bmp && !raw) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "format must be png, bmp or raw.\n");
+  }
+
+  int64_t start = esp_timer_get_time();
+  std::shared_ptr<const LvglRenderer::Screenshot> shot;
+  esp_err_t captured = LvglRenderer::capture(SCREENSHOT_TIMEOUT_MS, &shot);
+  if (captured != ESP_OK) {
+    const char *why = captured == ESP_ERR_NOT_FINISHED ? "another screenshot is under way"
+                      : captured == ESP_ERR_NO_MEM     ? "no memory for it"
+                      : captured == ESP_ERR_TIMEOUT    ? "the UI did not get to it in time"
+                                                       : "the UI is busy";
+    ESP_LOGW("WebManager", "No screenshot: %s.", why);
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_hdr(req, "Retry-After", "1");
+    httpd_resp_set_type(req, "text/plain");
+    std::string text = std::string("No screenshot: ") + why + ".\n";
+    return httpd_resp_sendstr(req, text.c_str());
+  }
+  int64_t captured_at = esp_timer_get_time();
+
+  // Header values must stay valid until the response is sent.
+  char width[8], height[8], capture_ms[12], disposition[80];
+  snprintf(width, sizeof(width), "%u", shot->width);
+  snprintf(height, sizeof(height), "%u", shot->height);
+  snprintf(capture_ms, sizeof(capture_ms), "%lu", (unsigned long)shot->capture_ms);
+  std::string name;
+  for (char c : ConfigManager::wifi_hostname) {
+    if (isalnum((unsigned char)c) || c == '-' || c == '_') {
+      name.push_back(c);
+    }
+  }
+  snprintf(disposition, sizeof(disposition), "inline; filename=\"%.40s.%s\"", name.empty() ? "nspanel" : name.c_str(), format);
+  httpd_resp_set_type(req, png ? "image/png" : bmp ? "image/bmp" : "application/octet-stream");
+  httpd_resp_set_hdr(req, "Content-Disposition", disposition);
+  httpd_resp_set_hdr(req, "X-Width", width);
+  httpd_resp_set_hdr(req, "X-Height", height);
+  httpd_resp_set_hdr(req, "X-Display-Streaming", shot->in_sync ? "1" : "0");
+  httpd_resp_set_hdr(req, "X-Capture-Ms", capture_ms);
+
+  bool sent;
+  size_t bytes;
+  int64_t send_us;
+  if (raw) {
+    httpd_resp_set_hdr(req, "X-Pixel-Format", "RGB565LE");
+    bytes = (size_t)shot->width * shot->height * 2;
+    sent = httpd_resp_send(req, reinterpret_cast<const char *>(shot->pixels), bytes) == ESP_OK;
+    send_us = esp_timer_get_time() - captured_at;
+  } else {
+    HttpSink sink(req);
+    bool written = png ? LvglScreenshot::write_png(shot->pixels, shot->width, shot->height, sink)
+                       : LvglScreenshot::write_bmp(shot->pixels, shot->width, shot->height, sink);
+    sent = sink.finish() && written;
+    bytes = sink.sent;
+    send_us = sink.send_us;
+  }
+  int64_t end = esp_timer_get_time();
+  ESP_LOGI("WebManager", "Screenshot %s %ux%u, %u bytes%s: capture %lu ms (GUI task %lu ms), encode %lu ms, send %lu ms. Stack: %u bytes never used.",
+           format, shot->width, shot->height, (unsigned)bytes, sent ? "" : " (send failed)", (unsigned long)((captured_at - start) / 1000),
+           (unsigned long)shot->capture_ms, (unsigned long)((end - captured_at - send_us) / 1000), (unsigned long)(send_us / 1000),
+           (unsigned)uxTaskGetStackHighWaterMark(NULL));
+  return sent ? ESP_OK : ESP_FAIL;
 }

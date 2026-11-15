@@ -9,6 +9,7 @@
 #include <freertos/task.h>
 #include <functional>
 #include <lvgl.h>
+#include <memory>
 #include <string>
 
 /**
@@ -97,7 +98,43 @@ public:
   static uint16_t width() { return LvglRenderer::_us_layout ? 320 : 480; }
   static uint16_t height() { return LvglRenderer::_us_layout ? 480 : 320; }
 
+  /**
+   * The screen as LVGL draws it, from capture(): upright, in screen coordinates, before the
+   * terminal turns or crops it for the receiver.
+   */
+  struct Screenshot {
+    // width x height RGB565 pixels (little-endian), row by row, in PSRAM.
+    uint16_t *pixels = nullptr;
+    uint16_t width = 0;
+    uint16_t height = 0;
+    // The receiver was streaming and nothing was left to repaint, so the display shows this.
+    // False while the terminal (re)starts, or after a band failed: the display may differ.
+    bool in_sync = false;
+    // How long the GUI task spent on it (both refreshes), in ms.
+    uint32_t capture_ms = 0;
+
+    ~Screenshot();
+
+  private:
+    friend class LvglRenderer;
+    SemaphoreHandle_t _done = NULL;
+    bool _ok = false;
+  };
+
+  /**
+   * From any task but the GUI task: render the active screen once more, into a new PSRAM buffer, and
+   * hand it over. The GUI task first sends whatever is still due to the display, then renders the
+   * whole screen into the buffer instead of the display; nothing runs in between, so the copy is
+   * what the display shows (see Screenshot::in_sync). The GUI task stalls for about one full render.
+   * One capture at a time. Waits up to `timeout_ms`; a capture that times out is still finished by
+   * the GUI task, which frees it then.
+   * ESP_ERR_INVALID_STATE: LVGL is not running. ESP_ERR_NOT_FINISHED: another capture is under
+   * way. ESP_ERR_NO_MEM: no PSRAM for it. ESP_FAIL: the GUI queue was full. ESP_ERR_TIMEOUT.
+   */
+  static esp_err_t capture(uint32_t timeout_ms, std::shared_ptr<const Screenshot> *out);
+
 private:
+  static void _run_capture(Screenshot &shot);
   static void _task(void *param);
   static void _flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map);
   static void _read_pointer(lv_indev_t *indev, lv_indev_data_t *data);
@@ -140,4 +177,12 @@ private:
   // The pointer as LVGL last read it (GUI task only).
   static inline lv_point_t _point = {0, 0};
   static inline bool _pressed = false;
+
+  // A capture: one at a time (any task); the one the GUI task runs next, after its refresh; and,
+  // while it renders, where _flush copies the bands to instead of the display (GUI task only).
+  static inline std::atomic<bool> _capture_busy = false;
+  static inline std::shared_ptr<Screenshot> _capture_pending;
+  static inline uint16_t *_capture = nullptr;
+  static inline uint16_t _capture_width = 0;
+  static inline uint16_t _capture_height = 0;
 };

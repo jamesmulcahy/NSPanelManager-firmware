@@ -248,6 +248,12 @@ void LvglRenderer::_task(void *param) {
         sleep_ms = next;
       }
     }
+    // After the refresh, so that everything due has reached the display before the copy is made.
+    if (LvglRenderer::_capture_pending) {
+      std::shared_ptr<Screenshot> shot = std::move(LvglRenderer::_capture_pending);
+      LvglRenderer::_capture_pending.reset();
+      LvglRenderer::_run_capture(*shot);
+    }
     static int64_t last_stack_log = 0;
     if (esp_timer_get_time() - last_stack_log > STACK_LOG_INTERVAL_US) {
       last_stack_log = esp_timer_get_time();
@@ -258,6 +264,20 @@ void LvglRenderer::_task(void *param) {
 }
 
 void LvglRenderer::_flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map) {
+  if (LvglRenderer::_capture != nullptr) {
+    // A capture (_run_capture()): the band goes into the copy, not to the display.
+    const uint16_t *band = reinterpret_cast<const uint16_t *>(px_map);
+    int band_width = lv_area_get_width(area);
+    if (area->x1 >= 0 && area->x2 < LvglRenderer::_capture_width) {
+      for (int y = area->y1; y <= area->y2; y++) {
+        if (y >= 0 && y < LvglRenderer::_capture_height) {
+          memcpy(LvglRenderer::_capture + y * LvglRenderer::_capture_width + area->x1, band + (y - area->y1) * band_width, band_width * sizeof(uint16_t));
+        }
+      }
+    }
+    lv_display_flush_ready(display);
+    return;
+  }
   // The band is copied before draw() returns, while the previous one may still be on its way, so
   // LVGL renders the next band meanwhile. A band that fails means the display no longer shows what
   // LVGL drew: repaint once the receiver is back.
@@ -266,6 +286,74 @@ void LvglRenderer::_flush(lv_display_t *display, const lv_area_t *area, uint8_t 
     LvglRenderer::_repaint = true;
   }
   lv_display_flush_ready(display);
+}
+
+LvglRenderer::Screenshot::~Screenshot() {
+  heap_caps_free(this->pixels);
+  if (this->_done != NULL) {
+    vSemaphoreDelete(this->_done);
+  }
+  // Whichever of the requester and the GUI task lets go last frees it, and allows the next one.
+  LvglRenderer::_capture_busy = false;
+}
+
+esp_err_t LvglRenderer::capture(uint32_t timeout_ms, std::shared_ptr<const Screenshot> *out) {
+  if (!LvglRenderer::_enabled) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  if (LvglRenderer::_capture_busy.exchange(true)) {
+    return ESP_ERR_NOT_FINISHED;
+  }
+  int64_t start = esp_timer_get_time();
+  // From here on, the last owner's ~Screenshot() clears _capture_busy.
+  auto shot = std::make_shared<Screenshot>();
+  // Big enough for either layout, as the region may change before the GUI task gets to it.
+  shot->pixels = static_cast<uint16_t *>(heap_caps_malloc(480 * 320 * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
+  shot->_done = xSemaphoreCreateBinary();
+  if (shot->pixels == nullptr || shot->_done == NULL) {
+    ESP_LOGW(TAG, "No memory for a screenshot.");
+    return ESP_ERR_NO_MEM;
+  }
+  if (!LvglRenderer::post([shot]() { LvglRenderer::_capture_pending = shot; })) {
+    return ESP_FAIL;
+  }
+  if (xSemaphoreTake(shot->_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+    ESP_LOGW(TAG, "Screenshot timed out after %lu ms.", (unsigned long)timeout_ms);
+    return ESP_ERR_TIMEOUT;
+  }
+  if (!shot->_ok) {
+    return ESP_FAIL;
+  }
+  ESP_LOGD(TAG, "Screenshot %ux%u: %lu ms on the GUI task, %lu ms in all.", shot->width, shot->height, (unsigned long)shot->capture_ms,
+           (unsigned long)((esp_timer_get_time() - start) / 1000));
+  *out = std::move(shot);
+  return ESP_OK;
+}
+
+void LvglRenderer::_run_capture(Screenshot &shot) {
+  int64_t start = esp_timer_get_time();
+  lv_timer_t *refresh = lv_display_get_refr_timer(LvglRenderer::_display);
+  // Pass 1: whatever is still invalid goes to the display as usual, as the capture pass consumes
+  // every invalid area. Not lv_refr_now(), which would also step the animations: between the two
+  // passes nothing may change. Without a session the display gets a full repaint once it streams.
+  bool streaming = LvglRenderer::_active && NextionTerminal::streaming();
+  if (streaming) {
+    lv_display_refr_timer(refresh);
+  }
+  // Pass 2: the whole screen again, into the copy (_flush). The display and its burst are left alone.
+  LvglRenderer::_capture_width = LvglRenderer::width();
+  LvglRenderer::_capture_height = LvglRenderer::height();
+  LvglRenderer::_capture = shot.pixels;
+  lv_obj_invalidate(lv_screen_active());
+  lv_display_refr_timer(refresh);
+  LvglRenderer::_capture = nullptr;
+
+  shot.width = LvglRenderer::_capture_width;
+  shot.height = LvglRenderer::_capture_height;
+  shot.in_sync = streaming && NextionTerminal::streaming() && !LvglRenderer::_repaint;
+  shot.capture_ms = (uint32_t)((esp_timer_get_time() - start) / 1000);
+  shot._ok = true;
+  xSemaphoreGive(shot._done);
 }
 
 void LvglRenderer::_read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
