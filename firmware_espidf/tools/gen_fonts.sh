@@ -1,8 +1,9 @@
 #!/bin/sh
 # Regenerates lib/LvglRenderer's fonts from LVGL's Montserrat (see tools/lv_font_subset.py).
-#   tools/gen_fonts.sh [BODY_BPP [LARGE_BPP]] [OUT_DIR]     # default 1 and 2, into lib/LvglRenderer
-# Fewer antialiasing levels mean less flash and longer runs of one colour on the wire: 1 bpp body
-# text and 2 bpp large text.
+#   tools/gen_fonts.sh [BODY_BPP [LARGE_BPP]] [OUT_DIR]     # default 2 and 2, into lib/LvglRenderer
+# Fewer antialiasing levels mean less flash and longer runs of one colour on the wire. 2 bpp (four
+# levels) for all text: at 1 bpp the 14 px body text looked jagged, and 2 bpp costs ~2 KB of flash
+# and ~4% more bytes per page redraw.
 # The symbols are the LV_SYMBOL_* the screens use: wifi, home, loop, right, settings, list, image,
 # and ok (the checkbox's tick), plus the degree sign.
 #
@@ -14,7 +15,7 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root="$here/.."
 fonts="${LVGL_DIR:-$root/managed_components/lvgl__lvgl}/src/font"
-body_bpp="${1:-1}"
+body_bpp="${1:-2}"
 large_bpp="${2:-2}"
 out="${3:-$root/lib/LvglRenderer}"
 symbols='\u00b0\uf1eb\uf015\uf079\uf054\uf013\uf00b\uf03e\uf00c'
