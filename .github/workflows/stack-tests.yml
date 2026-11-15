@@ -9,6 +9,10 @@ name: Full-stack tests
 
 on:
   push:
+    # Merges into fork (and any direct push there). A pull request's branch is covered by its
+    # pull_request run; a push trigger on every branch ran each check twice.
+    branches:
+      - "fork"
     paths:
       - "firmware_espidf/**"
       - ".github/workflows/stack-tests.yml"
