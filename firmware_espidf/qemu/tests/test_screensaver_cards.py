@@ -39,7 +39,11 @@ def publish_calendar(rig, update_or_bytes):
     rig.broker.publish(rig.manager.base + "/status/calendar", payload, retain=True)
 
 
-def configure(rig, mode=pb.NSPanelConfig.WEATHER_WITH_BACKGROUND, base_seconds=3, cards=((pb.NSPanelConfig.SCREENSAVER_CARD_CALENDAR, 5),)):
+def configure(rig, mode=pb.NSPanelConfig.WEATHER_WITH_BACKGROUND, base_seconds=3, cards=None):
+    # Default resolved here, not in the signature: with an older pinned schema the enum doesn't exist,
+    # and a signature default would fail collection before the skipif marks above can skip the module.
+    if cards is None:
+        cards = ((pb.NSPanelConfig.SCREENSAVER_CARD_CALENDAR, 5),)
     config = rig.manager.config
     config.screensaver_mode = mode
     config.screensaver_base_card_seconds = base_seconds
