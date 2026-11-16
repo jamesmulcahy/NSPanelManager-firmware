@@ -15,6 +15,7 @@
 #include <RoomManager.hpp>
 #include <RoomManager_event.hpp>
 #include <ScreensaverPage.hpp>
+#include <TimerPage.hpp>
 #include <UpdateManager_event.hpp>
 #include <WiFiManager.hpp>
 #include <cmath>
@@ -256,6 +257,14 @@ void InterfaceManager::request_show_entity_page(const std::string &state_topic) 
   InterfaceManager::_request_page(PageRequest::ENTITY_PAGE);
 }
 
+void InterfaceManager::request_timer_alarm() {
+  InterfaceManager::_request_page(PageRequest::TIMER_ALARM);
+}
+
+void InterfaceManager::set_alarm_blocks_screensaver(bool blocked) {
+  InterfaceManager::_alarm_blocks_screensaver = blocked;
+}
+
 void InterfaceManager::_show_requested_entity_page() {
   std::shared_ptr<const std::string> topic = InterfaceManager::_requested_entity_page_topic.get();
   if (topic == nullptr || topic->empty()) [[unlikely]] {
@@ -329,6 +338,18 @@ void InterfaceManager::_task_page_transitions(void *param) {
         InterfaceManager::_show_requested_entity_page();
         break;
 
+      case PageRequest::TIMER_ALARM: {
+        std::shared_ptr<NSPanelConfig> config;
+        if (NSPM_ConfigManager::get_config(&config) == ESP_OK) [[likely]] {
+          Nextion::set_brightness_level(config->screen_dim_level, 1000);
+        } else {
+          ESP_LOGE("InterfaceManager", "Failed to get config while trying to turn the screen on for the timer alarm.");
+        }
+        // TimerManager's lists belong to LvglUi's task, which is not this one.
+        LvglUi::defer([]() { TimerPage::show_alarm(); });
+        break;
+      }
+
       case PageRequest::NONE:
         break; // Already handled by an earlier wake-up
       }
@@ -378,11 +399,15 @@ void InterfaceManager::_task_unshow_page(void *param) {
 void InterfaceManager::_nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
   switch (event_id) {
   case nextion_event_t::SLEEP_EVENT: {
-    if (!InterfaceManager::_screensaver_blocked.get()) {
+    if (InterfaceManager::_alarm_blocks_screensaver) {
+      ESP_LOGD("InterfaceManager", "Got sleep event while the timer alarm is showing; the screensaver stays away.");
+    } else if (!InterfaceManager::_screensaver_blocked.get()) {
       ESP_LOGD("InterfaceManager", "Got sleep event from InterfaceManager and screensaver is not blocked. Will switch to screensaver page.");
       ScreensaverPage::show();
     }
-    MqttManager::publish(InterfaceManager::_screen_on_off_state_topic, "0", strlen("0"), true);
+    if (!InterfaceManager::_alarm_blocks_screensaver) { // The screen stays on for the alarm
+      MqttManager::publish(InterfaceManager::_screen_on_off_state_topic, "0", strlen("0"), true);
+    }
     break;
   }
 

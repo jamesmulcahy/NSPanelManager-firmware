@@ -63,6 +63,20 @@ public:
    */
   static void request_show_entity_page(const std::string &state_topic);
 
+  /**
+   * @brief Show the timer alarm from the page-transition task: the screen goes on at its normal brightness,
+   * then TimerPage::show_alarm(). Dropped (the sound still plays) while an update holds the screen.
+   * Safe to call from any task; TimerManager::on_fired is set to it in main().
+   */
+  static void request_timer_alarm();
+
+  /**
+   * @brief Keep the screensaver from taking over while the timer alarm is showing. Set by TimerPage when the
+   * alarm is shown and cleared when it is dismissed or unshown. Kept apart from _screensaver_blocked, which
+   * updates and manager outages also set and clear.
+   */
+  static void set_alarm_blocks_screensaver(bool blocked);
+
 private:
   // Pages that can be requested from the page-transition task. Only the latest
   // request is shown, so a quick "screen off, screen on" ends with the screen on.
@@ -72,6 +86,7 @@ private:
     SCREEN_ON, // Screen brightness, then the default page
     SCREENSAVER,
     ENTITY_PAGE, // The entity page for _requested_entity_page_topic
+    TIMER_ALARM, // Screen brightness, then TimerPage::show_alarm()
   };
 
   static void _request_page(PageRequest page);
@@ -161,6 +176,9 @@ private:
   // In the case of a Nextion "sleep" event, ie. trigger screensaver, should we
   // or is the screensaver blocked?
   static inline MutexWrapped<bool> _screensaver_blocked = false;
+
+  // The timer alarm is showing: the screensaver stays away like it does when _screensaver_blocked is set.
+  static inline std::atomic<bool> _alarm_blocks_screensaver = false;
 
   // A firmware or LittleFS update is showing its progress on the loading page. Nothing else may
   // take the screen until UPDATE_ENDED_WITHOUT_REBOOT (or FIRMWARE_UPDATE_FAILED) gives it back.
