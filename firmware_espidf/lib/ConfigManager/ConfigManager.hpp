@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+#include <vector>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <string>
@@ -141,4 +143,12 @@ public:
   // EventLoopWatchdog: log every task's backtrace if the default event loop stops dispatching. Off by default (it
   // costs a task and its stack); the loop_watchdog command turns it on and off without a reboot.
   static inline bool loop_watchdog = false;
+
+  // A timer running when the panel last saved (TimerManager), kept across a reboot. deadline_epoch_s is the
+  // wall-clock deadline. Saved as the "timers" array of {duration_s, deadline_epoch_s}.
+  struct PersistedTimer {
+    uint32_t duration_s;
+    int64_t deadline_epoch_s;
+  };
+  static inline std::vector<PersistedTimer> timers;
 };
