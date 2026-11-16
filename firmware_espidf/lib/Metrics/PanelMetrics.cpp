@@ -1,3 +1,4 @@
+#include <HeapMetrics.hpp>
 #include <NextionWindow.hpp>
 #include <PanelMetrics.hpp>
 #include <esp_err.h>
@@ -97,8 +98,9 @@ bool sample_heap_free(int64_t *value) {
 
 template <uint32_t Caps>
 bool sample_heap_min_free(int64_t *value) {
-  *value = heap_caps_get_minimum_free_size(Caps);
-  return heap_caps_get_total_size(Caps) > 0;
+  // Not heap_caps_get_minimum_free_size(): while the per-scrape window runs it reports the window's
+  // minimum. HeapMetrics keeps the real since-boot value.
+  return HeapMetrics::min_free_since_boot(Caps, value);
 }
 
 // Largest single allocation that would succeed now: fragmentation, not total free, is what makes
@@ -237,7 +239,14 @@ esp_err_t write(Metrics::Sink sink, void *ctx) {
   if (scrape_mutex == NULL || xSemaphoreTake(scrape_mutex, pdMS_TO_TICKS(1000)) != pdPASS) {
     return ESP_ERR_TIMEOUT;
   }
+  // First: the heap low-point window must close before this scrape allocates anything.
+  HeapMetrics::scrape_begin();
   bool ok = Metrics::write_text(registry, sizeof(registry) / sizeof(registry[0]), totals, sink, ctx);
+  if (ok) {
+    Metrics::TextWriter extra(sink, ctx);
+    HeapMetrics::write(extra);
+    ok = extra.flush();
+  }
   xSemaphoreGive(scrape_mutex);
   return ok ? ESP_OK : ESP_FAIL;
 }
