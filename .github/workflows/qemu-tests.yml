@@ -72,18 +72,36 @@ jobs:
           - display: nextion
             terminal: ""
             tests: "not test_gui_update_faults and not test_littlefs_update"
+            marks: ""
             timeout: 60
-          # The firmware, LittleFS and GUI update tests, also on NSPM's TFT. Each flashes the panel
-          # and reboots it, so they get a job of their own that runs beside the rest.
-          - display: updates
+          # The update tests, also on NSPM's TFT. Each flashes the panel and reboots it, often more
+          # than once, so they take most of the time and are split three ways to run side by side
+          # (about 15-20 minutes each; in one job they took 50).
+          # Firmware and LittleFS updates.
+          - display: littlefs-updates
             terminal: ""
-            tests: "test_gui_update_faults or test_littlefs_update"
-            timeout: 90
+            tests: "test_littlefs_update"
+            marks: ""
+            timeout: 45
+          # GUI updates under faults that the firmware handles.
+          - display: gui-updates
+            terminal: ""
+            tests: "test_gui_update_faults"
+            marks: "not xfail"
+            timeout: 45
+          # GUI update faults the firmware does not handle yet (strict xfail). Most run until the
+          # harness's stall timeouts, so they are the slowest; an XPASS fails this job.
+          - display: gui-updates-known-bugs
+            terminal: ""
+            tests: "test_gui_update_faults"
+            marks: "xfail"
+            timeout: 45
           # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
           # receiver. Only the LVGL tests; the rest drive NSPM's Nextion pages.
           - display: terminal-us
             terminal: us
             tests: "test_lvgl_terminal"
+            marks: ""
             timeout: 60
     timeout-minutes: ${{ matrix.timeout }}
     defaults:
@@ -143,7 +161,9 @@ jobs:
           NSPM_QEMU_GDB: "1"
           NSPM_QEMU_TERMINAL: ${{ matrix.terminal }}
           TESTS: ${{ matrix.tests }}
-        run: qemu/run_tests.sh -k "$TESTS"
+          MARKS: ${{ matrix.marks }}
+        # An empty -k or -m selects everything.
+        run: qemu/run_tests.sh -k "$TESTS" -m "$MARKS"
 
       - name: Upload test logs
         if: always()
