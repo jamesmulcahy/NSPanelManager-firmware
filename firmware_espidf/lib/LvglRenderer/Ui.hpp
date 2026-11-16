@@ -45,6 +45,17 @@ lv_obj_t *icon(lv_obj_t *parent, const char *glyph, int size, lv_color_t color);
  * pressed, grey when disabled (LV_STATE_DISABLED), as the Nextion pages' buttons are.
  */
 lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size);
+
+/**
+ * Make `obj` answer touches out to the screen's edge on each side where it is within `reach` px of
+ * it. Fingers land past controls near an edge (Lounge's mute: x 2-6 and y 459-477 for a button at
+ * 10-54, 420-458), and nothing a finger means to press lies between a control and the edge. Sides
+ * farther from an edge keep the control's own bounds, plus `margin` all round (only where no
+ * neighbour is that close, as in the header), so neighbours never lose touches to it. Calling it
+ * again replaces the earlier reach and margin.
+ * Every icon button and tile has this; call it for other controls near an edge.
+ */
+void reach_screen_edges(lv_obj_t *obj, int32_t reach = 24, int32_t margin = 0);
 void set_icon(lv_obj_t *button, const char *glyph);
 void set_enabled(lv_obj_t *button, bool enabled);
 

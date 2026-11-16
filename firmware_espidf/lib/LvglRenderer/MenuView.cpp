@@ -112,6 +112,7 @@ static lv_obj_t *dialog_button(lv_obj_t *parent, bool confirm) {
   lv_obj_t *label = Theme::label(button, "", Theme::title_font(), Theme::text());
   lv_obj_center(label);
   lv_obj_add_event_cb(button, answered, LV_EVENT_CLICKED, confirm ? (void *)1 : NULL);
+  Ui::reach_screen_edges(button);
   return button;
 }
 
