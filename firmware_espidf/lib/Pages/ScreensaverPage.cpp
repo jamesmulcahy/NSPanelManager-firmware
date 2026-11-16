@@ -16,6 +16,7 @@
 #include <StatusUpdateManager_events.hpp>
 // #include <cJSON.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -31,6 +32,7 @@ void ScreensaverPage::init() {
   esp_log_level_set("ScreensaverPage", ConfigManager::log_level);
   ScreensaverPage::_weather_update_data_mutex = xSemaphoreCreateMutex();
   ScreensaverPage::_calendar_mutex = xSemaphoreCreateMutex();
+  ScreensaverPage::_energy_mutex = xSemaphoreCreateMutex();
   // The body turned to another card (GUI task): what the QEMU test and a log reader see of the rotation.
   ScreensaverView::on_card = [](const char *card, uint32_t seconds) { ESP_LOGI("ScreensaverPage", "Screensaver card: %s (%u s)", card, (unsigned)seconds); };
 
@@ -75,6 +77,7 @@ void ScreensaverPage::show() {
 
   // A calendar update that arrived while another page was shown, or whose deferred decode was dropped.
   ScreensaverPage::_decode_calendar_if_stale();
+  ScreensaverPage::_decode_energy_if_stale();
   ScreensaverPage::_go_to_nextion_page();
   ScreensaverPage::_update_displayed_date();
   ScreensaverPage::_update_displayed_time();
@@ -178,6 +181,8 @@ void ScreensaverPage::_mqtt_event_handler(void *arg, esp_event_base_t event_base
 
     std::string calendar_topic = mqtt_base_topic;
     calendar_topic.append("/status/calendar");
+    std::string energy_topic = mqtt_base_topic;
+    energy_topic.append("/status/energy");
 
     std::string inside_temperature_sensor_state_topic = ScreensaverPage::_inside_temperature_sensor_state_topic.get();
     if (topic_string.compare(inside_temperature_sensor_state_topic) == 0) {
@@ -214,6 +219,24 @@ void ScreensaverPage::_mqtt_event_handler(void *arg, esp_event_base_t event_base
         }
       } else {
         ESP_LOGW("ScreensaverPage", "Failed to take calendar mutex while processing new data from MQTT. Will wait for next update.");
+      }
+    } else if (topic_string.compare(energy_topic) == 0) {
+      // As the calendar: store the newest bytes, decode and format on LvglUi's task.
+      if (ScreensaverPage::_energy_mutex != NULL && xSemaphoreTake(ScreensaverPage::_energy_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
+        ScreensaverPage::_energy_mqtt_data.assign(event->data, event->data + event->data_len);
+        ScreensaverPage::_energy_stale = true;
+        xSemaphoreGive(ScreensaverPage::_energy_mutex);
+        if (LvglUi::active() && !ScreensaverPage::_energy_job_queued.exchange(true)) {
+          LvglUi::defer([]() {
+            ScreensaverPage::_energy_job_queued = false;
+            ScreensaverPage::_decode_energy_if_stale();
+            if (ScreensaverPage::showing()) {
+              ScreensaverPage::_lvgl_render();
+            }
+          });
+        }
+      } else {
+        ESP_LOGW("ScreensaverPage", "Failed to take energy mutex while processing new data from MQTT. Will wait for next update.");
       }
     } else if (topic_string.compare(weather_topic) == 0) {
       if (ScreensaverPage::_weather_update_data_mutex != NULL) {
@@ -343,7 +366,7 @@ void ScreensaverPage::_subscribe_to_mqtt_topics() {
   std::string old_manager_address = ScreensaverPage::_subscribed_manager_address.get();
   std::string old_inside_temperature_sensor_mqtt_topic = ScreensaverPage::_inside_temperature_sensor_state_topic.get();
   if (manager_address != old_manager_address) {
-    for (const char *suffix : {"/status/time", "/status/date", "/status/ampm", "/status/weather", "/status/calendar"}) {
+    for (const char *suffix : {"/status/time", "/status/date", "/status/ampm", "/status/weather", "/status/calendar", "/status/energy"}) {
       if (!old_manager_address.empty()) {
         MqttManager::unsubscribe("nspanel/mqttmanager_" + old_manager_address + suffix);
       }
@@ -596,6 +619,7 @@ void ScreensaverPage::_lvgl_render() {
   // The body's rotation (the clock header stays). Card types this firmware doesn't know are skipped.
   state.base_seconds = config->screensaver_base_card_seconds > 0 ? config->screensaver_base_card_seconds : 10;
   bool calendar_card = false;
+  bool energy_card = false;
   // "No screensaver" shows no cards: the backlight is off and nothing rotates.
   for (size_t i = 0; mode != NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__NO_SCREENSAVER && i < config->n_screensaver_cards; i++) {
     const NSPanelConfig__ScreensaverCard *card = config->screensaver_cards[i];
@@ -608,6 +632,10 @@ void ScreensaverPage::_lvgl_render() {
       state.cards.push_back({ScreensaverCardType::CALENDAR, seconds});
       calendar_card = true;
       break;
+    case NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_ENERGY:
+      state.cards.push_back({ScreensaverCardType::ENERGY, seconds});
+      energy_card = true;
+      break;
     default:
       break;
     }
@@ -616,6 +644,10 @@ void ScreensaverPage::_lvgl_render() {
     // Decoded already (the MQTT handler's deferred job, or show()): this only formats a locked copy.
     std::shared_ptr<NSPanelCalendarUpdate> calendar = ScreensaverPage::_calendar.get();
     ScreensaverPage::_format_calendar(calendar.get(), config->clock_us_style, state);
+  }
+  if (energy_card) {
+    std::shared_ptr<NSPanelEnergyUpdate> energy = ScreensaverPage::_energy.get();
+    state.energy = EnergyFormat::format(ScreensaverPage::_energy_values(energy.get()));
   }
   LvglUi::show(LvglUi::View::SCREENSAVER, ScreensaverView::build, [state]() { ScreensaverView::show(state); });
 }
@@ -648,6 +680,51 @@ void ScreensaverPage::_decode_calendar_if_stale() {
     }
   }
   xSemaphoreGive(ScreensaverPage::_calendar_mutex);
+}
+
+void ScreensaverPage::_decode_energy_if_stale() {
+  if (ScreensaverPage::_energy_mutex == NULL || xSemaphoreTake(ScreensaverPage::_energy_mutex, pdMS_TO_TICKS(1000)) != pdPASS) {
+    ESP_LOGW("ScreensaverPage", "Failed to take energy mutex to decode an update. Will retry on the next one.");
+    return;
+  }
+  if (ScreensaverPage::_energy_stale) {
+    ScreensaverPage::_energy_stale = false;
+    NSPanelEnergyUpdate *update = nspanel_energy_update__unpack(NULL, ScreensaverPage::_energy_mqtt_data.size(), ScreensaverPage::_energy_mqtt_data.data());
+    if (update != NULL) {
+      // The cost in cents: no float formatting in the log.
+      ESP_LOGI("ScreensaverPage", "Energy update: power %d (%ld W), cost %d (%ld cents %s/day), lights %d (%ld, alert: %s).", (int)update->power, (long)update->power_watts, (int)update->cost,
+               std::lround(update->cost_per_day * 100), update->currency != NULL ? update->currency : "", (int)update->lights, (long)update->lights_on, update->lights_alert ? "yes" : "no");
+      ScreensaverPage::_energy.set(std::shared_ptr<NSPanelEnergyUpdate>(update, [](NSPanelEnergyUpdate *data) { nspanel_energy_update__free_unpacked(data, NULL); }));
+    } else {
+      ESP_LOGE("ScreensaverPage", "Got an energy update but failed to decode it. Keeping the previous one.");
+    }
+  }
+  xSemaphoreGive(ScreensaverPage::_energy_mutex);
+}
+
+EnergyValues ScreensaverPage::_energy_values(const NSPanelEnergyUpdate *update) {
+  EnergyValues values;
+  if (update == NULL) {
+    return values; // Nothing has arrived yet
+  }
+  values.received = true;
+  values.power = (EnergyValues::Availability)update->power;
+  values.power_watts = update->power_watts;
+  values.cost = (EnergyValues::Availability)update->cost;
+  values.cost_per_day = update->cost_per_day;
+  values.currency = LvglText::drawable(update->currency != NULL ? update->currency : "");
+  std::string symbol = LvglText::utf8(update->currency_symbol != NULL ? update->currency_symbol : "");
+  values.currency_symbol = LvglText::drawable(symbol) == symbol ? symbol : "";
+  values.lights = (EnergyValues::Availability)update->lights;
+  values.lights_on = update->lights_on;
+  values.lights_alert = update->lights_alert;
+  // A value from a newer manager this firmware doesn't know: treat the part as not set up.
+  for (EnergyValues::Availability *availability : {&values.power, &values.cost, &values.lights}) {
+    if (*availability > EnergyValues::AVAILABLE) {
+      *availability = EnergyValues::NOT_CONFIGURED;
+    }
+  }
+  return values;
 }
 
 static bool same_day(const struct tm &a, const struct tm &b) { return a.tm_year == b.tm_year && a.tm_yday == b.tm_yday; }

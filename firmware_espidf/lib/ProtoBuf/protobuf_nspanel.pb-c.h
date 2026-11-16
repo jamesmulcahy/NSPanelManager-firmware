@@ -28,6 +28,7 @@ typedef struct NSPanelWeatherUpdate NSPanelWeatherUpdate;
 typedef struct NSPanelWeatherUpdate__ForecastItem NSPanelWeatherUpdate__ForecastItem;
 typedef struct NSPanelCalendarUpdate NSPanelCalendarUpdate;
 typedef struct NSPanelCalendarUpdate__Event NSPanelCalendarUpdate__Event;
+typedef struct NSPanelEnergyUpdate NSPanelEnergyUpdate;
 typedef struct NSPanelMQTTManagerCommand NSPanelMQTTManagerCommand;
 typedef struct NSPanelMQTTManagerCommand__FirstPageTurnLightOn NSPanelMQTTManagerCommand__FirstPageTurnLightOn;
 typedef struct NSPanelMQTTManagerCommand__FirstPageTurnLightOff NSPanelMQTTManagerCommand__FirstPageTurnLightOff;
@@ -107,7 +108,11 @@ typedef enum _NSPanelConfig__NSPanelScreensaverCardType {
   /*
    * Upcoming events, from NSPanelCalendarUpdate on nspanel/mqttmanager_<address>/status/calendar
    */
-  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_CALENDAR = 1
+  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_CALENDAR = 1,
+  /*
+   * Power draw as cost per day and lights on, from NSPanelEnergyUpdate on nspanel/mqttmanager_<address>/status/energy
+   */
+  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_ENERGY = 2
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE)
 } NSPanelConfig__NSPanelScreensaverCardType;
 typedef enum _NSPanelStatusReport__State {
@@ -149,6 +154,18 @@ typedef enum _NSPanelRoomEntitiesPage__EntitySlot__EntityType {
   NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE__ENTITY_TYPE_COVER = 7
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_ROOM_ENTITIES_PAGE__ENTITY_SLOT__ENTITY_TYPE)
 } NSPanelRoomEntitiesPage__EntitySlot__EntityType;
+typedef enum _NSPanelEnergyUpdate__Availability {
+  /*
+   * Not set up in the manager: the card leaves this part out
+   */
+  NSPANEL_ENERGY_UPDATE__AVAILABILITY__NOT_CONFIGURED = 0,
+  /*
+   * Set up, but there is no value now (a sensor is unavailable, Home Assistant is disconnected)
+   */
+  NSPANEL_ENERGY_UPDATE__AVAILABILITY__UNAVAILABLE = 1,
+  NSPANEL_ENERGY_UPDATE__AVAILABILITY__AVAILABLE = 2
+    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_ENERGY_UPDATE__AVAILABILITY)
+} NSPanelEnergyUpdate__Availability;
 typedef enum _NSPanelMQTTManagerCommand__MediaPlayerCommand__PlaybackAction {
   NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__PLAYBACK_ACTION__NONE = 0,
   NSPANEL_MQTTMANAGER_COMMAND__MEDIA_PLAYER_COMMAND__PLAYBACK_ACTION__PLAY = 1,
@@ -544,6 +561,51 @@ struct  NSPanelCalendarUpdate
     , 0,NULL, 0, 0 }
 
 
+/*
+ * The house's power draw, its cost per day and the number of lights on, for the screensaver's energy card. Published
+ * retained by the manager on nspanel/mqttmanager_<address>/status/energy, one for every panel. The panel formats the
+ * numbers.
+ */
+struct  NSPanelEnergyUpdate
+{
+  ProtobufCMessage base;
+  NSPanelEnergyUpdate__Availability power;
+  /*
+   * The whole house, rounded to 10 W. Negative: exporting
+   */
+  int32_t power_watts;
+  /*
+   * NOT_CONFIGURED without a price; otherwise follows `power`
+   */
+  NSPanelEnergyUpdate__Availability cost;
+  /*
+   * What a whole day would cost at power_watts, in units of `currency`. Negative: a credit
+   */
+  double cost_per_day;
+  /*
+   * ISO 4217 code, from Home Assistant ("USD")
+   */
+  char *currency;
+  /*
+   * "$", "€", "£"; empty: show `currency` instead
+   */
+  char *currency_symbol;
+  NSPanelEnergyUpdate__Availability lights;
+  int32_t lights_on;
+  /*
+   * lights_on is at or above the manager's threshold
+   */
+  protobuf_c_boolean lights_alert;
+  /*
+   * Unix seconds. Always set, so an update never serialises to an empty payload
+   */
+  int64_t generated_at;
+};
+#define NSPANEL_ENERGY_UPDATE__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&nspanel_energy_update__descriptor) \
+    , NSPANEL_ENERGY_UPDATE__AVAILABILITY__NOT_CONFIGURED, 0, NSPANEL_ENERGY_UPDATE__AVAILABILITY__NOT_CONFIGURED, 0, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, NSPANEL_ENERGY_UPDATE__AVAILABILITY__NOT_CONFIGURED, 0, 0, 0 }
+
+
 struct  NSPanelMQTTManagerCommand__FirstPageTurnLightOn
 {
   ProtobufCMessage base;
@@ -919,6 +981,25 @@ NSPanelCalendarUpdate *
 void   nspanel_calendar_update__free_unpacked
                      (NSPanelCalendarUpdate *message,
                       ProtobufCAllocator *allocator);
+/* NSPanelEnergyUpdate methods */
+void   nspanel_energy_update__init
+                     (NSPanelEnergyUpdate         *message);
+size_t nspanel_energy_update__get_packed_size
+                     (const NSPanelEnergyUpdate   *message);
+size_t nspanel_energy_update__pack
+                     (const NSPanelEnergyUpdate   *message,
+                      uint8_t             *out);
+size_t nspanel_energy_update__pack_to_buffer
+                     (const NSPanelEnergyUpdate   *message,
+                      ProtobufCBuffer     *buffer);
+NSPanelEnergyUpdate *
+       nspanel_energy_update__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   nspanel_energy_update__free_unpacked
+                     (NSPanelEnergyUpdate *message,
+                      ProtobufCAllocator *allocator);
 /* NSPanelMQTTManagerCommand__FirstPageTurnLightOn methods */
 void   nspanel_mqttmanager_command__first_page_turn_light_on__init
                      (NSPanelMQTTManagerCommand__FirstPageTurnLightOn         *message);
@@ -1012,6 +1093,9 @@ typedef void (*NSPanelCalendarUpdate__Event_Closure)
 typedef void (*NSPanelCalendarUpdate_Closure)
                  (const NSPanelCalendarUpdate *message,
                   void *closure_data);
+typedef void (*NSPanelEnergyUpdate_Closure)
+                 (const NSPanelEnergyUpdate *message,
+                  void *closure_data);
 typedef void (*NSPanelMQTTManagerCommand__FirstPageTurnLightOn_Closure)
                  (const NSPanelMQTTManagerCommand__FirstPageTurnLightOn *message,
                   void *closure_data);
@@ -1076,6 +1160,8 @@ extern const ProtobufCMessageDescriptor nspanel_weather_update__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_weather_update__forecast_item__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_calendar_update__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_calendar_update__event__descriptor;
+extern const ProtobufCMessageDescriptor nspanel_energy_update__descriptor;
+extern const ProtobufCEnumDescriptor    nspanel_energy_update__availability__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__first_page_turn_light_on__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__first_page_turn_light_off__descriptor;

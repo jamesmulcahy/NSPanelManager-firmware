@@ -30,16 +30,16 @@ mdi="${MDI_TTF:-$root/../../NSPanelManager/docker/web/nspanelmanager/web/static/
 icons() { "$python" -I "$here/lv_icon_font.py" --table "$here/nspm_icons.txt" "$@"; }
 icons --header > "$out/nspm_icons.h"
 # What the built-in Montserrat lacks, for names from Home Assistant: Latin-1 (Café, Björk, ×), dashes,
-# typographic quotes ("James's Music" with U+2019), bullet and ellipsis. The fonts above fall back on these.
+# typographic quotes ("James's Music" with U+2019), bullet and ellipsis; the euro and rupee signs for the energy card. The fonts above fall back on these.
 montserrat="${MONTSERRAT_TTF:-${LVGL_DIR:-$root/managed_components/lvgl__lvgl}/scripts/generators/built_in_font/Montserrat-Medium.ttf}"
-latin=00A1-00FF,2013-2014,2018-201E,2022,2026
+latin=00A1-00FF,2013-2014,2018-201E,2022,2026,20AC,20B9
 "$python" -I "$here/lv_icon_font.py" --ttf "$montserrat" --size 14 --bpp "$body_bpp" --codes "$latin" nspm_font_body_latin > "$out/nspm_font_body_latin.c"
 "$python" -I "$here/lv_icon_font.py" --ttf "$montserrat" --size 20 --bpp "$large_bpp" --codes "$latin" nspm_font_title_latin > "$out/nspm_font_title_latin.c"
 # The screensaver's clock on a portrait screen: larger than LVGL's largest built-in size, so
 # rasterised from the TTF. Digits, colon and dash: 88 px still fits "10:00 PM" across the card.
 "$python" -I "$here/lv_icon_font.py" --ttf "$montserrat" --size 88 --bpp "$large_bpp" --codes 002D,0030-003A nspm_font_clock_88 > "$out/nspm_font_clock_88.c"
 icons --ttf "$mdi" --size 24 --bpp "$large_bpp" nspm_font_icon_24 > "$out/nspm_font_icon_24.c"
-# Tiles, transport and big buttons; the empty calendar card.
-icons --ttf "$mdi" --size 40 --bpp "$large_bpp" --icons chevron-left,chevron-right,ceiling-light,lamp,lamps,lightbulb,lightbulb-outline,lightbulb-group,toggle-switch,toggle-switch-off-outline,power-socket-us,fan,gesture-tap-button,window-shutter,window-shutter-open,blinds,garage,thermostat,television,coffee-maker,sofa,speaker,palette,palette-swatch,play,pause,skip-previous,skip-next,shield-home,shield-off,weather-night,spray-bottle,restart,music,arrow-up,arrow-down,stop,calendar nspm_font_icon_40 > "$out/nspm_font_icon_40.c"
-# The current weather, the cleaning screen and the album art placeholder.
-icons --ttf "$mdi" --size 64 --bpp "$large_bpp" --icons weather-sunny,weather-partly-cloudy,weather-cloudy,weather-rainy,weather-partly-rainy,weather-pouring,weather-snowy,weather-lightning,weather-fog,weather-night,weather-night-partly-cloudy,weather-windy,spray-bottle,music nspm_font_icon_64 > "$out/nspm_font_icon_64.c"
+# Tiles, transport and big buttons; the empty calendar card; the energy card's lights.
+icons --ttf "$mdi" --size 40 --bpp "$large_bpp" --icons chevron-left,chevron-right,ceiling-light,lamp,lamps,lightbulb,lightbulb-outline,lightbulb-group,toggle-switch,toggle-switch-off-outline,power-socket-us,fan,gesture-tap-button,window-shutter,window-shutter-open,blinds,garage,thermostat,television,coffee-maker,sofa,speaker,palette,palette-swatch,play,pause,skip-previous,skip-next,shield-home,shield-off,weather-night,spray-bottle,restart,music,arrow-up,arrow-down,stop,calendar,lightbulb-on nspm_font_icon_40 > "$out/nspm_font_icon_40.c"
+# The current weather, the cleaning screen, the album art placeholder and the energy card's power.
+icons --ttf "$mdi" --size 64 --bpp "$large_bpp" --icons weather-sunny,weather-partly-cloudy,weather-cloudy,weather-rainy,weather-partly-rainy,weather-pouring,weather-snowy,weather-lightning,weather-fog,weather-night,weather-night-partly-cloudy,weather-windy,spray-bottle,music,lightning-bolt nspm_font_icon_64 > "$out/nspm_font_icon_64.c"
