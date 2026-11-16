@@ -89,3 +89,4 @@
 #define NSPM_ICON_RESTART                        "\xEE\x81\x94" /* mdi-restart, U+F0709 */
 #define NSPM_ICON_LOCK                           "\xEE\x81\x95" /* mdi-lock, U+F033E */
 #define NSPM_ICON_ALERT_CIRCLE_OUTLINE           "\xEE\x81\x96" /* mdi-alert-circle-outline, U+F05D6 */
+#define NSPM_ICON_CALENDAR                       "\xEE\x81\x97" /* mdi-calendar, U+F00ED */
