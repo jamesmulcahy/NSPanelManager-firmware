@@ -13,14 +13,37 @@ ESP_EVENT_DEFINE_BASE(EVENTLOOPWATCHDOG_EVENT);
 
 void EventLoopWatchdog::init() {
   EventLoopWatchdog::_last_handled_us = esp_timer_get_time();
+  // Always registered, enabled or not, and never unregistered: doing either after boot can deadlock the loop.
   if (esp_event_handler_register(EVENTLOOPWATCHDOG_EVENT, 0, &EventLoopWatchdog::_probe_handler, NULL) != ESP_OK) [[unlikely]] {
     ESP_LOGE("LoopWatchdog", "Failed to register the probe handler.");
+  }
+}
+
+void EventLoopWatchdog::set_enabled(bool enable) {
+  if (!enable) {
+    if (EventLoopWatchdog::_wanted.exchange(false)) {
+      ESP_LOGI("LoopWatchdog", "Disabled; the watch task exits at its next wake-up.");
+    }
     return;
   }
-  // Low priority, like the other helpers that post to the default loop, so the Wi-Fi task wins any tie.
-  if (xTaskCreatePinnedToCore(&EventLoopWatchdog::_task_watch, "loop_watchdog", 4096, NULL, 2, NULL, 1) != pdPASS) [[unlikely]] {
-    ESP_LOGE("LoopWatchdog", "Failed to create the watchdog task.");
+
+  // Order matters: the clock and the rearm flag are set before _wanted, so a task that sees _wanted sees them.
+  EventLoopWatchdog::_last_handled_us = esp_timer_get_time();
+  EventLoopWatchdog::_rearm = true;
+  if (EventLoopWatchdog::_wanted.exchange(true)) {
+    return; // Already enabled.
   }
+  ESP_LOGI("LoopWatchdog", "Enabled.");
+  bool expected = false;
+  if (EventLoopWatchdog::_task_alive.compare_exchange_strong(expected, true)) {
+    // Low priority, like the other helpers that post to the default loop, so the Wi-Fi task wins any tie.
+    if (xTaskCreatePinnedToCore(&EventLoopWatchdog::_task_watch, "loop_watchdog", 4096, NULL, 2, NULL, 1) != pdPASS) [[unlikely]] {
+      ESP_LOGE("LoopWatchdog", "Failed to create the watchdog task.");
+      EventLoopWatchdog::_task_alive = false;
+      EventLoopWatchdog::_wanted = false;
+    }
+  }
+  // Otherwise a task from before a quick disable is still alive: it sees _wanted again and carries on.
 }
 
 void EventLoopWatchdog::_probe_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
@@ -31,6 +54,20 @@ void EventLoopWatchdog::_task_watch(void *param) {
   bool reported = false;
   for (;;) {
     vTaskDelay(pdMS_TO_TICKS(EventLoopWatchdog::probe_interval_ms));
+    if (!EventLoopWatchdog::_wanted) {
+      EventLoopWatchdog::_task_alive = false;
+      // An enable between the check above and the line before saw a live task and started none. Take the role back.
+      bool expected = false;
+      if (EventLoopWatchdog::_wanted && EventLoopWatchdog::_task_alive.compare_exchange_strong(expected, true)) {
+        continue;
+      }
+      ESP_LOGI("LoopWatchdog", "Watch task stopped.");
+      vTaskDelete(NULL);
+    }
+    if (EventLoopWatchdog::_rearm.exchange(false)) {
+      reported = false;
+      continue; // _last_handled_us was reset by the enable; probe on the next round.
+    }
     // Timeout 0: only take a slot that is already free. Waiting on the queue of a stalled loop would
     // stall this task too, and it would never report.
     esp_event_post(EVENTLOOPWATCHDOG_EVENT, 0, NULL, 0, 0);
@@ -59,7 +96,13 @@ void EventLoopWatchdog::_capture_putc(char c) {
 }
 
 void EventLoopWatchdog::_log_all_backtraces() {
-  EventLoopWatchdog::_capture = (char *)heap_caps_malloc(EventLoopWatchdog::capture_size, MALLOC_CAP_8BIT);
+  // PSRAM first: 16 KB of internal RAM is the last thing a stalled panel has to spare. Safe there because
+  // _capture_putc() runs in this task's context with the scheduler suspended and the other core held in
+  // an IPC call, so no flash operation can have the cache off meanwhile (esp_backtrace_print_all_tasks()).
+  EventLoopWatchdog::_capture = (char *)heap_caps_malloc(EventLoopWatchdog::capture_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (EventLoopWatchdog::_capture == nullptr) {
+    EventLoopWatchdog::_capture = (char *)heap_caps_malloc(EventLoopWatchdog::capture_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  }
   if (EventLoopWatchdog::_capture == nullptr) {
     ESP_LOGE("LoopWatchdog", "No memory for the backtrace capture.");
     return;
