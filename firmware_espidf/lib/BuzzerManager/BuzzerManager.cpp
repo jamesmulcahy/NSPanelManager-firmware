@@ -235,7 +235,9 @@ void BuzzerManager::_config_event_handler(void *arg, esp_event_base_t event_base
     case NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_SAVED:
       event = buzzer_event_t::SCENE_SAVED;
       break;
-    // TODO: Map NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TIMER_FIRED to buzzer_event_t::TIMER_FIRED once the proto copy has it.
+    case NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TIMER_FIRED:
+      event = buzzer_event_t::TIMER_FIRED;
+      break;
     default:
       ESP_LOGD("BuzzerManager", "Ignoring sound for unknown event %d.", sound->event);
       continue;

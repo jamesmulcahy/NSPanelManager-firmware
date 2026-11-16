@@ -780,19 +780,21 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_button_mode__descriptor =
   nspanel_config__nspanel_button_mode__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCEnumValue nspanel_config__nspanel_sound_event__enum_values_by_number[3] =
+static const ProtobufCEnumValue nspanel_config__nspanel_sound_event__enum_values_by_number[4] =
 {
   { "TOUCH", "NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TOUCH", 0 },
   { "SCENE_ACTIVATED", "NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_ACTIVATED", 1 },
   { "SCENE_SAVED", "NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_SAVED", 2 },
+  { "TIMER_FIRED", "NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TIMER_FIRED", 3 },
 };
 static const ProtobufCIntRange nspanel_config__nspanel_sound_event__value_ranges[] = {
-{0, 0},{0, 3}
+{0, 0},{0, 4}
 };
-static const ProtobufCEnumValueIndex nspanel_config__nspanel_sound_event__enum_values_by_name[3] =
+static const ProtobufCEnumValueIndex nspanel_config__nspanel_sound_event__enum_values_by_name[4] =
 {
   { "SCENE_ACTIVATED", 1 },
   { "SCENE_SAVED", 2 },
+  { "TIMER_FIRED", 3 },
   { "TOUCH", 0 },
 };
 const ProtobufCEnumDescriptor nspanel_config__nspanel_sound_event__descriptor =
@@ -802,9 +804,9 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_sound_event__descriptor =
   "NSPanelSoundEvent",
   "NSPanelConfig__NSPanelSoundEvent",
   "",
-  3,
+  4,
   nspanel_config__nspanel_sound_event__enum_values_by_number,
-  3,
+  4,
   nspanel_config__nspanel_sound_event__enum_values_by_name,
   1,
   nspanel_config__nspanel_sound_event__value_ranges,

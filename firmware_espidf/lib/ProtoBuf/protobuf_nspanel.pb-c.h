@@ -94,7 +94,11 @@ typedef enum _NSPanelConfig__NSPanelSoundEvent {
   /*
    * A scene was saved from the panel
    */
-  NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_SAVED = 2
+  NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_SAVED = 2,
+  /*
+   * A timer started on the panel finished. Repeated until dismissed.
+   */
+  NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TIMER_FIRED = 3
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_CONFIG__NSPANEL_SOUND_EVENT)
 } NSPanelConfig__NSPanelSoundEvent;
 /*
