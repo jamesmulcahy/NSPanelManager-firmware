@@ -25,6 +25,7 @@ enum class buzzer_event_t {
   TOUCH,           // The screen was touched
   SCENE_ACTIVATED, // A scene was triggered from the panel
   SCENE_SAVED,     // A scene was saved from the panel
+  TIMER_FIRED,     // A timer started on the panel finished (TimerManager). Repeated until dismissed
   COUNT,
 };
 
