@@ -19,6 +19,12 @@ void   nspanel_config__sound__init
   static const NSPanelConfig__Sound init_value = NSPANEL_CONFIG__SOUND__INIT;
   *message = init_value;
 }
+void   nspanel_config__screensaver_card__init
+                     (NSPanelConfig__ScreensaverCard         *message)
+{
+  static const NSPanelConfig__ScreensaverCard init_value = NSPANEL_CONFIG__SCREENSAVER_CARD__INIT;
+  *message = init_value;
+}
 void   nspanel_config__init
                      (NSPanelConfig         *message)
 {
@@ -301,6 +307,57 @@ void   nspanel_weather_update__free_unpacked
   assert(message->base.descriptor == &nspanel_weather_update__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
+void   nspanel_calendar_update__event__init
+                     (NSPanelCalendarUpdate__Event         *message)
+{
+  static const NSPanelCalendarUpdate__Event init_value = NSPANEL_CALENDAR_UPDATE__EVENT__INIT;
+  *message = init_value;
+}
+void   nspanel_calendar_update__init
+                     (NSPanelCalendarUpdate         *message)
+{
+  static const NSPanelCalendarUpdate init_value = NSPANEL_CALENDAR_UPDATE__INIT;
+  *message = init_value;
+}
+size_t nspanel_calendar_update__get_packed_size
+                     (const NSPanelCalendarUpdate *message)
+{
+  assert(message->base.descriptor == &nspanel_calendar_update__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t nspanel_calendar_update__pack
+                     (const NSPanelCalendarUpdate *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &nspanel_calendar_update__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t nspanel_calendar_update__pack_to_buffer
+                     (const NSPanelCalendarUpdate *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &nspanel_calendar_update__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+NSPanelCalendarUpdate *
+       nspanel_calendar_update__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (NSPanelCalendarUpdate *)
+     protobuf_c_message_unpack (&nspanel_calendar_update__descriptor,
+                                allocator, len, data);
+}
+void   nspanel_calendar_update__free_unpacked
+                     (NSPanelCalendarUpdate *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &nspanel_calendar_update__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
 void   nspanel_mqttmanager_command__first_page_turn_light_on__init
                      (NSPanelMQTTManagerCommand__FirstPageTurnLightOn         *message)
 {
@@ -527,6 +584,57 @@ const ProtobufCMessageDescriptor nspanel_config__sound__descriptor =
   (ProtobufCMessageInit) nspanel_config__sound__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
+static const ProtobufCFieldDescriptor nspanel_config__screensaver_card__field_descriptors[2] =
+{
+  {
+    "type",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelConfig__ScreensaverCard, type),
+    &nspanel_config__nspanel_screensaver_card_type__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "seconds",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT32,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelConfig__ScreensaverCard, seconds),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned nspanel_config__screensaver_card__field_indices_by_name[] = {
+  1,   /* field[1] = seconds */
+  0,   /* field[0] = type */
+};
+static const ProtobufCIntRange nspanel_config__screensaver_card__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 2 }
+};
+const ProtobufCMessageDescriptor nspanel_config__screensaver_card__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "NSPanelConfig.ScreensaverCard",
+  "ScreensaverCard",
+  "NSPanelConfig__ScreensaverCard",
+  "",
+  sizeof(NSPanelConfig__ScreensaverCard),
+  2,
+  nspanel_config__screensaver_card__field_descriptors,
+  nspanel_config__screensaver_card__field_indices_by_name,
+  1,  nspanel_config__screensaver_card__number_ranges,
+  (ProtobufCMessageInit) nspanel_config__screensaver_card__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
 static const ProtobufCEnumValue nspanel_config__nspanel_default_page__enum_values_by_number[3] =
 {
   { "HOME", "NSPANEL_CONFIG__NSPANEL_DEFAULT_PAGE__HOME", 0 },
@@ -657,7 +765,35 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_sound_event__descriptor =
   nspanel_config__nspanel_sound_event__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[42] =
+static const ProtobufCEnumValue nspanel_config__nspanel_screensaver_card_type__enum_values_by_number[2] =
+{
+  { "SCREENSAVER_CARD_UNSPECIFIED", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_UNSPECIFIED", 0 },
+  { "SCREENSAVER_CARD_CALENDAR", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_CALENDAR", 1 },
+};
+static const ProtobufCIntRange nspanel_config__nspanel_screensaver_card_type__value_ranges[] = {
+{0, 0},{0, 2}
+};
+static const ProtobufCEnumValueIndex nspanel_config__nspanel_screensaver_card_type__enum_values_by_name[2] =
+{
+  { "SCREENSAVER_CARD_CALENDAR", 1 },
+  { "SCREENSAVER_CARD_UNSPECIFIED", 0 },
+};
+const ProtobufCEnumDescriptor nspanel_config__nspanel_screensaver_card_type__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "NSPanelConfig.NSPanelScreensaverCardType",
+  "NSPanelScreensaverCardType",
+  "NSPanelConfig__NSPanelScreensaverCardType",
+  "",
+  2,
+  nspanel_config__nspanel_screensaver_card_type__enum_values_by_number,
+  2,
+  nspanel_config__nspanel_screensaver_card_type__enum_values_by_name,
+  1,
+  nspanel_config__nspanel_screensaver_card_type__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[44] =
 {
   {
     "name",
@@ -1163,6 +1299,30 @@ static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[42] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "screensaver_cards",
+    51,
+    PROTOBUF_C_LABEL_REPEATED,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(NSPanelConfig, n_screensaver_cards),
+    offsetof(NSPanelConfig, screensaver_cards),
+    &nspanel_config__screensaver_card__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "screensaver_base_card_seconds",
+    52,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT32,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelConfig, screensaver_base_card_seconds),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_config__field_indices_by_name[] = {
   38,   /* field[38] = button1_entity_page_topic */
@@ -1197,6 +1357,8 @@ static const unsigned nspanel_config__field_indices_by_name[] = {
   16,   /* field[16] = room_infos */
   8,   /* field[8] = screen_dim_level */
   3,   /* field[3] = screensaver_activation_timeout */
+  43,   /* field[43] = screensaver_base_card_seconds */
+  42,   /* field[42] = screensaver_cards */
   9,   /* field[9] = screensaver_dim_level */
   10,   /* field[10] = screensaver_mode */
   11,   /* field[11] = show_screensaver_inside_temperature */
@@ -1215,7 +1377,7 @@ static const ProtobufCIntRange nspanel_config__number_ranges[5 + 1] =
   { 30, 23 },
   { 35, 27 },
   { 37, 28 },
-  { 0, 42 }
+  { 0, 44 }
 };
 const ProtobufCMessageDescriptor nspanel_config__descriptor =
 {
@@ -1225,7 +1387,7 @@ const ProtobufCMessageDescriptor nspanel_config__descriptor =
   "NSPanelConfig",
   "",
   sizeof(NSPanelConfig),
-  42,
+  44,
   nspanel_config__field_descriptors,
   nspanel_config__field_indices_by_name,
   5,  nspanel_config__number_ranges,
@@ -2319,6 +2481,160 @@ const ProtobufCMessageDescriptor nspanel_weather_update__descriptor =
   nspanel_weather_update__field_indices_by_name,
   1,  nspanel_weather_update__number_ranges,
   (ProtobufCMessageInit) nspanel_weather_update__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCFieldDescriptor nspanel_calendar_update__event__field_descriptors[5] =
+{
+  {
+    "summary",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelCalendarUpdate__Event, summary),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "start",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelCalendarUpdate__Event, start),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "end",
+    3,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelCalendarUpdate__Event, end),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "all_day",
+    4,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelCalendarUpdate__Event, all_day),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "when_string",
+    5,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelCalendarUpdate__Event, when_string),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned nspanel_calendar_update__event__field_indices_by_name[] = {
+  3,   /* field[3] = all_day */
+  2,   /* field[2] = end */
+  1,   /* field[1] = start */
+  0,   /* field[0] = summary */
+  4,   /* field[4] = when_string */
+};
+static const ProtobufCIntRange nspanel_calendar_update__event__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 5 }
+};
+const ProtobufCMessageDescriptor nspanel_calendar_update__event__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "NSPanelCalendarUpdate.Event",
+  "Event",
+  "NSPanelCalendarUpdate__Event",
+  "",
+  sizeof(NSPanelCalendarUpdate__Event),
+  5,
+  nspanel_calendar_update__event__field_descriptors,
+  nspanel_calendar_update__event__field_indices_by_name,
+  1,  nspanel_calendar_update__event__number_ranges,
+  (ProtobufCMessageInit) nspanel_calendar_update__event__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCFieldDescriptor nspanel_calendar_update__field_descriptors[3] =
+{
+  {
+    "events",
+    1,
+    PROTOBUF_C_LABEL_REPEATED,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(NSPanelCalendarUpdate, n_events),
+    offsetof(NSPanelCalendarUpdate, events),
+    &nspanel_calendar_update__event__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "lookahead_hours",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT32,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelCalendarUpdate, lookahead_hours),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "generated_at",
+    3,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelCalendarUpdate, generated_at),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned nspanel_calendar_update__field_indices_by_name[] = {
+  0,   /* field[0] = events */
+  2,   /* field[2] = generated_at */
+  1,   /* field[1] = lookahead_hours */
+};
+static const ProtobufCIntRange nspanel_calendar_update__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 3 }
+};
+const ProtobufCMessageDescriptor nspanel_calendar_update__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "NSPanelCalendarUpdate",
+  "NSPanelCalendarUpdate",
+  "NSPanelCalendarUpdate",
+  "",
+  sizeof(NSPanelCalendarUpdate),
+  3,
+  nspanel_calendar_update__field_descriptors,
+  nspanel_calendar_update__field_indices_by_name,
+  1,  nspanel_calendar_update__number_ranges,
+  (ProtobufCMessageInit) nspanel_calendar_update__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
 static const ProtobufCFieldDescriptor nspanel_mqttmanager_command__first_page_turn_light_on__field_descriptors[7] =
