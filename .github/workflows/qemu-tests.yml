@@ -97,10 +97,10 @@ jobs:
             marks: "xfail"
             timeout: 45
           # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
-          # receiver. Only the LVGL tests; the rest drive NSPM's Nextion pages.
+          # receiver. Only the LVGL tests (the UI, and the timers); the rest drive NSPM's Nextion pages.
           - display: terminal-us
             terminal: us
-            tests: "test_lvgl_terminal"
+            tests: "test_lvgl_terminal or test_timers"
             marks: ""
             timeout: 60
     timeout-minutes: ${{ matrix.timeout }}
