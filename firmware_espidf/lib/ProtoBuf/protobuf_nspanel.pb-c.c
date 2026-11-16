@@ -358,6 +358,51 @@ void   nspanel_calendar_update__free_unpacked
   assert(message->base.descriptor == &nspanel_calendar_update__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
+void   nspanel_energy_update__init
+                     (NSPanelEnergyUpdate         *message)
+{
+  static const NSPanelEnergyUpdate init_value = NSPANEL_ENERGY_UPDATE__INIT;
+  *message = init_value;
+}
+size_t nspanel_energy_update__get_packed_size
+                     (const NSPanelEnergyUpdate *message)
+{
+  assert(message->base.descriptor == &nspanel_energy_update__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t nspanel_energy_update__pack
+                     (const NSPanelEnergyUpdate *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &nspanel_energy_update__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t nspanel_energy_update__pack_to_buffer
+                     (const NSPanelEnergyUpdate *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &nspanel_energy_update__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+NSPanelEnergyUpdate *
+       nspanel_energy_update__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (NSPanelEnergyUpdate *)
+     protobuf_c_message_unpack (&nspanel_energy_update__descriptor,
+                                allocator, len, data);
+}
+void   nspanel_energy_update__free_unpacked
+                     (NSPanelEnergyUpdate *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &nspanel_energy_update__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
 void   nspanel_mqttmanager_command__first_page_turn_light_on__init
                      (NSPanelMQTTManagerCommand__FirstPageTurnLightOn         *message)
 {
@@ -765,17 +810,19 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_sound_event__descriptor =
   nspanel_config__nspanel_sound_event__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCEnumValue nspanel_config__nspanel_screensaver_card_type__enum_values_by_number[2] =
+static const ProtobufCEnumValue nspanel_config__nspanel_screensaver_card_type__enum_values_by_number[3] =
 {
   { "SCREENSAVER_CARD_UNSPECIFIED", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_UNSPECIFIED", 0 },
   { "SCREENSAVER_CARD_CALENDAR", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_CALENDAR", 1 },
+  { "SCREENSAVER_CARD_ENERGY", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_ENERGY", 2 },
 };
 static const ProtobufCIntRange nspanel_config__nspanel_screensaver_card_type__value_ranges[] = {
-{0, 0},{0, 2}
+{0, 0},{0, 3}
 };
-static const ProtobufCEnumValueIndex nspanel_config__nspanel_screensaver_card_type__enum_values_by_name[2] =
+static const ProtobufCEnumValueIndex nspanel_config__nspanel_screensaver_card_type__enum_values_by_name[3] =
 {
   { "SCREENSAVER_CARD_CALENDAR", 1 },
+  { "SCREENSAVER_CARD_ENERGY", 2 },
   { "SCREENSAVER_CARD_UNSPECIFIED", 0 },
 };
 const ProtobufCEnumDescriptor nspanel_config__nspanel_screensaver_card_type__descriptor =
@@ -785,9 +832,9 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_screensaver_card_type__des
   "NSPanelScreensaverCardType",
   "NSPanelConfig__NSPanelScreensaverCardType",
   "",
-  2,
+  3,
   nspanel_config__nspanel_screensaver_card_type__enum_values_by_number,
-  2,
+  3,
   nspanel_config__nspanel_screensaver_card_type__enum_values_by_name,
   1,
   nspanel_config__nspanel_screensaver_card_type__value_ranges,
@@ -2635,6 +2682,191 @@ const ProtobufCMessageDescriptor nspanel_calendar_update__descriptor =
   nspanel_calendar_update__field_indices_by_name,
   1,  nspanel_calendar_update__number_ranges,
   (ProtobufCMessageInit) nspanel_calendar_update__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCEnumValue nspanel_energy_update__availability__enum_values_by_number[3] =
+{
+  { "NOT_CONFIGURED", "NSPANEL_ENERGY_UPDATE__AVAILABILITY__NOT_CONFIGURED", 0 },
+  { "UNAVAILABLE", "NSPANEL_ENERGY_UPDATE__AVAILABILITY__UNAVAILABLE", 1 },
+  { "AVAILABLE", "NSPANEL_ENERGY_UPDATE__AVAILABILITY__AVAILABLE", 2 },
+};
+static const ProtobufCIntRange nspanel_energy_update__availability__value_ranges[] = {
+{0, 0},{0, 3}
+};
+static const ProtobufCEnumValueIndex nspanel_energy_update__availability__enum_values_by_name[3] =
+{
+  { "AVAILABLE", 2 },
+  { "NOT_CONFIGURED", 0 },
+  { "UNAVAILABLE", 1 },
+};
+const ProtobufCEnumDescriptor nspanel_energy_update__availability__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "NSPanelEnergyUpdate.Availability",
+  "Availability",
+  "NSPanelEnergyUpdate__Availability",
+  "",
+  3,
+  nspanel_energy_update__availability__enum_values_by_number,
+  3,
+  nspanel_energy_update__availability__enum_values_by_name,
+  1,
+  nspanel_energy_update__availability__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCFieldDescriptor nspanel_energy_update__field_descriptors[10] =
+{
+  {
+    "power",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, power),
+    &nspanel_energy_update__availability__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "power_watts",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT32,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, power_watts),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "cost",
+    3,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, cost),
+    &nspanel_energy_update__availability__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "cost_per_day",
+    4,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_DOUBLE,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, cost_per_day),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "currency",
+    5,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, currency),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "currency_symbol",
+    6,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, currency_symbol),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "lights",
+    7,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, lights),
+    &nspanel_energy_update__availability__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "lights_on",
+    8,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT32,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, lights_on),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "lights_alert",
+    9,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, lights_alert),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "generated_at",
+    10,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_INT64,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelEnergyUpdate, generated_at),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned nspanel_energy_update__field_indices_by_name[] = {
+  2,   /* field[2] = cost */
+  3,   /* field[3] = cost_per_day */
+  4,   /* field[4] = currency */
+  5,   /* field[5] = currency_symbol */
+  9,   /* field[9] = generated_at */
+  6,   /* field[6] = lights */
+  8,   /* field[8] = lights_alert */
+  7,   /* field[7] = lights_on */
+  0,   /* field[0] = power */
+  1,   /* field[1] = power_watts */
+};
+static const ProtobufCIntRange nspanel_energy_update__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 10 }
+};
+const ProtobufCMessageDescriptor nspanel_energy_update__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "NSPanelEnergyUpdate",
+  "NSPanelEnergyUpdate",
+  "NSPanelEnergyUpdate",
+  "",
+  sizeof(NSPanelEnergyUpdate),
+  10,
+  nspanel_energy_update__field_descriptors,
+  nspanel_energy_update__field_indices_by_name,
+  1,  nspanel_energy_update__number_ranges,
+  (ProtobufCMessageInit) nspanel_energy_update__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
 static const ProtobufCFieldDescriptor nspanel_mqttmanager_command__first_page_turn_light_on__field_descriptors[7] =
