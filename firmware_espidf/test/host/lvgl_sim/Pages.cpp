@@ -460,6 +460,94 @@ static void build_saver_clock(lv_obj_t *root, bool landscape) {
   ScreensaverView::show(saver);
 }
 
+// The calendar card. Events as the page formats them: a heading per day, "time | title" rows, and
+// the event under way as "Now".
+static void saver_calendar(int events) {
+  struct Event {
+    const char *day, *time, *summary;
+    bool now;
+  };
+  static const Event all[] = {
+      {"Today", "Now", "Lunch with Sam", true},
+      {"Today", "3:00 PM", "Dentist", false},
+      {"Today", "5:30 PM", "Soccer practice (Oliver)", false},
+      {"Today", "7:00 PM", "Book club", false},
+      {"Tomorrow", "All day", "Bin day", false},
+      {"Tomorrow", "9:00 AM", "Standup", false},
+      {"Tomorrow", "12:30 PM", "Haircut", false},
+      {"Tomorrow", "6:00 PM", "Dinner at Alex's", false},
+      {"Wed 18", "All day", "School holiday", false},
+      {"Wed 18", "8:15 AM", "Car service", false},
+      {"Wed 18", "11:00 AM", "Plumber", false},
+      {"Wed 18", "4:00 PM", "Piano lesson", false},
+  };
+  saver.calendar.clear();
+  for (int i = 0; i < events && i < (int)(sizeof(all) / sizeof(all[0])); i++) {
+    if (saver.calendar.empty() || saver.calendar.back().heading != all[i].day) {
+      saver.calendar.push_back(CalendarDay{all[i].day, {}});
+    }
+    saver.calendar.back().rows.push_back(CalendarRow{all[i].time, all[i].summary, all[i].now});
+  }
+  saver.empty_text = "No events in the next 48 hours";
+}
+// The weather card, then the calendar card: shown on the calendar, as after the first turn.
+static void saver_cards(lv_obj_t *root, bool landscape, int events, bool background) {
+  ScreensaverView::build(root, landscape);
+  saver_mock();
+  saver.background = background;
+  saver.base_seconds = 10;
+  saver.cards = {{ScreensaverCardType::CALENDAR, 15}};
+  saver_calendar(events);
+  ScreensaverView::show(saver);
+  ScreensaverView::next_card();
+}
+// Weather and calendar: the first frame is the weather, the update the turn to the calendar.
+static void build_saver_rotation(lv_obj_t *root, bool landscape) {
+  saver_cards(root, landscape, 7, true);
+  ScreensaverView::next_card();
+}
+static void update_saver_turn() { ScreensaverView::next_card(); }
+static void build_saver_weather_plain(lv_obj_t *root, bool landscape) {
+  build_saver_weather(root, landscape);
+  saver.background = false;
+  ScreensaverView::show(saver);
+}
+static void build_saver_calendar_0(lv_obj_t *root, bool landscape) { saver_cards(root, landscape, 0, true); }
+static void build_saver_calendar_1(lv_obj_t *root, bool landscape) { saver_cards(root, landscape, 1, true); }
+static void build_saver_calendar_7(lv_obj_t *root, bool landscape) { saver_cards(root, landscape, 7, true); }
+static void build_saver_calendar_12(lv_obj_t *root, bool landscape) { saver_cards(root, landscape, 12, true); }
+static void build_saver_calendar_plain(lv_obj_t *root, bool landscape) { saver_cards(root, landscape, 7, false); }
+static void build_saver_calendar_0_plain(lv_obj_t *root, bool landscape) { saver_cards(root, landscape, 0, false); }
+// A title far too long for its row, with emoji the fonts lack, and a long "now" time.
+static void build_saver_calendar_long(lv_obj_t *root, bool landscape) {
+  saver_cards(root, landscape, 3, true);
+  saver.calendar[0].rows[0].time = "Now \xC2\xB7 until 4:00 PM";
+  saver.calendar[0].rows[0].summary = "Lunch with Sam at the new ramen place";
+  saver.date = "Wednesday 30 September";
+  saver.calendar[0].rows[1].summary = "\xF0\x9F\x8E\x82 Grandma's 90th birthday party \xF0\x9F\x8E\x89 at the community hall on Main Street";
+  ScreensaverView::show(saver);
+}
+// Events come and go while the calendar is shown: the card stays, the lines change.
+static void update_saver_calendar() {
+  saver_calendar(4);
+  ScreensaverView::show(saver);
+}
+// The date-time screensaver with the calendar as its only card: the clock header over it, no turns.
+static void build_saver_datetime_calendar(lv_obj_t *root, bool landscape) {
+  ScreensaverView::build(root, landscape);
+  saver_mock();
+  saver.weather = false;
+  saver.background = false;
+  saver.cards = {{ScreensaverCardType::CALENDAR, 0}};
+  saver_calendar(7);
+  ScreensaverView::show(saver);
+}
+static void build_saver_datetime_calendar_bg(lv_obj_t *root, bool landscape) {
+  build_saver_datetime_calendar(root, landscape);
+  saver.background = true;
+  ScreensaverView::show(saver);
+}
+
 static MenuState menu;
 static void build_menu(lv_obj_t *root, bool landscape) {
   MenuView::build(root, landscape);
@@ -541,6 +629,17 @@ const std::vector<PageCase> &page_cases() {
       {"media-no-art", build_media_noart, "play -> pause", update_media_pause},
       {"screensaver-weather", build_saver_weather, "clock 12:34 -> 12:35", update_saver_tick},
       {"screensaver-clock", build_saver_clock, "clock 12:34 -> 12:35", update_saver_tick},
+      {"screensaver-weather-plain", build_saver_weather_plain, "clock 12:34 -> 12:35", update_saver_tick},
+      {"screensaver-rotation", build_saver_rotation, "turn: weather -> calendar", update_saver_turn},
+      {"screensaver-calendar-0", build_saver_calendar_0, "turn: calendar -> weather", update_saver_turn},
+      {"screensaver-calendar-0-plain", build_saver_calendar_0_plain, nullptr, nullptr},
+      {"screensaver-calendar-1", build_saver_calendar_1, nullptr, nullptr},
+      {"screensaver-calendar-7", build_saver_calendar_7, "events 7 -> 4", update_saver_calendar},
+      {"screensaver-calendar-12", build_saver_calendar_12, nullptr, nullptr},
+      {"screensaver-calendar-long", build_saver_calendar_long, nullptr, nullptr},
+      {"screensaver-calendar-plain", build_saver_calendar_plain, nullptr, nullptr},
+      {"screensaver-datetime-calendar", build_saver_datetime_calendar, "clock 12:34 -> 12:35", update_saver_tick},
+      {"screensaver-datetime-calendar-bg", build_saver_datetime_calendar_bg, nullptr, nullptr},
       {"menu", build_menu, "reboot dialog opens", update_menu_dialog},
       {"menu-dialog", build_menu_dialog, "dialog closes", update_dialog_close},
       {"look", build_look, "another look selected", update_look},

@@ -4,7 +4,7 @@
 // Built and run by build.sh.
 //
 // Writes OUT/<region>-<nn>-<page>.ppm per page (and -after.ppm once its update is shown),
-// OUT/us-bg-<preset>-<page>.ppm for the pages over each background preset, and every frame's cost
+// OUT/<region>-bg-<preset>-<page>.ppm for the pages over the background presets, and every frame's cost
 // to OUT/costs.csv. Page fixtures (mock data) are
 // in Pages.cpp.
 //
@@ -176,10 +176,10 @@ static void run(bool landscape, const char *out) {
   refresh();
   report(region, "boot screen: clock 12:34 -> 12:35");
 
-  // Every page, plain; and on a portrait screen over each background preset.
-  std::vector<Background::Preset> presets = {Background::Preset::NONE};
+  // Every page, plain; on a portrait screen over each background preset, on a landscape one over one.
+  std::vector<Background::Preset> presets = {Background::Preset::NONE, Background::Preset::OCEAN};
   if (!landscape) {
-    presets.insert(presets.end(), {Background::Preset::OCEAN, Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS});
+    presets.insert(presets.end(), {Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS});
   }
   for (Background::Preset preset : presets) {
     Background::set(preset, theme);
