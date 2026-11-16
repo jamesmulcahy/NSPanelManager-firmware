@@ -2259,7 +2259,7 @@ CONFIG_HEAP_TRACING_OFF=y
 # default:
 # CONFIG_HEAP_TRACING_TOHOST is not set
 # default:
-# CONFIG_HEAP_USE_HOOKS is not set
+CONFIG_HEAP_USE_HOOKS=y
 # default:
 # CONFIG_HEAP_TASK_TRACKING is not set
 # default:
