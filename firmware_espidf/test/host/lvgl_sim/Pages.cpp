@@ -12,6 +12,7 @@
 #include "LookView.hpp"
 #include "MediaPlayerView.hpp"
 #include "MenuView.hpp"
+#include "TimerView.hpp"
 #include "ScreensaverView.hpp"
 #include "ThermostatView.hpp"
 #include "Ui.hpp"
@@ -645,7 +646,7 @@ static void build_menu(lv_obj_t *root, bool landscape) {
   menu.items[2] = {NSPM_ICON_SHIELD_OFF, "Disarmed", "Coming soon...", false};
   menu.items[3] = {NSPM_ICON_PALETTE, "Look", "", false};
   menu.items[4] = {NSPM_ICON_SPRAY_BOTTLE, "Clean screen", "", false};
-  menu.items[5] = {NSPM_ICON_RESTART, "Reboot", "Coming soon...", false};
+  menu.items[5] = {NSPM_ICON_TIMER_OUTLINE, "Timers", "4:32", true, true};
   MenuView::show(menu);
 }
 static DialogState reboot_dialog() {
@@ -679,6 +680,65 @@ static void build_look(lv_obj_t *root, bool landscape) {
 static void update_look() {
   look.selected = (look.selected + 1) % Looks::COUNT;
   LookView::show(look);
+}
+
+// The timers pages (TimerView): the list, the set page and the alarm.
+static TimersState timers_state(int count) {
+  static const char *remaining[] = {"4:32", "12:05", "59:59", "1:02:03"};
+  static const char *total[] = {"5:00", "15:00", "1:00:00", "1:30:00"};
+  TimersState state;
+  for (int i = 0; i < count; i++) {
+    TimerRow row;
+    row.id = i + 1;
+    row.remaining = remaining[i];
+    row.total = total[i];
+    state.rows.push_back(row);
+  }
+  state.can_add = count < TimerView::MAX_ROWS;
+  return state;
+}
+static void build_timers_2(lv_obj_t *root, bool landscape) {
+  TimerView::build_timers(root, landscape);
+  TimerView::show(timers_state(2));
+}
+static void update_timers_2() {
+  TimersState state = timers_state(2);
+  state.rows[0].remaining = "4:31";
+  state.rows[1].remaining = "12:04";
+  TimerView::show(state);
+}
+static void build_timers_4(lv_obj_t *root, bool landscape) {
+  TimerView::build_timers(root, landscape);
+  TimerView::show(timers_state(4));
+}
+static void build_timers_1(lv_obj_t *root, bool landscape) {
+  TimerView::build_timers(root, landscape);
+  TimerView::show(timers_state(1));
+}
+static void build_timer_set(lv_obj_t *root, bool landscape) {
+  TimerView::build_set(root, landscape);
+  TimerView::show(TimerSetState());
+}
+static void update_timer_set() {
+  TimerSetState state;
+  state.hours = 0;
+  state.minutes = 0;
+  state.seconds = 0;
+  TimerView::show(state); // Start is disabled
+}
+static void build_timer_alarm(lv_obj_t *root, bool landscape) {
+  TimerView::build_alarm(root, landscape);
+  TimerAlarmState state;
+  state.duration = "10:00";
+  state.note = "timer";
+  TimerView::show(state);
+}
+static void update_timer_alarm() {
+  TimerAlarmState state;
+  state.title = "2 timers done";
+  state.duration = "10:00";
+  state.note = "+1 more";
+  TimerView::show(state);
 }
 
 static CleanScreenState clean;
@@ -740,6 +800,11 @@ const std::vector<PageCase> &page_cases() {
       {"menu", build_menu, "reboot dialog opens", update_menu_dialog},
       {"menu-dialog", build_menu_dialog, "dialog closes", update_dialog_close},
       {"look", build_look, "another look selected", update_look},
+      {"timers-1", build_timers_1, nullptr, nullptr},
+      {"timers-2", build_timers_2, "a second passes", update_timers_2},
+      {"timers-4", build_timers_4, nullptr, nullptr},
+      {"timer-set", build_timer_set, "0:00:00, Start disabled", update_timer_set},
+      {"timer-alarm", build_timer_alarm, "a second timer done", update_timer_alarm},
       {"clean-screen", build_clean, "countdown tick", update_clean},
   };
   return cases;

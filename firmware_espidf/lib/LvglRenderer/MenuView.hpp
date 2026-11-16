@@ -18,6 +18,7 @@ struct MenuItem {
   std::string label;       // "Night mode", "ON", "Disarmed"
   std::string note;        // "Coming soon...", shown above in red
   bool on = false;
+  bool note_neutral = false; // The note is not a warning: text colour, not red (a live countdown)
 };
 
 struct MenuState {
