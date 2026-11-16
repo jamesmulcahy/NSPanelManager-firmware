@@ -51,7 +51,7 @@ public:
   static DisplayMode display_mode() { return LvglUi::_display_mode; }
 
   // The views show() can host; one is built on the pages screen at a time.
-  enum class View : uint8_t { NONE, PLACEHOLDER, SCREENSAVER, ENTITIES, MEDIA_PLAYER, HOME, LIGHT, THERMOSTAT, COVER, MENU, CLEAN_SCREEN, LOOK };
+  enum class View : uint8_t { NONE, PLACEHOLDER, SCREENSAVER, ENTITIES, MEDIA_PLAYER, HOME, LIGHT, THERMOSTAT, COVER, MENU, CLEAN_SCREEN, LOOK, TIMERS, TIMER_SET, TIMER_ALARM };
 
   /**
    * From any task: show `view`, built with `build` if another view is shown, then run `apply` (which
