@@ -158,6 +158,30 @@ namespace Metrics {
 // Receives the text in pieces. Returns false to abandon the scrape (e.g. the client went away).
 using Sink = bool (*)(void *ctx, const char *data, size_t length);
 
+// Buffers text and hands it to a Sink in pieces. For series that are not in a static registry.
+class TextWriter {
+public:
+  TextWriter(Sink sink, void *ctx) : _sink(sink), _ctx(ctx) {}
+  void put(const char *data, size_t length);
+  void put(const char *text);
+  void put(char c) { put(&c, 1); }
+  void put_u64(uint64_t value);
+  void put_i64(int64_t value);
+  // Microseconds as seconds, without trailing zeros: 2500000 -> "2.5", 100 -> "0.0001".
+  void put_seconds(uint64_t value_us);
+  // A label value: backslash, double quote and newline escaped.
+  void put_escaped(const char *text);
+  void put_labels(const MetricDesc &desc, const char *le_text = nullptr, uint64_t le_us = 0);
+  bool flush();
+
+private:
+  Sink _sink;
+  void *_ctx;
+  bool _ok = true;
+  size_t _length = 0;
+  char _buffer[512];
+};
+
 /**
  * Write every metric in @param registry to @param sink in Prometheus text format 0.0.4.
  * Counter and histogram values are reported as 64-bit totals kept in @param totals (one per

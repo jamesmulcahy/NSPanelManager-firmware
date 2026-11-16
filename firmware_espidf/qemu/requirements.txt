@@ -11,3 +11,5 @@ littlefs-python>=0.19
 nextion-tools[images]==0.2.0
 # The dev stack's STOMP-over-websocket server (nspm_qemu/stack_web.py), for the stack tests.
 websocket-client>=1.8
+# Reads the firmware ELF in tools/heap_decode.py (and its test).
+pyelftools>=0.31

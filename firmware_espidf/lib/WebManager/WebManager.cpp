@@ -1,4 +1,7 @@
 #include <PanelMetrics.hpp>
+#ifdef NSPM_HEAP_DIAG
+#include <HeapDiag.hpp>
+#endif
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
 #include <LvglRenderer.hpp>
@@ -85,7 +88,7 @@ void WebManager::start() {
   if (WebManager::_server == NULL) {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
     WebManager::_config.server_port = WebManager::HTTP_PORT;
-    WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included), with room to spare
+    WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included; 14 with NSPM_HEAP_DIAG), with room to spare
     // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
     // chunked send, and 8 KB left only 412 bytes unused on a panel (PNG). See the
     // "Screenshot ..." log line for what is left unused.
@@ -119,6 +122,9 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_handle_generate204);     // Handle /generate204 for Android captive portal popup
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_screenshot);             // The LVGL screen as an image
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_metrics);                // Prometheus scrape endpoint
+#ifdef NSPM_HEAP_DIAG
+      HeapDiag::register_uris(WebManager::_server); // 2 more, 14 in all
+#endif
     } else {
       ESP_LOGE("Web", "Failed to start web server!");
     }

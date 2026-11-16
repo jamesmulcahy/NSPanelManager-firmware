@@ -2,6 +2,11 @@
 # Automatically generated file. DO NOT EDIT.
 # Espressif IoT Development Framework (ESP-IDF) 6.1.0 Project Configuration
 #
+# NOTE: keep in sync with sdkconfig.original_sonoff. Both boards build the same code, so an
+# option the code depends on (e.g. FREERTOS_USE_TRACE_FACILITY for
+# uxTaskGetSystemState) must be set in both, or the other board fails to link.
+# ESP-IDF may drop this comment when it regenerates the file.
+#
 # default:
 CONFIG_SOC_ADC_SUPPORTED=y
 # default:
@@ -2470,7 +2475,9 @@ CONFIG_FREERTOS_QUEUE_REGISTRY_SIZE=0
 # default:
 CONFIG_FREERTOS_TASK_NOTIFICATION_ARRAY_ENTRIES=1
 # default:
-# CONFIG_FREERTOS_USE_TRACE_FACILITY is not set
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+# default:
+# CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS is not set
 # default:
 # CONFIG_FREERTOS_USE_LIST_DATA_INTEGRITY_CHECK_BYTES is not set
 # default:
@@ -2562,7 +2569,7 @@ CONFIG_HEAP_TRACING_OFF=y
 # default:
 # CONFIG_HEAP_TRACING_TOHOST is not set
 # default:
-# CONFIG_HEAP_USE_HOOKS is not set
+CONFIG_HEAP_USE_HOOKS=y
 # default:
 # CONFIG_HEAP_TASK_TRACKING is not set
 # default:
