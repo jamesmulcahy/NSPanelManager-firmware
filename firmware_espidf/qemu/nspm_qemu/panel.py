@@ -8,6 +8,7 @@ to the fake display and broker, and captures its console.
              to `web_port` on the host
 """
 
+import itertools
 import logging
 import os
 import re
@@ -171,6 +172,7 @@ class QemuPanel:
         self.boot_display = True  # emit the TFT's NSPM flag on power-on
         self._stopping = False
         self._relaunching = False
+        self._early_output = b""  # see _exited_on_a_port_clash()
 
     @property
     def client_id(self) -> str:
@@ -195,7 +197,41 @@ class QemuPanel:
     def _efuse(self) -> str:
         return os.path.join(self.workdir, "efuse.bin")
 
+    # QEMU binds the web forward and the gdbstub itself, on ports _free_port() found free a moment
+    # before, which something else can take meanwhile ("Address already in use" from a busy CI runner).
+    # It then exits at once, so look for that and try again on fresh ports.
+    PORT_CLASH = re.compile(rb"Address already in use|Failed to find an available port|[Cc]ould not set up host forwarding")
+    PORT_RETRIES = 3
+    STARTUP_S = 0.5
+
     def _launch(self) -> None:
+        for attempt in range(1, self.PORT_RETRIES + 1):
+            self._launch_once()
+            if attempt == self.PORT_RETRIES or not self._exited_on_a_port_clash():
+                return
+            log.warning("QEMU could not bind its ports (attempt %d); trying fresh ones", attempt)
+            self.web_port = _free_port()
+            if self.gdb_port is not None and gdb_mode() != "wait":
+                self.gdb_port = _free_port()
+
+    def _exited_on_a_port_clash(self) -> bool:
+        """Whether QEMU exited within STARTUP_S because a port was taken. Any other early exit's output is kept for
+        the console reader, which reports it as usual."""
+        assert self._proc is not None and self._proc.stdout is not None
+        deadline = time.monotonic() + self.STARTUP_S
+        while self._proc.poll() is None:
+            if time.monotonic() >= deadline:
+                return False  # Running: its ports are bound.
+            time.sleep(0.02)
+        output = self._proc.stdout.read()  # It has exited, and nothing else reads its output yet.
+        if self.PORT_CLASH.search(output):
+            log.warning("QEMU exited: %s", output.decode("utf-8", errors="replace").strip().splitlines()[-1:])
+            return True
+        self._early_output = output
+        return False
+
+    def _launch_once(self) -> None:
+        self._early_output = b""
         args = [
             find_qemu(),
             "-M", "esp32",
@@ -364,7 +400,10 @@ class QemuPanel:
 
     def _read_console(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
-        for raw in self._proc.stdout:
+        # What _exited_on_a_port_clash() read from a QEMU that exited at once, then the rest.
+        early = self._early_output.splitlines(keepends=True)
+        self._early_output = b""
+        for raw in itertools.chain(early, self._proc.stdout):
             line = _ANSI.sub("", raw.decode("utf-8", errors="replace")).rstrip("\r\n")
             if self._console_log is not None:
                 self._console_log.write(line + "\n")
