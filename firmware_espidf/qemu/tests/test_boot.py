@@ -64,3 +64,18 @@ def test_screenshot_is_409_on_nspm_tft(booted):
     assert e.value.code == 409
     assert e.value.headers.get_content_type() == "text/plain"
     assert b"LVGL" in e.value.read()
+
+
+def test_boots_when_its_web_port_is_taken(rig):
+    # QEMU binds the ports _free_port() picked; on a busy CI runner something can take one first
+    # ("Address already in use"), and QEMU exits at once. The panel must start on fresh ports instead.
+    import socket
+
+    taken = rig.panel.web_port
+    with socket.socket() as squatter:
+        squatter.bind(("127.0.0.1", taken))
+        squatter.listen()
+        rig.boot()
+    assert rig.panel.web_port != taken
+    status, body = rig.http_get("/")
+    assert status == 200 and b"<html" in body.lower()
