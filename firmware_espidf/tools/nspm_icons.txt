@@ -98,3 +98,7 @@ lock F033E
 alert-circle-outline F05D6
 # Screensaver cards
 calendar F00ED
+lightning-bolt F140B
+home-lightning-bolt F1903
+transmission-tower F0D3E
+lightbulb-on F06E8
