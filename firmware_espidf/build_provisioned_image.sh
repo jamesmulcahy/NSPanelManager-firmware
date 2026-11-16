@@ -23,9 +23,13 @@ cd "$(dirname "$0")"
 if [ "${BOARD_TYPE}" == "custom" ]; then
   PIO_ENV="custom_pcb"
   CHIP_ARGS=(--chip esp32s3 merge_bin --flash_mode qio --flash_size 16MB)
+  # The ESP32-S3 boots its second-stage bootloader from 0x0 (CONFIG_BOOTLOADER_OFFSET_IN_FLASH in
+  # sdkconfig.custom_pcb); the ESP32 from 0x1000.
+  BOOTLOADER_OFFSET=0x0
 elif [ "${BOARD_TYPE}" == "sonoff" ]; then
   PIO_ENV="original_sonoff"
   CHIP_ARGS=(--chip esp32 merge_bin --flash_mode dio --flash_size 4MB)
+  BOOTLOADER_OFFSET=0x1000
 else
   echo "Syntax: $0 <sonoff|custom> [output file]"
   exit 1
@@ -150,7 +154,7 @@ SPIFFS_SIZE="$(get_partition_field spiffs 5)"
 "${MKLITTLEFS}" -c "${STAGING}/data" -s "$((SPIFFS_SIZE))" -p 256 -b 4096 "${STAGING}/littlefs.bin" >/dev/null
 
 "${ESPTOOL_CMD[@]}" "${CHIP_ARGS[@]}" -o "${OUTPUT}" \
-  0x1000 "${BUILD_DIR}/bootloader.bin" \
+  "${BOOTLOADER_OFFSET}" "${BUILD_DIR}/bootloader.bin" \
   0x8000 "${BUILD_DIR}/partitions.bin" \
   0x10000 "${BUILD_DIR}/firmware.bin" \
   "$(get_partition_field spiffs 4)" "${STAGING}/littlefs.bin" >/dev/null
