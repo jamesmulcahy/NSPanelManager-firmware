@@ -89,6 +89,11 @@ void NSPM_ConfigManager::_mqtt_event_handler(void *arg, esp_event_base_t event_b
 }
 
 void NSPM_ConfigManager::_handle_register_accept(const char *data, size_t data_length) {
+  // An empty message is the manager clearing a retained message on this topic, not a command.
+  if (data_length == 0) {
+    return;
+  }
+
   nlohmann::json json = nlohmann::json::parse(data, data + data_length, nullptr, false);
   if (json.is_discarded()) {
     ESP_LOGE("NSPM_ConfigManager", "Failed to parse register accept message!");
