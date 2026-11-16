@@ -8,6 +8,7 @@
 #include <protobuf_nspanel.pb-c.h>
 
 struct ScreensaverState;
+struct EnergyValues;
 
 class ScreensaverPage {
 public:
@@ -77,6 +78,18 @@ private:
   static void _decode_calendar_if_stale();
 
   /**
+   * Decode the newest status/energy bytes into _energy, if they changed since the last decode. As
+   * _decode_calendar_if_stale(): from LvglUi's task or show()'s.
+   */
+  static void _decode_energy_if_stale();
+
+  /**
+   * `update`'s values for EnergyFormat (NULL: none arrived yet). A currency symbol the fonts cannot
+   * draw is left out, so the card shows the currency's code instead.
+   */
+  static EnergyValues _energy_values(const NSPanelEnergyUpdate *update);
+
+  /**
    * Fill state.calendar and state.empty_text from `update` (NULL: none arrived yet). Pure apart from
    * the wall clock and the timezone: with PanelClock set, drops ended events and groups by local day
    * (Today, Tomorrow, "Wed 18"); otherwise one group of the manager's when_string.
@@ -127,6 +140,13 @@ private:
   static inline bool _calendar_stale = false;
   static inline std::atomic<bool> _calendar_job_queued = false;
   static inline MutexWrapped<std::shared_ptr<NSPanelCalendarUpdate>> _calendar;
+
+  // status/energy, kept as status/calendar is.
+  static inline SemaphoreHandle_t _energy_mutex = NULL;
+  static inline std::vector<uint8_t> _energy_mqtt_data;
+  static inline bool _energy_stale = false;
+  static inline std::atomic<bool> _energy_job_queued = false;
+  static inline MutexWrapped<std::shared_ptr<NSPanelEnergyUpdate>> _energy;
   static inline MutexWrapped<std::string> _cards_signature_seen;
 
   // Mutex to only allow one task at the time access to _weather_update_data
