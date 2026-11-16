@@ -383,6 +383,9 @@ private:
   static esp_err_t _get_integer_value(const char *expression, int32_t *result, uint16_t timeout, uint16_t mutex_timeout);
 
 private:
+  // Runs _handle_uart_data_event_loop (created without a task, so this one can have its stack in PSRAM).
+  static void _task_uart_frame_loop(void *param);
+
   // VARIABLES:
   // Event loop handle for custom events that happens from UART read -> handle mqtt message
   static inline esp_event_loop_handle_t _handle_uart_data_event_loop;
