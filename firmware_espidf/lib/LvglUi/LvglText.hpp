@@ -51,6 +51,62 @@ inline std::string utf8(const char *text) {
 inline std::string utf8(const std::string &text) { return utf8(text.c_str()); }
 
 /**
+ * `text` with what the body font cannot draw taken out, for text from outside (calendar titles):
+ * the font has U+0020..U+007E, U+00A1..U+00FF and some punctuation (dashes, curly quotes, bullet,
+ * ellipsis). Anything else (emoji, CJK, control characters) is removed, no-break spaces, tabs and
+ * newlines become spaces, runs of spaces collapse to one and the ends are trimmed. Invalid UTF-8 is
+ * read as ISO-8859-1, as utf8() does.
+ */
+inline std::string drawable(const char *text) {
+  std::string in = utf8(text);
+  std::string out;
+  size_t i = 0;
+  while (i < in.size()) {
+    uint8_t c = (uint8_t)in[i];
+    uint32_t cp;
+    size_t len;
+    if (c < 0x80) {
+      cp = c;
+      len = 1;
+    } else if ((c & 0xE0) == 0xC0) {
+      cp = c & 0x1F;
+      len = 2;
+    } else if ((c & 0xF0) == 0xE0) {
+      cp = c & 0x0F;
+      len = 3;
+    } else {
+      cp = 0x10000; // 4 bytes: beyond the font
+      len = 4;
+    }
+    if (len > 1 && len < 4) {
+      for (size_t k = 1; k < len; k++) {
+        cp = (cp << 6) | ((uint8_t)in[i + k] & 0x3F);
+      }
+    }
+    std::string piece = in.substr(i, len);
+    i += len;
+    bool space = cp == '\t' || cp == '\n' || cp == '\r' || cp == 0xA0 || cp == 0x2009 || cp == 0x202F;
+    bool ok = (cp >= 0x20 && cp <= 0x7E) || (cp >= 0xA1 && cp <= 0xFF) || cp == 0x2013 || cp == 0x2014 || (cp >= 0x2018 && cp <= 0x201E) || cp == 0x2022 || cp == 0x2026;
+    if (space) {
+      piece = " ";
+      ok = true;
+    }
+    if (!ok) {
+      continue;
+    }
+    if (piece == " " && (out.empty() || out.back() == ' ')) {
+      continue;
+    }
+    out += piece;
+  }
+  while (!out.empty() && out.back() == ' ') {
+    out.pop_back();
+  }
+  return out;
+}
+inline std::string drawable(const std::string &text) { return drawable(text.c_str()); }
+
+/**
  * The manager's weather icons are characters of the HMI's weather font (MQTTManager's
  * weather_icons.hpp: A clear day, B clear night, C cloudy, D partly cloudy night, G fog, H snow
  * grains, I heavy rain, J light rain, L/M snow, N freezing rain, Q/R thunder).

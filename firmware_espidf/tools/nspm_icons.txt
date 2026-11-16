@@ -96,3 +96,5 @@ spray-bottle F0AE0
 restart F0709
 lock F033E
 alert-circle-outline F05D6
+# Screensaver cards
+calendar F00ED

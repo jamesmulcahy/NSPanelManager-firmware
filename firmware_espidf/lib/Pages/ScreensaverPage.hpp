@@ -2,7 +2,12 @@
 #include <MutexWrapper.hpp>
 #include <atomic>
 #include <esp_event.h>
+#include <memory>
+#include <string>
+#include <vector>
 #include <protobuf_nspanel.pb-c.h>
+
+struct ScreensaverState;
 
 class ScreensaverPage {
 public:
@@ -66,6 +71,25 @@ private:
   static void _lvgl_render();
 
   /**
+   * Decode the newest status/calendar bytes into _calendar, if they changed since the last decode.
+   * Not on the MQTT task: from LvglUi's task (the handler defers it) or show()'s.
+   */
+  static void _decode_calendar_if_stale();
+
+  /**
+   * Fill state.calendar and state.empty_text from `update` (NULL: none arrived yet). Pure apart from
+   * the wall clock and the timezone: with PanelClock set, drops ended events and groups by local day
+   * (Today, Tomorrow, "Wed 18"); otherwise one group of the manager's when_string.
+   */
+  static void _format_calendar(const NSPanelCalendarUpdate *update, bool us_clock, ScreensaverState &state);
+
+  /**
+   * What the rotation depends on in the config (the cards, their times, the base card's): changes
+   * re-render the shown screensaver.
+   */
+  static std::string _cards_signature(const NSPanelConfig &config);
+
+  /**
    * Handle events from MQTT manager, such as new weather forecasts sent over MQTT
    */
   static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
@@ -94,6 +118,16 @@ private:
   // The most current weather data for forecast and current weather
   static inline std::shared_ptr<NSPanelWeatherUpdate> _weather_update_data = nullptr;
   static inline std::vector<uint8_t> _weather_update_mqtt_data; // Raw data received from MQTT
+
+  // Newest status/calendar bytes as received (the MQTT task stores them, nothing else), and the decoded
+  // update. _calendar_mutex covers the bytes, the flag and a decode; _calendar is read by anyone, as a
+  // copy of the shared_ptr (which MutexWrapped::get() makes under its lock).
+  static inline SemaphoreHandle_t _calendar_mutex = NULL;
+  static inline std::vector<uint8_t> _calendar_mqtt_data;
+  static inline bool _calendar_stale = false;
+  static inline std::atomic<bool> _calendar_job_queued = false;
+  static inline MutexWrapped<std::shared_ptr<NSPanelCalendarUpdate>> _calendar;
+  static inline MutexWrapped<std::string> _cards_signature_seen;
 
   // Mutex to only allow one task at the time access to _weather_update_data
   static inline SemaphoreHandle_t _weather_update_data_mutex = NULL;

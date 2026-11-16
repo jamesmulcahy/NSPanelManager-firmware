@@ -18,6 +18,7 @@ PROTOBUF_C__BEGIN_DECLS
 typedef struct NSPanelConfig NSPanelConfig;
 typedef struct NSPanelConfig__RoomInfo NSPanelConfig__RoomInfo;
 typedef struct NSPanelConfig__Sound NSPanelConfig__Sound;
+typedef struct NSPanelConfig__ScreensaverCard NSPanelConfig__ScreensaverCard;
 typedef struct NSPanelWarning NSPanelWarning;
 typedef struct NSPanelStatusReport NSPanelStatusReport;
 typedef struct NSPanelRoomEntitiesPage NSPanelRoomEntitiesPage;
@@ -25,6 +26,8 @@ typedef struct NSPanelRoomEntitiesPage__EntitySlot NSPanelRoomEntitiesPage__Enti
 typedef struct NSPanelRoomStatus NSPanelRoomStatus;
 typedef struct NSPanelWeatherUpdate NSPanelWeatherUpdate;
 typedef struct NSPanelWeatherUpdate__ForecastItem NSPanelWeatherUpdate__ForecastItem;
+typedef struct NSPanelCalendarUpdate NSPanelCalendarUpdate;
+typedef struct NSPanelCalendarUpdate__Event NSPanelCalendarUpdate__Event;
 typedef struct NSPanelMQTTManagerCommand NSPanelMQTTManagerCommand;
 typedef struct NSPanelMQTTManagerCommand__FirstPageTurnLightOn NSPanelMQTTManagerCommand__FirstPageTurnLightOn;
 typedef struct NSPanelMQTTManagerCommand__FirstPageTurnLightOff NSPanelMQTTManagerCommand__FirstPageTurnLightOff;
@@ -93,6 +96,20 @@ typedef enum _NSPanelConfig__NSPanelSoundEvent {
   NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_SAVED = 2
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_CONFIG__NSPANEL_SOUND_EVENT)
 } NSPanelConfig__NSPanelSoundEvent;
+/*
+ * Extra screensaver cards. The screensaver keeps its clock at the top and rotates the area below it: the
+ * weather (WEATHER_* modes) for screensaver_base_card_seconds, then each card here in order, for its own
+ * seconds. Empty: the screensaver as before. Ignored with NO_SCREENSAVER, and by panels that do not draw
+ * with LVGL. Panels skip card types they do not know.
+ */
+typedef enum _NSPanelConfig__NSPanelScreensaverCardType {
+  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_UNSPECIFIED = 0,
+  /*
+   * Upcoming events, from NSPanelCalendarUpdate on nspanel/mqttmanager_<address>/status/calendar
+   */
+  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_CALENDAR = 1
+    PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE)
+} NSPanelConfig__NSPanelScreensaverCardType;
 typedef enum _NSPanelStatusReport__State {
   NSPANEL_STATUS_REPORT__STATE__ONLINE = 0,
   NSPANEL_STATUS_REPORT__STATE__OFFLINE = 1,
@@ -196,6 +213,20 @@ struct  NSPanelConfig__Sound
     , NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TOUCH, (char *)protobuf_c_empty_string }
 
 
+struct  NSPanelConfig__ScreensaverCard
+{
+  ProtobufCMessage base;
+  NSPanelConfig__NSPanelScreensaverCardType type;
+  /*
+   * How long the card shows. 0: the panel's default (10 s)
+   */
+  int32_t seconds;
+};
+#define NSPANEL_CONFIG__SCREENSAVER_CARD__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&nspanel_config__screensaver_card__descriptor) \
+    , NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_UNSPECIFIED, 0 }
+
+
 struct  NSPanelConfig
 {
   ProtobufCMessage base;
@@ -284,10 +315,16 @@ struct  NSPanelConfig
    * Page background: none, ocean, dusk, aurora or peaks
    */
   char *lvgl_background;
+  size_t n_screensaver_cards;
+  NSPanelConfig__ScreensaverCard **screensaver_cards;
+  /*
+   * How long the weather shows in WEATHER_* modes. 0: the panel's default (10 s)
+   */
+  int32_t screensaver_base_card_seconds;
 };
 #define NSPANEL_CONFIG__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_config__descriptor) \
-    , (char *)protobuf_c_empty_string, 0, NSPANEL_CONFIG__NSPANEL_DEFAULT_PAGE__HOME, 0, 0, 0, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND, 0, 0, 0, 0, 0, 0,NULL, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, 0,NULL, 0, 0, 0, 0,NULL, 0,NULL, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
+    , (char *)protobuf_c_empty_string, 0, NSPANEL_CONFIG__NSPANEL_DEFAULT_PAGE__HOME, 0, 0, 0, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND, 0, 0, 0, 0, 0, 0,NULL, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, 0,NULL, 0, 0, 0, 0,NULL, 0,NULL, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0,NULL, 0 }
 
 
 struct  NSPanelWarning
@@ -453,6 +490,58 @@ struct  NSPanelWeatherUpdate
 #define NSPANEL_WEATHER_UPDATE__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_weather_update__descriptor) \
     , 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
+
+
+struct  NSPanelCalendarUpdate__Event
+{
+  ProtobufCMessage base;
+  /*
+   * The event's title, UTF-8, at most 64 bytes (cut on a character boundary)
+   */
+  char *summary;
+  /*
+   * Unix seconds. All-day events: local midnight of the first day, in the manager's timezone
+   */
+  int64_t start;
+  /*
+   * Unix seconds, exclusive. All-day events: local midnight after the last day
+   */
+  int64_t end;
+  protobuf_c_boolean all_day;
+  /*
+   * When it is, as the manager would show it ("Today 3:00 PM", "Tomorrow", "Sat 9:00 AM"), for panels whose clock is not set
+   */
+  char *when_string;
+};
+#define NSPANEL_CALENDAR_UPDATE__EVENT__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&nspanel_calendar_update__event__descriptor) \
+    , (char *)protobuf_c_empty_string, 0, 0, 0, (char *)protobuf_c_empty_string }
+
+
+/*
+ * Upcoming calendar events, for the screensaver's calendar card. Published retained by the manager on
+ * nspanel/mqttmanager_<address>/status/calendar, one list for every panel.
+ */
+struct  NSPanelCalendarUpdate
+{
+  ProtobufCMessage base;
+  /*
+   * Events that have not ended, sorted by start, at most the manager's configured maximum
+   */
+  size_t n_events;
+  NSPanelCalendarUpdate__Event **events;
+  /*
+   * How far ahead the list looks, for "No events in the next 48 hours"
+   */
+  int32_t lookahead_hours;
+  /*
+   * Unix seconds. Always set, so a list with no events never serialises to an empty payload
+   */
+  int64_t generated_at;
+};
+#define NSPANEL_CALENDAR_UPDATE__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&nspanel_calendar_update__descriptor) \
+    , 0,NULL, 0, 0 }
 
 
 struct  NSPanelMQTTManagerCommand__FirstPageTurnLightOn
@@ -685,6 +774,9 @@ void   nspanel_config__room_info__init
 /* NSPanelConfig__Sound methods */
 void   nspanel_config__sound__init
                      (NSPanelConfig__Sound         *message);
+/* NSPanelConfig__ScreensaverCard methods */
+void   nspanel_config__screensaver_card__init
+                     (NSPanelConfig__ScreensaverCard         *message);
 /* NSPanelConfig methods */
 void   nspanel_config__init
                      (NSPanelConfig         *message);
@@ -805,6 +897,28 @@ NSPanelWeatherUpdate *
 void   nspanel_weather_update__free_unpacked
                      (NSPanelWeatherUpdate *message,
                       ProtobufCAllocator *allocator);
+/* NSPanelCalendarUpdate__Event methods */
+void   nspanel_calendar_update__event__init
+                     (NSPanelCalendarUpdate__Event         *message);
+/* NSPanelCalendarUpdate methods */
+void   nspanel_calendar_update__init
+                     (NSPanelCalendarUpdate         *message);
+size_t nspanel_calendar_update__get_packed_size
+                     (const NSPanelCalendarUpdate   *message);
+size_t nspanel_calendar_update__pack
+                     (const NSPanelCalendarUpdate   *message,
+                      uint8_t             *out);
+size_t nspanel_calendar_update__pack_to_buffer
+                     (const NSPanelCalendarUpdate   *message,
+                      ProtobufCBuffer     *buffer);
+NSPanelCalendarUpdate *
+       nspanel_calendar_update__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   nspanel_calendar_update__free_unpacked
+                     (NSPanelCalendarUpdate *message,
+                      ProtobufCAllocator *allocator);
 /* NSPanelMQTTManagerCommand__FirstPageTurnLightOn methods */
 void   nspanel_mqttmanager_command__first_page_turn_light_on__init
                      (NSPanelMQTTManagerCommand__FirstPageTurnLightOn         *message);
@@ -865,6 +979,9 @@ typedef void (*NSPanelConfig__RoomInfo_Closure)
 typedef void (*NSPanelConfig__Sound_Closure)
                  (const NSPanelConfig__Sound *message,
                   void *closure_data);
+typedef void (*NSPanelConfig__ScreensaverCard_Closure)
+                 (const NSPanelConfig__ScreensaverCard *message,
+                  void *closure_data);
 typedef void (*NSPanelConfig_Closure)
                  (const NSPanelConfig *message,
                   void *closure_data);
@@ -888,6 +1005,12 @@ typedef void (*NSPanelWeatherUpdate__ForecastItem_Closure)
                   void *closure_data);
 typedef void (*NSPanelWeatherUpdate_Closure)
                  (const NSPanelWeatherUpdate *message,
+                  void *closure_data);
+typedef void (*NSPanelCalendarUpdate__Event_Closure)
+                 (const NSPanelCalendarUpdate__Event *message,
+                  void *closure_data);
+typedef void (*NSPanelCalendarUpdate_Closure)
+                 (const NSPanelCalendarUpdate *message,
                   void *closure_data);
 typedef void (*NSPanelMQTTManagerCommand__FirstPageTurnLightOn_Closure)
                  (const NSPanelMQTTManagerCommand__FirstPageTurnLightOn *message,
@@ -935,10 +1058,12 @@ extern const ProtobufCEnumDescriptor    nspanel_warning_level__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_config__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_config__room_info__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_config__sound__descriptor;
+extern const ProtobufCMessageDescriptor nspanel_config__screensaver_card__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_config__nspanel_default_page__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_config__nspanel_screensaver_mode__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_config__nspanel_button_mode__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_config__nspanel_sound_event__descriptor;
+extern const ProtobufCEnumDescriptor    nspanel_config__nspanel_screensaver_card_type__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_warning__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_status_report__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_status_report__state__descriptor;
@@ -949,6 +1074,8 @@ extern const ProtobufCEnumDescriptor    nspanel_room_entities_page__entity_slot_
 extern const ProtobufCMessageDescriptor nspanel_room_status__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_weather_update__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_weather_update__forecast_item__descriptor;
+extern const ProtobufCMessageDescriptor nspanel_calendar_update__descriptor;
+extern const ProtobufCMessageDescriptor nspanel_calendar_update__event__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__first_page_turn_light_on__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_mqttmanager_command__first_page_turn_light_off__descriptor;
