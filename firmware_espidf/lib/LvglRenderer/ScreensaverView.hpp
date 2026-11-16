@@ -10,7 +10,7 @@
 //
 // The screen is a fixed clock header (time, AM/PM, date, the room's temperature) over a body. Only
 // the body changes: it rotates through its cards (the weather, then the extra cards such as the
-// calendar), each for its own time. The clock never moves.
+// calendar and the energy card), each for its own time. The clock never moves.
 //
 //   mode       header                       body cards
 //   WEATHER_*  clock, date, room            weather (base_seconds), then `cards`
@@ -28,6 +28,7 @@ struct ForecastDay {
 // protobuf); the page skips the values it does not know.
 enum class ScreensaverCardType : uint8_t {
   CALENDAR = 1,
+  ENERGY = 2,
 };
 
 // One event: the time column and the title. `now`: under way (drawn in the accent colour).
@@ -41,6 +42,23 @@ struct CalendarRow {
 struct CalendarDay {
   std::string heading; // "Today", "Tomorrow", "Wed 18"
   std::vector<CalendarRow> rows;
+};
+
+// The energy card: the house's power draw as a cost per day (or as power, with no price) over the
+// number of lights on. The page formats it (ScreensaverPage::format_energy).
+struct EnergyState {
+  bool power_shown = false;  // The power part: hidden when the manager has no power source
+  bool lights_shown = false; // The lights part: hidden when the manager counts no lights
+  // The large figure: the cost per day with a price, else the power.
+  std::string hero_symbol;  // "$" before the number (a smaller font); empty for power
+  std::string hero_number;  // "9.38", "3.6"; "--" when unavailable
+  std::string hero_unit;    // "per day", "kW now"
+  std::string power_line;   // "3.6 kW now" under the cost; empty: not shown (the hero is the power)
+  bool exporting = false;   // The power line reads "Exporting 0.4 kW" (another icon, in the accent colour)
+  std::string lights_number; // "6"; "--" when unavailable
+  std::string lights_text;   // "lights on", "light on", "lights off"
+  bool lights_none = false;  // No light on: the outline bulb, muted
+  bool lights_alert = false; // At or over the manager's threshold: the alert colour
 };
 
 struct ScreensaverState {
@@ -71,6 +89,7 @@ struct ScreensaverState {
   std::vector<Card> cards;           // Extra cards after the weather, in order; empty: weather alone
   std::vector<CalendarDay> calendar; // Sorted; empty: the calendar card shows empty_text
   std::string empty_text;            // "No events in the next 48 hours"
+  EnergyState energy;
 };
 
 class ScreensaverView {
@@ -78,7 +97,7 @@ public:
   // Any touch wakes the panel.
   static inline void (*on_touch)() = nullptr;
 
-  // The body turned to a card (also when it first shows one): `weather` or `calendar`, and how long
+  // The body turned to a card (also when it first shows one): `weather`, `calendar` or `energy`, and how long
   // it stays, in seconds. On the GUI task. For the page's log; the simulator leaves it unset.
   static inline void (*on_card)(const char *card, uint32_t seconds) = nullptr;
 
@@ -96,7 +115,7 @@ private:
     lv_obj_t *day, *icon, *max_min, *rain, *wind;
   };
   // The body's cards, each built once and shown in turn.
-  enum Body : uint8_t { WEATHER, CALENDAR, BODY_COUNT };
+  enum Body : uint8_t { WEATHER, CALENDAR, ENERGY, BODY_COUNT };
   struct Step {
     Body body;
     uint32_t ms;
@@ -111,8 +130,10 @@ private:
   static void _build_header(bool landscape, bool outside);
   static lv_obj_t *_build_weather(bool landscape);
   static lv_obj_t *_build_calendar(bool landscape);
+  static lv_obj_t *_build_energy(bool landscape);
   static void _build_clock();
   static void _show_calendar(const ScreensaverState &state);
+  static void _show_energy(const EnergyState &energy);
   static void _set_sequence(const std::vector<Step> &sequence);
   static void _show_current();
   static void _rotate(lv_timer_t *timer);
@@ -154,4 +175,17 @@ private:
   static inline lv_obj_t *_calendar_list = NULL;
   static inline lv_obj_t *_calendar_empty = NULL;
   static inline lv_obj_t *_calendar_empty_text = NULL;
+  // Energy card: the power panel (the large figure and the power line) and the lights panel.
+  static inline lv_obj_t *_power_panel = NULL;
+  static inline lv_obj_t *_hero_symbol = NULL;
+  static inline lv_obj_t *_hero_number = NULL;
+  static inline lv_obj_t *_hero_unit = NULL;
+  static inline lv_obj_t *_power_line = NULL;
+  static inline lv_obj_t *_power_line_icon = NULL;
+  static inline lv_obj_t *_power_line_text = NULL;
+  static inline lv_obj_t *_lights_panel = NULL;
+  static inline lv_obj_t *_lights_icon = NULL;
+  static inline lv_obj_t *_lights_number = NULL;
+  static inline lv_obj_t *_lights_text = NULL;
+  static inline lv_obj_t *_lights_alert = NULL;
 };

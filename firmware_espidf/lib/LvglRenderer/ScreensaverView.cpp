@@ -49,6 +49,10 @@ void ScreensaverView::_forget(lv_event_t *) {
     column.clear();
   }
   ScreensaverView::_calendar_list = ScreensaverView::_calendar_empty = ScreensaverView::_calendar_empty_text = NULL;
+  ScreensaverView::_power_panel = ScreensaverView::_hero_symbol = ScreensaverView::_hero_number = ScreensaverView::_hero_unit = NULL;
+  ScreensaverView::_power_line = ScreensaverView::_power_line_icon = ScreensaverView::_power_line_text = NULL;
+  ScreensaverView::_lights_panel = ScreensaverView::_lights_icon = ScreensaverView::_lights_number = NULL;
+  ScreensaverView::_lights_text = ScreensaverView::_lights_alert = NULL;
 }
 
 // A card, or with no background just the layout: text straight on black, as screensaver2 does.
@@ -292,6 +296,74 @@ lv_obj_t *ScreensaverView::_build_calendar(bool landscape) {
   return calendar;
 }
 
+// The energy card: a panel for the power (a bolt beside the cost per day, the power under it) and
+// one for the lights, stacked down a portrait screen and side by side across a landscape one. The
+// power panel takes the larger share; either fills the card when the other is hidden.
+lv_obj_t *ScreensaverView::_build_energy(bool landscape) {
+  bool background = ScreensaverView::_background;
+  lv_obj_t *energy = body(ScreensaverView::_parent);
+  if (landscape) {
+    lv_obj_set_flex_flow(energy, LV_FLEX_FLOW_ROW);
+  }
+
+  lv_obj_t *power = panel(energy, background);
+  ScreensaverView::_power_panel = power;
+  lv_obj_set_flex_grow(power, 3);
+  if (landscape) {
+    lv_obj_set_height(power, lv_pct(100));
+    lv_obj_set_width(power, 0); // Shares by flex_grow, whatever the content
+  } else {
+    lv_obj_set_width(power, lv_pct(100));
+    lv_obj_set_height(power, 0);
+  }
+  lv_obj_set_flex_flow(power, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(power, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(power, Theme::SPACE_L, 0);
+
+  lv_obj_t *hero = Theme::group(power, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(hero, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(hero, Theme::SPACE_M, 0);
+  Ui::icon(hero, NSPM_ICON_LIGHTNING_BOLT, 64, Theme::on());
+  lv_obj_t *figure = Theme::group(hero, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_gap(figure, 0, 0);
+  // "$9.38": the currency sign smaller and raised, as on a price tag.
+  lv_obj_t *amount = Theme::group(figure, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(amount, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_gap(amount, Theme::SPACE_XS, 0);
+  ScreensaverView::_hero_symbol = Theme::label(amount, "", Theme::title_font(), Theme::text());
+  lv_obj_set_style_pad_top(ScreensaverView::_hero_symbol, Theme::SPACE_XS, 0);
+  ScreensaverView::_hero_number = Theme::label(amount, "", Theme::large_font(), Theme::text());
+  ScreensaverView::_hero_unit = Theme::label(figure, "", Theme::body_font(), Theme::muted());
+
+  ScreensaverView::_power_line = reading(power, NSPM_ICON_HOME_LIGHTNING_BOLT, &ScreensaverView::_power_line_icon, &ScreensaverView::_power_line_text, Theme::body_font());
+
+  lv_obj_t *lights = panel(energy, background);
+  ScreensaverView::_lights_panel = lights;
+  lv_obj_set_flex_grow(lights, 2);
+  if (landscape) {
+    lv_obj_set_height(lights, lv_pct(100));
+    lv_obj_set_width(lights, 0);
+    lv_obj_set_flex_flow(lights, LV_FLEX_FLOW_COLUMN);
+  } else {
+    lv_obj_set_width(lights, lv_pct(100));
+    lv_obj_set_height(lights, 0);
+    lv_obj_set_flex_flow(lights, LV_FLEX_FLOW_ROW);
+  }
+  lv_obj_set_flex_align(lights, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(lights, Theme::SPACE_M, 0);
+  ScreensaverView::_lights_icon = Ui::icon(lights, NSPM_ICON_LIGHTBULB_ON, 40, Theme::on());
+  lv_obj_t *count = Theme::group(lights, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(count, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_gap(count, Theme::SPACE_M, 0);
+  ScreensaverView::_lights_number = Theme::label(count, "", Theme::large_font(), Theme::text());
+  ScreensaverView::_lights_text = Theme::label(count, "", Theme::body_font(), Theme::muted());
+  // On the number's baseline, as the clock's AM/PM.
+  lv_obj_set_style_pad_bottom(ScreensaverView::_lights_text, Theme::SPACE_S, 0);
+  ScreensaverView::_lights_alert = Ui::icon(lights, NSPM_ICON_ALERT_CIRCLE_OUTLINE, 24, Theme::danger());
+  lv_obj_add_flag(ScreensaverView::_lights_alert, LV_OBJ_FLAG_HIDDEN);
+  return energy;
+}
+
 void ScreensaverView::_build_clock() {
   lv_obj_t *parent = ScreensaverView::_parent;
   // Outside temperature top left, the room's top right, the clock in the middle (screensaver2).
@@ -412,6 +484,44 @@ void ScreensaverView::_show_calendar(const ScreensaverState &state) {
   }
 }
 
+void ScreensaverView::_show_energy(const EnergyState &energy) {
+  if (ScreensaverView::_power_panel == NULL) {
+    return;
+  }
+  Ui::set_visible(ScreensaverView::_power_panel, energy.power_shown);
+  Ui::set_text(ScreensaverView::_hero_symbol, energy.hero_symbol);
+  Ui::set_visible(ScreensaverView::_hero_symbol, !energy.hero_symbol.empty());
+  Ui::set_text(ScreensaverView::_hero_number, energy.hero_number);
+  Ui::set_text(ScreensaverView::_hero_unit, energy.hero_unit);
+  Ui::set_visible(ScreensaverView::_power_line, !energy.power_line.empty());
+  Ui::set_text(ScreensaverView::_power_line_text, energy.power_line);
+  Ui::set_text(ScreensaverView::_power_line_icon, energy.exporting ? NSPM_ICON_TRANSMISSION_TOWER : NSPM_ICON_HOME_LIGHTNING_BOLT);
+  Ui::set_text_color(ScreensaverView::_power_line_icon, energy.exporting ? Theme::accent() : Theme::muted());
+
+  Ui::set_visible(ScreensaverView::_lights_panel, energy.lights_shown);
+  Ui::set_text(ScreensaverView::_lights_number, energy.lights_number);
+  Ui::set_text(ScreensaverView::_lights_text, energy.lights_text);
+  Ui::set_text(ScreensaverView::_lights_icon, energy.lights_none ? NSPM_ICON_LIGHTBULB_OUTLINE : NSPM_ICON_LIGHTBULB_ON);
+  Ui::set_text_color(ScreensaverView::_lights_icon, energy.lights_alert ? Theme::danger() : energy.lights_none ? Theme::muted() : Theme::on());
+  Ui::set_text_color(ScreensaverView::_lights_number, energy.lights_alert ? Theme::danger() : Theme::text());
+  Ui::set_visible(ScreensaverView::_lights_alert, energy.lights_alert);
+  if (ScreensaverView::_background) {
+    // Over the threshold the whole panel is tinted, so it reads from across the room.
+    Ui::set_bg_color(ScreensaverView::_lights_panel, energy.lights_alert ? lv_color_mix(Theme::danger(), Theme::card(), 70) : Theme::card());
+  }
+}
+
+static const char *body_name(int body) {
+  switch (body) {
+  case 1:
+    return "calendar";
+  case 2:
+    return "energy";
+  default:
+    return "weather";
+  }
+}
+
 void ScreensaverView::_show_current() {
   for (int b = 0; b < BODY_COUNT; b++) {
     bool shown = !ScreensaverView::_sequence.empty() && ScreensaverView::_sequence[ScreensaverView::_current].body == b;
@@ -421,7 +531,7 @@ void ScreensaverView::_show_current() {
     const Step &step = ScreensaverView::_sequence[ScreensaverView::_current];
     ScreensaverView::_announced = step.body;
     if (ScreensaverView::on_card != nullptr) {
-      ScreensaverView::on_card(step.body == CALENDAR ? "calendar" : "weather", step.ms / 1000);
+      ScreensaverView::on_card(body_name(step.body), step.ms / 1000);
     }
   }
 }
@@ -490,6 +600,8 @@ void ScreensaverView::show(const ScreensaverState &state) {
   for (const ScreensaverState::Card &card : state.cards) {
     if (card.type == ScreensaverCardType::CALENDAR) {
       sequence.push_back({CALENDAR, card_ms(card.seconds)});
+    } else if (card.type == ScreensaverCardType::ENERGY) {
+      sequence.push_back({ENERGY, card_ms(card.seconds)});
     }
   }
   int bodies = 0;
@@ -520,6 +632,10 @@ void ScreensaverView::show(const ScreensaverState &state) {
         ScreensaverView::_bodies[WEATHER] = ScreensaverView::_build_weather(landscape);
         lv_obj_add_flag(ScreensaverView::_bodies[WEATHER], LV_OBJ_FLAG_HIDDEN);
       }
+      if (bodies & (1 << ENERGY)) {
+        ScreensaverView::_bodies[ENERGY] = ScreensaverView::_build_energy(landscape);
+        lv_obj_add_flag(ScreensaverView::_bodies[ENERGY], LV_OBJ_FLAG_HIDDEN);
+      }
       if (bodies & (1 << CALENDAR)) {
         // Built while the only body shown: it sizes its lines to the space it has.
         ScreensaverView::_bodies[CALENDAR] = ScreensaverView::_build_calendar(landscape);
@@ -543,6 +659,7 @@ void ScreensaverView::show(const ScreensaverState &state) {
   Ui::set_visible(ScreensaverView::_inside_group, state.show_inside);
   Ui::set_text(ScreensaverView::_inside, state.inside);
   ScreensaverView::_show_calendar(state);
+  ScreensaverView::_show_energy(state.energy);
   if (ScreensaverView::_bodies[WEATHER] == NULL) {
     return;
   }
