@@ -14,6 +14,8 @@
 #include <ScreensaverPage.hpp>
 #include <StatusUpdateManager_events.hpp>
 // #include <cJSON.h>
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <esp_http_client.h>
 #include <esp_log.h>
@@ -546,6 +548,31 @@ void ScreensaverPage::_lvgl_render() {
       state.forecast[i].rain = LvglText::utf8(item->precipitation_string);
       state.forecast[i].wind = LvglText::utf8(item->wind_string);
     }
+  }
+
+  // The body's rotation (the clock header stays). Card types this firmware doesn't know are skipped.
+  state.base_seconds = config->screensaver_base_card_seconds > 0 ? config->screensaver_base_card_seconds : 10;
+  bool calendar_card = false;
+  for (size_t i = 0; i < config->n_screensaver_cards; i++) {
+    const NSPanelConfig__ScreensaverCard *card = config->screensaver_cards[i];
+    if (card == NULL) {
+      continue;
+    }
+    uint16_t seconds = card->seconds > 0 ? (uint16_t)std::min<int32_t>(card->seconds, UINT16_MAX) : 10;
+    switch (card->type) {
+    case NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_CALENDAR:
+      state.cards.push_back({ScreensaverCardType::CALENDAR, seconds});
+      calendar_card = true;
+      break;
+    default:
+      break;
+    }
+  }
+  if (calendar_card) {
+    // TODO(screensaver cards, data path): fill state.calendar (days, "time | title" rows, "now") and
+    // state.empty_text from the decoded status/calendar update (SCREENSAVER_CARDS_PLAN.md section 3.1).
+    // Until then the card shows the empty message.
+    state.empty_text = "No events";
   }
   LvglUi::show(LvglUi::View::SCREENSAVER, ScreensaverView::build, [state]() { ScreensaverView::show(state); });
 }
