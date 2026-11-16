@@ -3,6 +3,7 @@
 #include <NextionWindow.hpp>
 #include <Nextion_constans.hpp>
 #include <Nextion_event.hpp>
+#include <PsramTask.hpp>
 #include <algorithm>
 #include <esp_event.h>
 #include <esp_log.h>
@@ -30,10 +31,11 @@ esp_err_t Nextion::init() {
 
   Nextion::_current_nextion_state = nextion_state_t::INITIALIZING;
 
-  // Start custom event loop that handles messages from UART -> data handler
+  // Custom event loop that handles messages from UART -> data handler. Created without a task: esp_event_loop_create()
+  // cannot put its task's stack in PSRAM, so _task_uart_frame_loop() below runs it on a stack that is.
   Nextion::_handle_uart_data_event_loop_args = {
       .queue_size = NEXTION_UART_EVENT_LOOP_QUEUE_SIZE,
-      .task_name = "uart_handle_data",
+      .task_name = NULL,
       .task_priority = 8,
       .task_stack_size = NEXTION_UART_EVENT_LOOP_STACK_SIZE,
       .task_core_id = 1,
@@ -41,6 +43,16 @@ esp_err_t Nextion::init() {
   esp_err_t create_result = esp_event_loop_create(&Nextion::_handle_uart_data_event_loop_args, &Nextion::_handle_uart_data_event_loop);
   if (create_result != ESP_OK) {
     ESP_LOGE("Nextion", "Failed to create custom event loop to handle uart data. Error: %s", esp_err_to_name(create_result));
+    return ESP_ERR_NOT_FINISHED;
+  }
+
+  // PSRAM STACK, flash audit (the stack is unreachable while the flash cache is off, so nothing here may touch flash).
+  // The only handler on this loop is _uart_data_handler: it copies the frame, takes _event_wait_integer_mutex, notifies a
+  // task, or esp_event_post()s to the default loop (which runs the real handlers on sys_evt, not here), and logs. No
+  // ConfigManager, NVS, LittleFS, OTA or esp_flash call is reachable. No IRAM_ATTR code or ISR runs on this stack
+  // (the xtensa port switches to a per-core interrupt stack, port_IntStack).
+  if (create_task_psram_stack(&Nextion::_task_uart_frame_loop, "uart_handle_data", NEXTION_UART_EVENT_LOOP_STACK_SIZE, NULL, 8, NULL, 1) != pdPASS) {
+    ESP_LOGE("Nextion", "Failed to create the task that runs the UART data event loop.");
     return ESP_ERR_NOT_FINISHED;
   }
 
@@ -107,8 +119,14 @@ esp_err_t Nextion::init() {
     ESP_LOGE("Nextion", "Failed to register Nextion UART data processing handler. Got result %s", esp_err_to_name(reg_handler_result));
   }
 
-  // Start the task that is responsible for handling Nextion display data
-  xTaskCreatePinnedToCore(Nextion::_task_uart_event, "uart_event_task", 4096, NULL, 12, NULL, 1);
+  // Start the task that is responsible for handling Nextion display data.
+  // PSRAM STACK, flash audit: reads the UART driver and posts frames to the frame loop (NextionWindow::on_frame() only
+  // updates counters under a spinlock and gives a semaphore), and logs. Its callers' flash-touching code (config
+  // saves, OTA, TFT download) runs on other tasks. No ConfigManager, NVS, LittleFS or esp_flash call is reachable,
+  // and the UART ISR is IRAM code that runs on the interrupt stack, not this one.
+  if (create_task_psram_stack(Nextion::_task_uart_event, "uart_event_task", 4096, NULL, 12, NULL, 1) != pdPASS) {
+    ESP_LOGE("Nextion", "Failed to create the UART event task.");
+  }
 
   ESP_LOGD("Nextion", "Turning Nextion display off and on again.");
   gpio_set_direction(NEXTION_ON_OFF_GPIO, GPIO_MODE_OUTPUT);
@@ -302,6 +320,17 @@ std::string Nextion::get_link_baud_warning() {
     break;
   }
   return {};
+}
+
+void Nextion::_task_uart_frame_loop(void *param) {
+  // What esp_event_loop_run_task() does for a loop that has its own task: esp_event_loop_run() only returns on an
+  // error, since the loop is never deleted.
+  for (;;) {
+    if (esp_event_loop_run(Nextion::_handle_uart_data_event_loop, portMAX_DELAY) != ESP_OK) {
+      ESP_LOGE("Nextion", "UART data event loop stopped running.");
+      vTaskSuspend(NULL);
+    }
+  }
 }
 
 void Nextion::_task_uart_event(void *param) {

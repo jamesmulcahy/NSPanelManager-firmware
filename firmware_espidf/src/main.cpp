@@ -128,7 +128,7 @@ extern "C" void app_main() {
   UpdateManager::mark_boot_successful();
 
   esp_event_loop_create_default();
-  EventLoopWatchdog::init(); // Logs every task's backtrace if the default loop stops dispatching.
+  EventLoopWatchdog::init(); // Registers the probe handler (always). The watch task starts below if the config enables it.
 
   // xTaskCreatePinnedToCore(task_print_mem_usage, "task_mem_debug", 4096, NULL, 3, NULL, 1);
 
@@ -158,6 +158,8 @@ extern "C" void app_main() {
     // Start task that handles WiFi connection
     WiFiManager::start_client(&ConfigManager::wifi_ssid, &ConfigManager::wifi_psk, &ConfigManager::wifi_hostname, &ConfigManager::wifi_hostname);
   }
+
+  EventLoopWatchdog::set_enabled(ConfigManager::loop_watchdog);
 
   switch (ConfigManager::log_level) {
   case esp_log_level_t::ESP_LOG_DEBUG:

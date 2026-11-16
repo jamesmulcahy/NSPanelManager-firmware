@@ -137,4 +137,8 @@ public:
   // The look above was chosen on the panel (or by a command) and the manager has not confirmed it
   // yet: a config with another look is not applied, and the look is reported again (LvglLook).
   static inline bool lvgl_look_unconfirmed = false;
+
+  // EventLoopWatchdog: log every task's backtrace if the default event loop stops dispatching. Off by default (it
+  // costs a task and its stack); the loop_watchdog command turns it on and off without a reboot.
+  static inline bool loop_watchdog = false;
 };

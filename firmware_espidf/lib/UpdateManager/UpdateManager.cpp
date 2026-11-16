@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <LittleFS.hpp>
 #include <InterfaceManager.hpp>
+#include <EventLoopWatchdog.hpp>
 #include <LvglLook.hpp>
 #include <LvglUi.hpp>
 #include <NextionTerminal.hpp>
@@ -668,6 +669,23 @@ void UpdateManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, 
             xTaskCreatePinnedToCore(UpdateManager::_task_reboot, "reboot", 4096, NULL, 2, NULL, 1);
           } else {
             ESP_LOGI("UpdateManager", "lvgl_ui is %s; LVGL is %sthe UI.", ConfigManager::lvgl_ui ? "true" : "false", LvglUi::active() ? "" : "not ");
+          }
+        } else if (command_string.compare("loop_watchdog") == 0) {
+          // {"command": "loop_watchdog", "enable": true}: log every task's backtrace if the default event loop
+          // stops dispatching (EventLoopWatchdog). Off by default. Saved and applied at once, no reboot; a repeat
+          // of the current state does nothing. Without "enable" it logs the current state.
+          if (json.contains("enable") && json["enable"].is_boolean()) {
+            bool enable = json["enable"].get<bool>();
+            if (enable != ConfigManager::loop_watchdog) {
+              ConfigManager::loop_watchdog = enable;
+              ESP_LOGI("UpdateManager", "loop_watchdog set to %s.", enable ? "true" : "false");
+              ConfigManager::save_config();
+              EventLoopWatchdog::set_enabled(enable);
+            } else {
+              ESP_LOGI("UpdateManager", "loop_watchdog is already %s.", enable ? "true" : "false");
+            }
+          } else {
+            ESP_LOGI("UpdateManager", "loop_watchdog is %s.", ConfigManager::loop_watchdog ? "true" : "false");
           }
         } else if (command_string.compare("register_accept") == 0) {
           // Handled by NSPM_ConfigManager, which also listens on this topic.

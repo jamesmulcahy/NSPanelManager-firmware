@@ -4,6 +4,7 @@
 #include <PanelMetrics.hpp>
 #include <Nextion_constans.hpp>
 #include <Nextion_event.hpp>
+#include <PsramTask.hpp>
 #include <driver/uart.h>
 #include <esp_log.h>
 #include <algorithm>
@@ -44,7 +45,14 @@ void NextionWindow::init() {
   esp_log_level_set("NextionWindow", ConfigManager::log_level);
   NextionWindow::_room_sem = xSemaphoreCreateBinary();
   // 4 KB: besides accounting, it runs Nextion::recover_link() when the display goes silent.
-  xTaskCreatePinnedToCore(NextionWindow::_task_monitor, "nextion_window", 4096, NULL, 3, NULL, 1);
+  // PSRAM STACK, flash audit: the monitor's work is spinlock-guarded counters, UART writes (uart_write_bytes), the
+  // Nextion state and write mutexes, esp_event_post() (timeout 0) and logs. recover_link() and its callees
+  // (restart(), _connect_at_default_baud(), _switch_to_operating_baud()) only read ConfigManager's in-RAM
+  // baud settings and drive the UART and GPIO; nothing saves a learned baud (no ConfigManager::save_config()
+  // anywhere in lib/Nextion). No NVS, LittleFS, OTA or esp_flash call is reachable.
+  if (create_task_psram_stack(NextionWindow::_task_monitor, "nextion_window", 4096, NULL, 3, NULL, 1) != pdPASS) {
+    ESP_LOGE("NextionWindow", "Failed to create the window monitor task.");
+  }
 }
 
 uint32_t NextionWindow::_wire_ms(uint32_t bytes, uint32_t baud) {
