@@ -15,6 +15,7 @@
 #include "Pages.hpp"
 #include "TerminalProtocol.hpp"
 #include "Theme.hpp"
+#include "nspm_icons.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -79,6 +80,61 @@ static void refresh() {
   lv_refr_now(NULL);
 }
 
+// The button whose icon (first child) is `glyph`, or NULL.
+static lv_obj_t *find_button(lv_obj_t *obj, const char *glyph) {
+  if (lv_obj_check_type(obj, &lv_button_class) && lv_obj_get_child_count(obj) > 0) {
+    lv_obj_t *icon = lv_obj_get_child(obj, 0);
+    if (lv_obj_check_type(icon, &lv_label_class) && strcmp(lv_label_get_text(icon), glyph) == 0) {
+      return obj;
+    }
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_count(obj); i++) {
+    lv_obj_t *found = find_button(lv_obj_get_child(obj, i), glyph);
+    if (found != NULL) {
+      return found;
+    }
+  }
+  return NULL;
+}
+
+static int hit_failures;
+
+// What a finger at (x, y) presses, as LVGL's own search for the touched object finds it.
+static void expect_hit(const char *what, int32_t x, int32_t y, lv_obj_t *expected) {
+  lv_point_t point = {x, y};
+  lv_obj_t *found = lv_indev_search_obj(lv_screen_active(), &point);
+  // A press on a button's label is a press on the button.
+  while (found != NULL && expected != NULL && found != expected && !lv_obj_has_flag(found, LV_OBJ_FLAG_CLICKABLE)) {
+    found = lv_obj_get_parent(found);
+  }
+  bool ok = found == expected;
+  hit_failures += ok ? 0 : 1;
+  printf("hit test  %-44s (%3d,%3d): %s\n", what, (int)x, (int)y, ok ? "ok" : "WRONG OBJECT");
+}
+
+// Fingers land past controls near the screen's edges (Ui::reach_screen_edges): check the media
+// player's volume row, where on Lounge most taps meant for mute missed it.
+static void check_media_hits() {
+  lv_obj_t *screen = lv_screen_active();
+  lv_obj_t *mute = find_button(screen, NSPM_ICON_VOLUME_HIGH);
+  lv_obj_t *down = find_button(screen, NSPM_ICON_MINUS);
+  if (mute == NULL || down == NULL) {
+    printf("hit test  media player: mute or volume-down not found\n");
+    hit_failures++;
+    return;
+  }
+  lv_area_t m, d;
+  lv_obj_get_coords(mute, &m);
+  lv_obj_get_coords(down, &d);
+  int32_t mid = (m.y1 + m.y2) / 2;
+  expect_hit("mute itself", (m.x1 + m.x2) / 2, mid, mute);
+  expect_hit("left of mute, past its edge", 2, mid, mute);
+  expect_hit("below mute, near the bottom edge", (m.x1 + m.x2) / 2, H - 3, mute);
+  expect_hit("bottom-left corner", 1, H - 1, mute);
+  expect_hit("volume-down's own left edge", d.x1 + 1, (d.y1 + d.y2) / 2, down);
+  expect_hit("below volume-down, near the bottom edge", (d.x1 + d.x2) / 2, H - 3, down);
+}
+
 static void run(bool landscape, const char *out) {
   const char *region = landscape ? "eu" : "us";
   W = landscape ? 480 : 320;
@@ -138,6 +194,9 @@ static void run(bool landscape, const char *out) {
       char number[8];
       snprintf(number, sizeof(number), "%02d", n++);
       write_ppm(std::string(out) + "/" + region + (plain ? "-" + std::string(number) : std::string("-bg-") + Background::name(preset)) + "-" + page.name + ".ppm");
+      if (plain && !landscape && strcmp(page.name, "media-photo-art") == 0) {
+        check_media_hits();
+      }
       if (page.update != nullptr) {
         page.update();
         refresh();
@@ -163,5 +222,5 @@ int main(int argc, char **argv) {
     fprintf(f, "%s\n", row.c_str());
   }
   fclose(f);
-  return 0;
+  return hit_failures == 0 ? 0 : 1;
 }

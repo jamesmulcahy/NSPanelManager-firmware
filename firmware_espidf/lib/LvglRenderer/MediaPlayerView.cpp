@@ -40,6 +40,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   MediaPlayerView::_title = header.title;
   lv_obj_add_event_cb(header.back, clicked, LV_EVENT_CLICKED, (void *)(intptr_t)Action::BACK);
   MediaPlayerView::_source = button(header.right, NSPM_ICON_SPEAKER, 24, Action::SOURCE_SWITCH);
+  Ui::reach_screen_edges(MediaPlayerView::_source, 24, 10); // As the header's own buttons
 
   // The art beside everything else on a landscape screen, above it on a portrait one.
   lv_obj_t *body = Ui::fill(parent, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
@@ -109,14 +110,22 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_flex_flow(volume, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(volume, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(volume, Theme::SPACE_XS, 0);
-  lv_obj_set_style_pad_gap(volume, 0, 0);
+  lv_obj_set_style_pad_gap(volume, Theme::SPACE_XS, 0);
+  // Big targets: on Lounge, most taps meant for a 44x36 mute landed beside it (2026-11-15). Mute is
+  // filled, as play is, so it reads as a button; it and the +/- buttons reach the screen's edges
+  // (Ui::reach_screen_edges, from icon_button) where they are near one.
   MediaPlayerView::_mute = button(volume, NSPM_ICON_VOLUME_HIGH, 24, Action::MUTE);
+  lv_obj_set_size(MediaPlayerView::_mute, 72, 52);
+  lv_obj_set_style_bg_opa(MediaPlayerView::_mute, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(MediaPlayerView::_mute, Theme::track(), 0);
   MediaPlayerView::_down = button(volume, NSPM_ICON_MINUS, 24, Action::VOLUME_DOWN);
+  lv_obj_set_size(MediaPlayerView::_down, 56, 52);
   // Always shown, unlike the Nextion page's p_volume, which appears for a few seconds on a change
   // (there is room for it here, and a bar that comes and goes costs two redraws per change).
   MediaPlayerView::_volume = bar(volume, Theme::on());
   lv_obj_set_flex_grow(MediaPlayerView::_volume, 1);
   MediaPlayerView::_up = button(volume, NSPM_ICON_PLUS, 24, Action::VOLUME_UP);
+  lv_obj_set_size(MediaPlayerView::_up, 56, 52);
 }
 
 void MediaPlayerView::show(const MediaPlayerState &state) {

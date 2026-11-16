@@ -56,8 +56,8 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   HomeView::_entities = Ui::icon_button(header.bar, NSPM_ICON_DOTS_HORIZONTAL, 24);
   on_click(HomeView::_entities, Action::ENTITIES, LV_EVENT_CLICKED);
   // Into the screen's corners, as the header's own buttons (Ui::header()).
-  lv_obj_set_ext_click_area(HomeView::_scenes, 10);
-  lv_obj_set_ext_click_area(HomeView::_entities, 10);
+  Ui::reach_screen_edges(HomeView::_scenes, 24, 10);
+  Ui::reach_screen_edges(HomeView::_entities, 24, 10);
   lv_obj_set_style_text_align(HomeView::_time, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_set_style_pad_right(HomeView::_time, 10, 0);
 
@@ -190,6 +190,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   for (lv_event_code_t code : {LV_EVENT_READY, LV_EVENT_CANCEL, LV_EVENT_VALUE_CHANGED, LV_EVENT_DELETE}) {
     lv_obj_add_event_cb(room, HomeView::_room_event, code, NULL);
   }
+  Ui::reach_screen_edges(room); // The footer is at the bottom edge
 
   lv_obj_t *mode = Theme::group(footer, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_grow(mode, 2);
@@ -222,6 +223,8 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
     lv_obj_add_event_cb(half, [](lv_event_t *event) { emit(Action::SET_MODE, (int32_t)(intptr_t)lv_event_get_user_data(event)); },
                         LV_EVENT_CLICKED, (void *)(intptr_t)i);
     (i == 0 ? HomeView::_mode_room : HomeView::_mode_all) = half;
+    // To the screen edges below and beside, and over the switch's own padding (Ui::reach_screen_edges).
+    Ui::reach_screen_edges(half, 24, Theme::SPACE_S);
   }
 }
 

@@ -2,6 +2,7 @@
 #include "Theme.hpp"
 
 #include <cstring>
+#include <lvgl_private.h>
 
 namespace Ui {
 
@@ -84,6 +85,48 @@ static void flat(lv_obj_t *obj) {
   lv_obj_set_style_text_color(obj, Theme::disabled(), LV_STATE_DISABLED);
 }
 
+static void edge_hit_test(lv_event_t *event) {
+  lv_obj_t *obj = (lv_obj_t *)lv_event_get_current_target(event);
+  lv_hit_test_info_t *info = (lv_hit_test_info_t *)lv_event_get_param(event);
+  uintptr_t packed = (uintptr_t)lv_event_get_user_data(event);
+  int32_t reach = (int32_t)(packed & 0xFFFF);
+  int32_t margin = (int32_t)(packed >> 16);
+  lv_area_t area = obj->coords;
+  lv_area_increase(&area, margin, margin);
+  const lv_area_t &screen = lv_obj_get_screen(obj)->coords;
+  if (area.x1 - screen.x1 <= reach) area.x1 = screen.x1;
+  if (screen.x2 - area.x2 <= reach) area.x2 = screen.x2;
+  if (area.y1 - screen.y1 <= reach) area.y1 = screen.y1;
+  if (screen.y2 - area.y2 <= reach) area.y2 = screen.y2;
+  info->res = info->res && lv_area_is_point_on(&area, info->point, 0);
+}
+
+static void ext_draw_reach(lv_event_t *event) { lv_event_set_ext_draw_size(event, (int32_t)(intptr_t)lv_event_get_user_data(event)); }
+
+void reach_screen_edges(lv_obj_t *obj, int32_t reach, int32_t margin) {
+  // lv_obj_hit_test() only asks LV_EVENT_HIT_TEST about points inside the click area, so make that
+  // reach far enough everywhere, and let edge_hit_test() take it back on the sides away from an edge.
+  reach = LV_MAX(reach, margin);
+  lv_obj_set_ext_click_area(obj, reach);
+  lv_obj_add_flag(obj, LV_OBJ_FLAG_ADV_HITTEST);
+  lv_obj_remove_event_cb(obj, edge_hit_test);
+  lv_obj_add_event_cb(obj, edge_hit_test, LV_EVENT_HIT_TEST, (void *)(((uintptr_t)margin << 16) | (uintptr_t)reach));
+  // LVGL only looks for a touch among a parent's children inside the parent's area, or its extra
+  // drawing area when its overflow is visible (as the header bar's, below): extend each ancestor's.
+  // A scrollable ancestor is left alone, with everything above it: visible overflow would let its
+  // scrolled-away content draw outside it. (Cards, groups and the page fill aren't scrollable.)
+  for (lv_obj_t *parent = lv_obj_get_parent(obj); parent != NULL && lv_obj_get_parent(parent) != NULL; parent = lv_obj_get_parent(parent)) {
+    if (lv_obj_has_flag(parent, LV_OBJ_FLAG_SCROLLABLE)) {
+      break;
+    }
+    if (!lv_obj_has_flag(parent, LV_OBJ_FLAG_OVERFLOW_VISIBLE) || lv_obj_get_ext_draw_size(parent) < reach) {
+      lv_obj_add_flag(parent, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+      lv_obj_add_event_cb(parent, ext_draw_reach, LV_EVENT_REFR_EXT_DRAW_SIZE, (void *)(intptr_t)reach);
+      lv_obj_refresh_ext_draw_size(parent);
+    }
+  }
+}
+
 lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size) {
   lv_obj_t *button = lv_button_create(parent);
   flat(button);
@@ -95,6 +138,7 @@ lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size) {
   lv_label_set_text(label, glyph);
   lv_obj_set_style_text_font(label, Theme::icon_font(size), 0);
   lv_obj_center(label);
+  reach_screen_edges(button);
   return button;
 }
 
@@ -155,7 +199,7 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
   lv_obj_refresh_ext_draw_size(h.bar);
   for (lv_obj_t *button : {h.back, h.prev, h.next}) {
     if (button != NULL) {
-      lv_obj_set_ext_click_area(button, 10);
+      reach_screen_edges(button, 24, 10);
     }
   }
   return h;
@@ -187,6 +231,7 @@ lv_obj_t *tile(lv_obj_t *parent, const char *glyph, int icon_size, const char *t
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   }
   (void)image;
+  reach_screen_edges(card);
   return card;
 }
 
