@@ -2,6 +2,11 @@
 # Automatically generated file. DO NOT EDIT.
 # Espressif IoT Development Framework (ESP-IDF) 6.1.0 Project Configuration
 #
+# NOTE: keep in sync with sdkconfig.custom_pcb. Both boards build the same code, so an
+# option the code depends on (e.g. FREERTOS_USE_TRACE_FACILITY for
+# uxTaskGetSystemState) must be set in both, or the other board fails to link.
+# ESP-IDF may drop this comment when it regenerates the file.
+#
 # default:
 CONFIG_SOC_CAPS_ECO_VER_MAX=301
 # default:
