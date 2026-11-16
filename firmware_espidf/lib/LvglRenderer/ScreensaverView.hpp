@@ -78,6 +78,10 @@ public:
   // Any touch wakes the panel.
   static inline void (*on_touch)() = nullptr;
 
+  // The body turned to a card (also when it first shows one): `weather` or `calendar`, and how long
+  // it stays, in seconds. On the GUI task. For the page's log; the simulator leaves it unset.
+  static inline void (*on_card)(const char *card, uint32_t seconds) = nullptr;
+
   static void build(lv_obj_t *parent, bool landscape);
   static void show(const ScreensaverState &state);
 
@@ -124,6 +128,7 @@ private:
   // (none with fewer than two). The timer is the GUI task's, and is deleted with the header (_forget).
   static inline std::vector<Step> _sequence;
   static inline size_t _current = 0;
+  static inline int _announced = -1; // The Body on_card last told of
   static inline lv_timer_t *_timer = NULL;
   static inline lv_obj_t *_bodies[BODY_COUNT] = {};
   // Header (all modes)

@@ -30,6 +30,7 @@ void ScreensaverView::_forget(lv_event_t *) {
   }
   ScreensaverView::_layout = -1;
   ScreensaverView::_sequence.clear();
+  ScreensaverView::_announced = -1;
   ScreensaverView::_current = 0;
   for (lv_obj_t *&body : ScreensaverView::_bodies) {
     body = NULL;
@@ -415,6 +416,13 @@ void ScreensaverView::_show_current() {
   for (int b = 0; b < BODY_COUNT; b++) {
     bool shown = !ScreensaverView::_sequence.empty() && ScreensaverView::_sequence[ScreensaverView::_current].body == b;
     Ui::set_visible(ScreensaverView::_bodies[b], shown);
+  }
+  if (!ScreensaverView::_sequence.empty() && ScreensaverView::_announced != (int)ScreensaverView::_sequence[ScreensaverView::_current].body) {
+    const Step &step = ScreensaverView::_sequence[ScreensaverView::_current];
+    ScreensaverView::_announced = step.body;
+    if (ScreensaverView::on_card != nullptr) {
+      ScreensaverView::on_card(step.body == CALENDAR ? "calendar" : "weather", step.ms / 1000);
+    }
   }
 }
 

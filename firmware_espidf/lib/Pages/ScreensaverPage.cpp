@@ -11,12 +11,14 @@
 #include <NSPM_ConfigManager_event.hpp>
 #include <Nextion.hpp>
 #include <RoomManager.hpp>
+#include <PanelClock.hpp>
 #include <ScreensaverPage.hpp>
 #include <StatusUpdateManager_events.hpp>
 // #include <cJSON.h>
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <esp_http_client.h>
 #include <esp_log.h>
 
@@ -28,6 +30,9 @@ void ScreensaverPage::init() {
   }
   esp_log_level_set("ScreensaverPage", ConfigManager::log_level);
   ScreensaverPage::_weather_update_data_mutex = xSemaphoreCreateMutex();
+  ScreensaverPage::_calendar_mutex = xSemaphoreCreateMutex();
+  // The body turned to another card (GUI task): what the QEMU test and a log reader see of the rotation.
+  ScreensaverView::on_card = [](const char *card, uint32_t seconds) { ESP_LOGI("ScreensaverPage", "Screensaver card: %s (%u s)", card, (unsigned)seconds); };
 
   MqttManager::register_handler<ScreensaverPage::_mqtt_event_handler, PanelMetrics::HANDLER_SCREENSAVER_PAGE>(MQTT_EVENT_ANY, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, ESP_EVENT_ANY_ID, ScreensaverPage::_nspm_config_event_handler, NULL);
@@ -68,6 +73,8 @@ void ScreensaverPage::show() {
 
   InterfaceManager::begin_page(ScreensaverPage::unshow);
 
+  // A calendar update that arrived while another page was shown, or whose deferred decode was dropped.
+  ScreensaverPage::_decode_calendar_if_stale();
   ScreensaverPage::_go_to_nextion_page();
   ScreensaverPage::_update_displayed_date();
   ScreensaverPage::_update_displayed_time();
@@ -169,6 +176,9 @@ void ScreensaverPage::_mqtt_event_handler(void *arg, esp_event_base_t event_base
     std::string weather_topic = mqtt_base_topic;
     weather_topic.append("/status/weather");
 
+    std::string calendar_topic = mqtt_base_topic;
+    calendar_topic.append("/status/calendar");
+
     std::string inside_temperature_sensor_state_topic = ScreensaverPage::_inside_temperature_sensor_state_topic.get();
     if (topic_string.compare(inside_temperature_sensor_state_topic) == 0) {
       // Got new temperature from MQTT, update display.
@@ -186,6 +196,25 @@ void ScreensaverPage::_mqtt_event_handler(void *arg, esp_event_base_t event_base
       // We got new AM/PM, update display:
       ScreensaverPage::_am_pm_string = std::string(event->data, event->data_len);
       ScreensaverPage::_update_displayed_time();
+    } else if (topic_string.compare(calendar_topic) == 0) {
+      // Store the newest bytes and nothing more: decoding and formatting happen on LvglUi's task.
+      if (ScreensaverPage::_calendar_mutex != NULL && xSemaphoreTake(ScreensaverPage::_calendar_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
+        ScreensaverPage::_calendar_mqtt_data.assign(event->data, event->data + event->data_len);
+        ScreensaverPage::_calendar_stale = true;
+        xSemaphoreGive(ScreensaverPage::_calendar_mutex);
+        // Only LVGL panels draw the calendar. One job at a time covers any number of updates: it decodes the newest.
+        if (LvglUi::active() && !ScreensaverPage::_calendar_job_queued.exchange(true)) {
+          LvglUi::defer([]() {
+            ScreensaverPage::_calendar_job_queued = false;
+            ScreensaverPage::_decode_calendar_if_stale();
+            if (ScreensaverPage::showing()) {
+              ScreensaverPage::_lvgl_render();
+            }
+          });
+        }
+      } else {
+        ESP_LOGW("ScreensaverPage", "Failed to take calendar mutex while processing new data from MQTT. Will wait for next update.");
+      }
     } else if (topic_string.compare(weather_topic) == 0) {
       if (ScreensaverPage::_weather_update_data_mutex != NULL) {
         if (xSemaphoreTake(ScreensaverPage::_weather_update_data_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
@@ -300,7 +329,7 @@ void ScreensaverPage::_subscribe_to_mqtt_topics() {
   std::string old_manager_address = ScreensaverPage::_subscribed_manager_address.get();
   std::string old_inside_temperature_sensor_mqtt_topic = ScreensaverPage::_inside_temperature_sensor_state_topic.get();
   if (manager_address != old_manager_address) {
-    for (const char *suffix : {"/status/time", "/status/date", "/status/ampm", "/status/weather"}) {
+    for (const char *suffix : {"/status/time", "/status/date", "/status/ampm", "/status/weather", "/status/calendar"}) {
       if (!old_manager_address.empty()) {
         MqttManager::unsubscribe("nspanel/mqttmanager_" + old_manager_address + suffix);
       }
@@ -553,7 +582,8 @@ void ScreensaverPage::_lvgl_render() {
   // The body's rotation (the clock header stays). Card types this firmware doesn't know are skipped.
   state.base_seconds = config->screensaver_base_card_seconds > 0 ? config->screensaver_base_card_seconds : 10;
   bool calendar_card = false;
-  for (size_t i = 0; i < config->n_screensaver_cards; i++) {
+  // "No screensaver" shows no cards: the backlight is off and nothing rotates.
+  for (size_t i = 0; mode != NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__NO_SCREENSAVER && i < config->n_screensaver_cards; i++) {
     const NSPanelConfig__ScreensaverCard *card = config->screensaver_cards[i];
     if (card == NULL) {
       continue;
@@ -569,10 +599,119 @@ void ScreensaverPage::_lvgl_render() {
     }
   }
   if (calendar_card) {
-    // TODO(screensaver cards, data path): fill state.calendar (days, "time | title" rows, "now") and
-    // state.empty_text from the decoded status/calendar update (SCREENSAVER_CARDS_PLAN.md section 3.1).
-    // Until then the card shows the empty message.
-    state.empty_text = "No events";
+    // Decoded already (the MQTT handler's deferred job, or show()): this only formats a locked copy.
+    std::shared_ptr<NSPanelCalendarUpdate> calendar = ScreensaverPage::_calendar.get();
+    ScreensaverPage::_format_calendar(calendar.get(), config->clock_us_style, state);
   }
   LvglUi::show(LvglUi::View::SCREENSAVER, ScreensaverView::build, [state]() { ScreensaverView::show(state); });
+}
+
+void ScreensaverPage::_decode_calendar_if_stale() {
+  if (ScreensaverPage::_calendar_mutex == NULL || xSemaphoreTake(ScreensaverPage::_calendar_mutex, pdMS_TO_TICKS(1000)) != pdPASS) {
+    ESP_LOGW("ScreensaverPage", "Failed to take calendar mutex to decode an update. Will retry on the next one.");
+    return;
+  }
+  // Held through the unpack (a few ms for the <= 4 KB the MQTT buffer allows) so two decoders cannot store
+  // an older update after a newer one.
+  if (ScreensaverPage::_calendar_stale) {
+    ScreensaverPage::_calendar_stale = false;
+    NSPanelCalendarUpdate *update = nspanel_calendar_update__unpack(NULL, ScreensaverPage::_calendar_mqtt_data.size(), ScreensaverPage::_calendar_mqtt_data.data());
+    if (update != NULL) {
+      ESP_LOGI("ScreensaverPage", "Calendar update: %zu event(s), looking %d h ahead.", update->n_events, (int)update->lookahead_hours);
+      ScreensaverPage::_calendar.set(std::shared_ptr<NSPanelCalendarUpdate>(update, [](NSPanelCalendarUpdate *data) { nspanel_calendar_update__free_unpacked(data, NULL); }));
+    } else {
+      ESP_LOGE("ScreensaverPage", "Got a calendar update but failed to decode it. Keeping the previous one.");
+    }
+  }
+  xSemaphoreGive(ScreensaverPage::_calendar_mutex);
+}
+
+static bool same_day(const struct tm &a, const struct tm &b) { return a.tm_year == b.tm_year && a.tm_yday == b.tm_yday; }
+
+void ScreensaverPage::_format_calendar(const NSPanelCalendarUpdate *update, bool us_clock, ScreensaverState &state) {
+  static const char *const DAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  state.calendar.clear();
+  state.empty_text = "No events";
+  if (update == NULL) {
+    return; // Nothing has arrived yet
+  }
+  if (update->lookahead_hours == 1) {
+    state.empty_text = "No events in the next hour";
+  } else if (update->lookahead_hours > 1) {
+    state.empty_text = "No events in the next " + std::to_string(update->lookahead_hours) + " hours";
+  }
+
+  if (!PanelClock::is_set()) {
+    // No wall clock: the manager's own wording, in one group with no heading.
+    CalendarDay day;
+    for (size_t i = 0; i < update->n_events; i++) {
+      const NSPanelCalendarUpdate__Event *event = update->events[i];
+      if (event != NULL) {
+        day.rows.push_back({LvglText::drawable(event->when_string), LvglText::drawable(event->summary), false});
+      }
+    }
+    if (!day.rows.empty()) {
+      state.calendar.push_back(std::move(day));
+    }
+    return;
+  }
+
+  time_t now = time(NULL);
+  struct tm today;
+  localtime_r(&now, &today);
+  struct tm midnight_tm = today;
+  midnight_tm.tm_hour = midnight_tm.tm_min = midnight_tm.tm_sec = 0;
+  midnight_tm.tm_isdst = -1;
+  time_t midnight = mktime(&midnight_tm);
+  struct tm tomorrow = midnight_tm;
+  tomorrow.tm_mday += 1;
+  tomorrow.tm_isdst = -1;
+  mktime(&tomorrow); // Normalises the date
+
+  struct tm group_tm = {};
+  for (size_t i = 0; i < update->n_events; i++) {
+    const NSPanelCalendarUpdate__Event *event = update->events[i];
+    if (event == NULL || event->end <= (int64_t)now) {
+      continue; // Over
+    }
+    time_t shown_on = (time_t)std::max<int64_t>(event->start, (int64_t)midnight);
+    struct tm day_tm;
+    localtime_r(&shown_on, &day_tm);
+
+    CalendarRow row;
+    row.summary = LvglText::drawable(event->summary);
+    if (event->all_day) {
+      row.time = "All day"; // Under way all day: not "Now"
+    } else if (event->start <= (int64_t)now) {
+      row.time = "Now";
+      row.now = true;
+    } else {
+      struct tm start_tm;
+      time_t start = (time_t)event->start;
+      localtime_r(&start, &start_tm);
+      char buffer[16];
+      if (us_clock) {
+        snprintf(buffer, sizeof(buffer), "%d:%02d %s", start_tm.tm_hour % 12 == 0 ? 12 : start_tm.tm_hour % 12, start_tm.tm_min, start_tm.tm_hour < 12 ? "AM" : "PM");
+      } else {
+        snprintf(buffer, sizeof(buffer), "%02d:%02d", start_tm.tm_hour, start_tm.tm_min);
+      }
+      row.time = buffer;
+    }
+
+    if (state.calendar.empty() || !same_day(group_tm, day_tm)) {
+      CalendarDay day;
+      if (same_day(day_tm, today)) {
+        day.heading = "Today";
+      } else if (same_day(day_tm, tomorrow)) {
+        day.heading = "Tomorrow";
+      } else {
+        char buffer[16];
+        snprintf(buffer, sizeof(buffer), "%s %d", DAYS[day_tm.tm_wday % 7], day_tm.tm_mday);
+        day.heading = buffer;
+      }
+      state.calendar.push_back(std::move(day));
+      group_tm = day_tm;
+    }
+    state.calendar.back().rows.push_back(std::move(row));
+  }
 }
