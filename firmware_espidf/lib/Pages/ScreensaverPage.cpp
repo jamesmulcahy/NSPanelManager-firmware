@@ -257,6 +257,20 @@ void ScreensaverPage::_nspm_config_event_handler(void *arg, esp_event_base_t eve
   case nspm_configmanager_event::CONFIG_LOADED: { // New config loaded while showing screensaver. Update screen
     // Only touches MQTT if the manager address or inside temperature topic changed.
     ScreensaverPage::_subscribe_to_mqtt_topics();
+    {
+      // The rotation's cards or times changed: draw the screensaver again, on LvglUi's task. Cheap (a string
+      // compare) and kept up to date while another page is shown, so the next load does not draw for nothing.
+      std::shared_ptr<NSPanelConfig> cards_config;
+      if (NSPM_ConfigManager::get_config(&cards_config) == ESP_OK && cards_config) {
+        std::string signature = ScreensaverPage::_cards_signature(*cards_config);
+        if (signature != ScreensaverPage::_cards_signature_seen.get()) {
+          ScreensaverPage::_cards_signature_seen.set(signature);
+          if (ScreensaverPage::showing() && LvglUi::active()) {
+            LvglUi::defer([]() { ScreensaverPage::_lvgl_render(); });
+          }
+        }
+      }
+    }
     if (ScreensaverPage::showing()) {
       std::shared_ptr<NSPanelConfig> new_config;
       if (NSPM_ConfigManager::get_config(&new_config) == ESP_OK) [[likely]] {
@@ -604,6 +618,16 @@ void ScreensaverPage::_lvgl_render() {
     ScreensaverPage::_format_calendar(calendar.get(), config->clock_us_style, state);
   }
   LvglUi::show(LvglUi::View::SCREENSAVER, ScreensaverView::build, [state]() { ScreensaverView::show(state); });
+}
+
+std::string ScreensaverPage::_cards_signature(const NSPanelConfig &config) {
+  std::string signature = std::to_string(config.screensaver_base_card_seconds);
+  for (size_t i = 0; i < config.n_screensaver_cards; i++) {
+    if (config.screensaver_cards[i] != NULL) {
+      signature += "," + std::to_string((int)config.screensaver_cards[i]->type) + ":" + std::to_string(config.screensaver_cards[i]->seconds);
+    }
+  }
+  return signature;
 }
 
 void ScreensaverPage::_decode_calendar_if_stale() {

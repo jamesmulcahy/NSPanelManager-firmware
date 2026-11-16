@@ -84,6 +84,12 @@ private:
   static void _format_calendar(const NSPanelCalendarUpdate *update, bool us_clock, ScreensaverState &state);
 
   /**
+   * What the rotation depends on in the config (the cards, their times, the base card's): changes
+   * re-render the shown screensaver.
+   */
+  static std::string _cards_signature(const NSPanelConfig &config);
+
+  /**
    * Handle events from MQTT manager, such as new weather forecasts sent over MQTT
    */
   static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
@@ -121,6 +127,7 @@ private:
   static inline bool _calendar_stale = false;
   static inline std::atomic<bool> _calendar_job_queued = false;
   static inline MutexWrapped<std::shared_ptr<NSPanelCalendarUpdate>> _calendar;
+  static inline MutexWrapped<std::string> _cards_signature_seen;
 
   // Mutex to only allow one task at the time access to _weather_update_data
   static inline SemaphoreHandle_t _weather_update_data_mutex = NULL;
