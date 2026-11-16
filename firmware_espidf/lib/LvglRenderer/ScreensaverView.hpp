@@ -1,4 +1,5 @@
 #pragma once
+#include "EnergyFormat.hpp"
 #include <cstdint>
 #include <lvgl.h>
 #include <string>
@@ -42,23 +43,6 @@ struct CalendarRow {
 struct CalendarDay {
   std::string heading; // "Today", "Tomorrow", "Wed 18"
   std::vector<CalendarRow> rows;
-};
-
-// The energy card: the house's power draw as a cost per day (or as power, with no price) over the
-// number of lights on. The page formats it (ScreensaverPage::format_energy).
-struct EnergyState {
-  bool power_shown = false;  // The power part: hidden when the manager has no power source
-  bool lights_shown = false; // The lights part: hidden when the manager counts no lights
-  // The large figure: the cost per day with a price, else the power.
-  std::string hero_symbol;  // "$" before the number (a smaller font); empty for power
-  std::string hero_number;  // "9.38", "3.6"; "--" when unavailable
-  std::string hero_unit;    // "per day", "kW now"
-  std::string power_line;   // "3.6 kW now" under the cost; empty: not shown (the hero is the power)
-  bool exporting = false;   // The power line reads "Exporting 0.4 kW" (another icon, in the accent colour)
-  std::string lights_number; // "6"; "--" when unavailable
-  std::string lights_text;   // "lights on", "light on", "lights off"
-  bool lights_none = false;  // No light on: the outline bulb, muted
-  bool lights_alert = false; // At or over the manager's threshold: the alert colour
 };
 
 struct ScreensaverState {

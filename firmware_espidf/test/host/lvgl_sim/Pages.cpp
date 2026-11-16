@@ -548,97 +548,91 @@ static void build_saver_datetime_calendar_bg(lv_obj_t *root, bool landscape) {
   ScreensaverView::show(saver);
 }
 
-// The energy card, as the page formats it: $9.38 a day at 3.6 kW, 6 lights on.
-static EnergyState energy_mock() {
-  EnergyState e;
-  e.power_shown = true;
-  e.lights_shown = true;
-  e.hero_symbol = "$";
-  e.hero_number = "9.38";
-  e.hero_unit = "per day";
-  e.power_line = "3.6 kW now";
-  e.lights_number = "6";
-  e.lights_text = "lights on";
-  return e;
+// The energy card, through the page's formatting (EnergyFormat): $9.38 a day at 3.6 kW, 6 lights on.
+static EnergyValues energy_values() {
+  EnergyValues v;
+  v.received = true;
+  v.power = EnergyValues::AVAILABLE;
+  v.power_watts = 3580;
+  v.cost = EnergyValues::AVAILABLE;
+  v.cost_per_day = 9.38;
+  v.currency = "USD";
+  v.currency_symbol = "$";
+  v.lights = EnergyValues::AVAILABLE;
+  v.lights_on = 6;
+  return v;
 }
 // The weather card, then the energy card: shown on the energy card, as after the first turn.
-static void saver_energy(lv_obj_t *root, bool landscape, const EnergyState &energy, bool background = true) {
+static void saver_energy(lv_obj_t *root, bool landscape, const EnergyValues &values, bool background = true) {
   ScreensaverView::build(root, landscape);
   saver_mock();
   saver.background = background;
   saver.base_seconds = 10;
   saver.cards = {{ScreensaverCardType::ENERGY, 15}};
-  saver.energy = energy;
+  saver.energy = EnergyFormat::format(values);
   ScreensaverView::show(saver);
   ScreensaverView::next_card();
 }
-static void build_saver_energy(lv_obj_t *root, bool landscape) { saver_energy(root, landscape, energy_mock()); }
+static void build_saver_energy(lv_obj_t *root, bool landscape) { saver_energy(root, landscape, energy_values()); }
 // More lights go on while the card is shown: over the threshold it turns to the alert colour.
 static void update_saver_energy_alert() {
-  saver.energy.lights_number = "16";
-  saver.energy.lights_alert = true;
+  EnergyValues v = energy_values();
+  v.lights_on = 16;
+  v.lights_alert = true;
+  saver.energy = EnergyFormat::format(v);
   ScreensaverView::show(saver);
 }
 static void build_saver_energy_alert(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.lights_number = "16";
-  e.lights_alert = true;
-  saver_energy(root, landscape, e);
+  EnergyValues v = energy_values();
+  v.lights_on = 16;
+  v.lights_alert = true;
+  saver_energy(root, landscape, v);
 }
 // No price: the power is the large figure, and there is no power line.
 static void build_saver_energy_no_price(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.hero_symbol = "";
-  e.hero_number = "3.6";
-  e.hero_unit = "kW now";
-  e.power_line = "";
-  saver_energy(root, landscape, e);
+  EnergyValues v = energy_values();
+  v.cost = EnergyValues::NOT_CONFIGURED;
+  saver_energy(root, landscape, v);
 }
 static void build_saver_energy_exporting(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.hero_symbol = "-$";
-  e.hero_number = "1.05";
-  e.hero_unit = "per day";
-  e.power_line = "Exporting 0.4 kW";
-  e.exporting = true;
-  e.lights_number = "0";
-  e.lights_text = "lights on";
-  e.lights_none = true;
-  saver_energy(root, landscape, e);
+  EnergyValues v = energy_values();
+  v.power_watts = -400;
+  v.cost_per_day = -1.05;
+  v.lights_on = 0;
+  saver_energy(root, landscape, v);
 }
-// Home Assistant is disconnected, or no update has come yet.
+// Home Assistant is disconnected.
 static void build_saver_energy_unavailable(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.hero_symbol = "";
-  e.hero_number = "--";
-  e.power_line = "-- kW now";
-  e.lights_number = "--";
-  saver_energy(root, landscape, e);
+  EnergyValues v = energy_values();
+  v.power = v.cost = v.lights = EnergyValues::UNAVAILABLE;
+  saver_energy(root, landscape, v);
 }
+// No update has arrived yet.
+static void build_saver_energy_waiting(lv_obj_t *root, bool landscape) { saver_energy(root, landscape, EnergyValues{}); }
 static void build_saver_energy_lights_only(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.power_shown = false;
-  saver_energy(root, landscape, e);
+  EnergyValues v = energy_values();
+  v.power = v.cost = EnergyValues::NOT_CONFIGURED;
+  saver_energy(root, landscape, v);
 }
 static void build_saver_energy_power_only(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.lights_shown = false;
-  saver_energy(root, landscape, e);
+  EnergyValues v = energy_values();
+  v.lights = EnergyValues::NOT_CONFIGURED;
+  saver_energy(root, landscape, v);
 }
 static void build_saver_energy_euro(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.hero_symbol = "\xE2\x82\xAC"; // The euro sign
-  e.hero_number = "12.4";
-  e.power_line = "1.9 kW now";
-  e.lights_number = "1";
-  e.lights_text = "light on";
-  saver_energy(root, landscape, e);
+  EnergyValues v = energy_values();
+  v.currency = "EUR";
+  v.currency_symbol = "\xE2\x82\xAC"; // The euro sign
+  v.cost_per_day = 12.44;
+  v.power_watts = 1940;
+  v.lights_on = 1;
+  saver_energy(root, landscape, v);
 }
 static void build_saver_energy_plain(lv_obj_t *root, bool landscape) {
-  EnergyState e = energy_mock();
-  e.lights_number = "16";
-  e.lights_alert = true;
-  saver_energy(root, landscape, e, false);
+  EnergyValues v = energy_values();
+  v.lights_on = 16;
+  v.lights_alert = true;
+  saver_energy(root, landscape, v, false);
 }
 
 static MenuState menu;
@@ -738,6 +732,7 @@ const std::vector<PageCase> &page_cases() {
       {"screensaver-energy-no-price", build_saver_energy_no_price, nullptr, nullptr},
       {"screensaver-energy-exporting", build_saver_energy_exporting, nullptr, nullptr},
       {"screensaver-energy-unavailable", build_saver_energy_unavailable, nullptr, nullptr},
+      {"screensaver-energy-waiting", build_saver_energy_waiting, nullptr, nullptr},
       {"screensaver-energy-lights-only", build_saver_energy_lights_only, nullptr, nullptr},
       {"screensaver-energy-power-only", build_saver_energy_power_only, nullptr, nullptr},
       {"screensaver-energy-euro", build_saver_energy_euro, nullptr, nullptr},

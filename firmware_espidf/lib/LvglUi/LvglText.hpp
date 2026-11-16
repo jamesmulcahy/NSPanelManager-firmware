@@ -52,8 +52,8 @@ inline std::string utf8(const std::string &text) { return utf8(text.c_str()); }
 
 /**
  * `text` with what the body font cannot draw taken out, for text from outside (calendar titles):
- * the font has U+0020..U+007E, U+00A1..U+00FF and some punctuation (dashes, curly quotes, bullet,
- * ellipsis). Anything else (emoji, CJK, control characters) is removed, no-break spaces, tabs and
+ * the font has U+0020..U+007E, U+00A1..U+00FF, some punctuation (dashes, curly quotes, bullet,
+ * ellipsis) and the euro and rupee signs. Anything else (emoji, CJK, control characters) is removed, no-break spaces, tabs and
  * newlines become spaces, runs of spaces collapse to one and the ends are trimmed. Invalid UTF-8 is
  * read as ISO-8859-1, as utf8() does.
  */
@@ -86,7 +86,7 @@ inline std::string drawable(const char *text) {
     std::string piece = in.substr(i, len);
     i += len;
     bool space = cp == '\t' || cp == '\n' || cp == '\r' || cp == 0xA0 || cp == 0x2009 || cp == 0x202F;
-    bool ok = (cp >= 0x20 && cp <= 0x7E) || (cp >= 0xA1 && cp <= 0xFF) || cp == 0x2013 || cp == 0x2014 || (cp >= 0x2018 && cp <= 0x201E) || cp == 0x2022 || cp == 0x2026;
+    bool ok = (cp >= 0x20 && cp <= 0x7E) || (cp >= 0xA1 && cp <= 0xFF) || cp == 0x2013 || cp == 0x2014 || (cp >= 0x2018 && cp <= 0x201E) || cp == 0x2022 || cp == 0x2026 || cp == 0x20AC || cp == 0x20B9;
     if (space) {
       piece = " ";
       ok = true;
