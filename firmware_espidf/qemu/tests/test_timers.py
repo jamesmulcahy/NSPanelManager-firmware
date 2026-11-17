@@ -123,6 +123,7 @@ def test_timer_runs_down_fires_shows_the_alarm_and_dismiss_goes_home(lvgl_home):
     rig.panel.wait_for_log(r"InterfaceManager: Got sleep event while the timer alarm is showing", since=mark, timeout=90)
     assert not rig.panel.log_lines(r"ScreensaverPage: Showing screensaver", since=mark)
     assert dominant_share(rig, US_DISMISS_BOX) > 0.6
+    alarm = upright_rgb565(rig.nextion)
 
     # Dismiss: nothing else is running, so it goes to the default page (Home).
     mark = rig.panel.mark()
@@ -131,7 +132,7 @@ def test_timer_runs_down_fires_shows_the_alarm_and_dismiss_goes_home(lvgl_home):
     rig.panel.wait_for_log(r"HomePage: Updating displayed values", since=mark, timeout=30)
     settle(rig.nextion)
     rig.nextion.screenshot("home-after-dismiss")
-    assert dominant_share(rig, US_DISMISS_BOX) < 0.6
+    assert (upright_rgb565(rig.nextion) != alarm).mean() > 0.2, "the alarm is still on the screen"
     assert not rig.nextion.terminal.faults
 
 
