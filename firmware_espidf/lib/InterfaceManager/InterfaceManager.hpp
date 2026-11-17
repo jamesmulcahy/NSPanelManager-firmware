@@ -180,7 +180,7 @@ private:
   // The timer alarm is showing: the screensaver stays away like it does when _screensaver_blocked is set.
   static inline std::atomic<bool> _alarm_blocks_screensaver = false;
 
-  // A firmware or LittleFS update is showing its progress on the loading page. Nothing else may
+  // A firmware or GUI update is showing its progress on the loading page. Nothing else may
   // take the screen until UPDATE_ENDED_WITHOUT_REBOOT (or FIRMWARE_UPDATE_FAILED) gives it back.
   // Without this, an update that starts while the panel first leaves the loading page at boot
   // ends up behind the default page, with its progress written to a page that has no t_ip.

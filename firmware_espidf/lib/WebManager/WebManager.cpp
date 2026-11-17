@@ -19,6 +19,7 @@
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <nlohmann/json.hpp>
+#include <generated/web_assets.hpp>
 
 // How long /screenshot waits for the GUI task: one refresh of what is due, then one full render. On a
 // panel that is well under a second. Under QEMU the display link runs at ~8 KB/s, so whatever is
@@ -132,7 +133,7 @@ void WebManager::start() {
 }
 
 esp_err_t WebManager::_handle_uri_index(httpd_req_t *req) {
-  return WebManager::_read_file_and_response(req, "/littlefs/index.html", "text/html");
+  return WebManager::_send_embedded_gzip(req, "text/html", web_assets::INDEX_HTML_GZ, web_assets::INDEX_HTML_GZ_LEN);
 }
 
 esp_err_t WebManager::_handle_uri_config_data(httpd_req_t *req) {
@@ -188,7 +189,7 @@ esp_err_t WebManager::_handle_uri_save_config(httpd_req_t *req) {
     ESP_LOGE("WebManager", "Could not find field name 'log_level' while saving config from web post request!");
   }
 
-  // Missing when the LittleFS image (and so index.html) predates the setting. Keep the current value then.
+  // Missing when the form that posted this is from an older page. Keep the current value then.
   if (result.find("serial_log") != result.end()) {
     int serial_log = atoi(result["serial_log"].c_str());
     if (serial_log >= 0 && serial_log <= static_cast<int>(ConfigManager::SerialLogMode::NEVER)) {
@@ -432,7 +433,7 @@ esp_err_t WebManager::_handle_uri_metrics(httpd_req_t *req) {
 }
 
 esp_err_t WebManager::_handle_uri_main_css(httpd_req_t *req) {
-  return WebManager::_read_file_and_response(req, "/littlefs/static/main.css", "text/css");
+  return WebManager::_send_embedded_gzip(req, "text/css", web_assets::MAIN_CSS_GZ, web_assets::MAIN_CSS_GZ_LEN);
 }
 
 esp_err_t WebManager::_handle_uri_generate_204(httpd_req_t *req) {
@@ -442,27 +443,15 @@ esp_err_t WebManager::_handle_uri_generate_204(httpd_req_t *req) {
   return httpd_resp_send(req, NULL, 0); // empty body, sets Content-Length: 0
 }
 
-esp_err_t WebManager::_read_file_and_response(httpd_req_t *req, const char *file_path, const char *content_type) {
-  FILE *f = fopen(file_path, "r");
-  if (f == NULL) {
-    ESP_LOGE("Web", "Failed to open '%s' for reading on LittleFS.", file_path);
-    httpd_resp_send_500(req);
-    return ESP_FAIL;
-  }
-
+esp_err_t WebManager::_send_embedded_gzip(httpd_req_t *req, const char *content_type, const uint8_t *data, size_t length) {
   if (httpd_resp_set_type(req, content_type) != ESP_OK) {
     ESP_LOGE("Web", "Failed to set content type for response!");
   }
-
-  // Read index.html and send it chunk by chunk
-  char buffer[1024];
-  size_t num_read_bytes;
-  while ((num_read_bytes = fread(buffer, 1, sizeof(buffer), f)) > 0) {
-    httpd_resp_send_chunk(req, buffer, num_read_bytes);
+  // The bytes are sent as stored and the browser decompresses them, so the panel needs no zlib.
+  if (httpd_resp_set_hdr(req, "Content-Encoding", "gzip") != ESP_OK) {
+    ESP_LOGE("Web", "Failed to set content encoding for response!");
   }
-  fclose(f);
-  httpd_resp_send_chunk(req, NULL, 0);
-  return ESP_OK;
+  return httpd_resp_send(req, reinterpret_cast<const char *>(data), length);
 }
 
 esp_err_t WebManager::_handle_uri_get_available_networks(httpd_req_t *req) {

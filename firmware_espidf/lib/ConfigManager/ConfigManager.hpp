@@ -62,7 +62,8 @@ public:
   // MD5 checksum for installed firmware, used to check if new firmware update is available in manager
   static inline std::string md5_firmware;
 
-  // MD5 checksum for installed data_file (LittleFS), used to check if new data_file update is available in manager
+  // MD5 of the LittleFS image this panel was last updated with. Still loaded and saved, so that rolling back to an
+  // older firmware reports a real value, but no longer reported: the web UI is in the firmware (NSPM_WEB_UI_EMBEDDED).
   static inline std::string md5_data_file;
 
   // MD5 checksum for installed gui, used to check if new gui update is available in manager

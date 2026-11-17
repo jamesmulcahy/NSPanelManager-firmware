@@ -9,3 +9,4 @@ firmware_espidf/managed_components/lvgl__lvgl/
 __pycache__/
 firmware_espidf/provision.env
 firmware_espidf/provisioned-flash*.bin
+firmware_espidf/include/generated/

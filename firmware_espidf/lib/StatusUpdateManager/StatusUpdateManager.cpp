@@ -11,6 +11,7 @@
 #include <TimedEspTimer.hpp>
 #include <UpdateManager_event.hpp>
 #include <WebManager.hpp>
+#include <WebUiEmbedded.hpp>
 #include <WiFiManager.hpp>
 #include <cmath>
 #include <esp_adc/adc_cali.h>
@@ -49,7 +50,7 @@ void StatusUpdateManager::init() {
   StatusUpdateManager::_status_report.temperature = 0;
   StatusUpdateManager::_status_report.mac_address = (char *)WiFiManager::mac_string();
   StatusUpdateManager::_status_report.md5_firmware = (char *)ConfigManager::md5_firmware.c_str();
-  StatusUpdateManager::_status_report.md5_littlefs = (char *)ConfigManager::md5_data_file.c_str();
+  StatusUpdateManager::_status_report.md5_littlefs = (char *)NSPM_WEB_UI_EMBEDDED;
   StatusUpdateManager::_status_report.md5_tft_gui = (char *)ConfigManager::md5_gui.c_str();
   nspanel_warning__init(&StatusUpdateManager::_link_baud_warning);
   StatusUpdateManager::_link_baud_warning.level = NSPANEL_WARNING_LEVEL__WARNING;
@@ -484,19 +485,6 @@ void StatusUpdateManager::_update_manager_event_handler(void *arg, esp_event_bas
     break;
   }
 
-  case updatemanager_event_t::LITTLEFS_UPDATE_STARTED: {
-    if (xSemaphoreTake(StatusUpdateManager::_status_report_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-      StatusUpdateManager::_status_report.nspanel_state = NSPanelStatusReport__State::NSPANEL_STATUS_REPORT__STATE__UPDATING_LITTLEFS;
-      StatusUpdateManager::_status_report.update_progress = 0;
-      xSemaphoreGive(StatusUpdateManager::_status_report_mutex);
-    }
-
-    // Restart timer with a 1 second interval instead of default 30
-    esp_timer_stop(StatusUpdateManager::_status_update_timer);
-    esp_timer_start_periodic(StatusUpdateManager::_status_update_timer, 1000 * 1000);
-    break;
-  }
-
   case updatemanager_event_t::NEXTION_UPDATE_STARTED: {
     if (xSemaphoreTake(StatusUpdateManager::_status_report_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
       StatusUpdateManager::_status_report.nspanel_state = NSPanelStatusReport__State::NSPANEL_STATUS_REPORT__STATE__UPDATING_TFT;
@@ -511,15 +499,6 @@ void StatusUpdateManager::_update_manager_event_handler(void *arg, esp_event_bas
   }
 
   case updatemanager_event_t::FIRMWARE_UPDATE_PROGRESS: {
-    float *progress_percentage = (float *)event_data;
-    if (xSemaphoreTake(StatusUpdateManager::_status_report_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-      StatusUpdateManager::_status_report.update_progress = std::round(*progress_percentage);
-      xSemaphoreGive(StatusUpdateManager::_status_report_mutex);
-    }
-    break;
-  }
-
-  case updatemanager_event_t::LITTLEFS_UPDATE_PROGRESS: {
     float *progress_percentage = (float *)event_data;
     if (xSemaphoreTake(StatusUpdateManager::_status_report_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
       StatusUpdateManager::_status_report.update_progress = std::round(*progress_percentage);
@@ -556,15 +535,6 @@ void StatusUpdateManager::_update_manager_event_handler(void *arg, esp_event_bas
     // Restore the default 30 second status update interval
     esp_timer_stop(StatusUpdateManager::_status_update_timer);
     esp_timer_start_periodic(StatusUpdateManager::_status_update_timer, 30000 * 1000);
-    break;
-  }
-
-  case updatemanager_event_t::LITTLEFS_UPDATE_FINISHED: {
-    if (xSemaphoreTake(StatusUpdateManager::_status_report_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-      StatusUpdateManager::_status_report.update_progress = 100;
-      StatusUpdateManager::_status_report.nspanel_state = NSPanelStatusReport__State::NSPANEL_STATUS_REPORT__STATE__REBOOTING;
-      xSemaphoreGive(StatusUpdateManager::_status_report_mutex);
-    }
     break;
   }
 

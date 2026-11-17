@@ -5,6 +5,7 @@
 #include <NSPM_ConfigManager_event.hpp>
 #include <NSPM_version.hpp>
 #include <WebManager.hpp>
+#include <WebUiEmbedded.hpp>
 #include <WiFiManager.hpp>
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -320,7 +321,7 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   json["friendly_name"] = ConfigManager::wifi_hostname.c_str();
   json["version"] = NSPM_VERSION;
   json["md5_firmware"] = ConfigManager::md5_firmware.c_str();
-  json["md5_data_file"] = ConfigManager::md5_data_file.c_str();
+  json["md5_data_file"] = NSPM_WEB_UI_EMBEDDED;
   json["md5_tft_file"] = ConfigManager::md5_gui.c_str();
   json["address"] = ip_address_str;
   // What this firmware does that a manager may rely on. "lvgl_look": it applies the look in
