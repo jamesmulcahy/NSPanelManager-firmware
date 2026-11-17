@@ -311,7 +311,7 @@ esp_err_t NextionTerminal::draw(int x1, int y1, int x2, int y2, const uint16_t *
       }
       NextionTerminal::_job_pixels = static_cast<uint16_t *>(heap_caps_malloc(needed * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
     }
-    ESP_LOGI(TAG, "Rectangle buffer: %u pixels in %s.", (unsigned)needed,
+    ESP_LOGD(TAG, "Rectangle buffer: %u pixels in %s.", (unsigned)needed,
              NextionTerminal::_job_pixels != NULL && esp_ptr_internal(NextionTerminal::_job_pixels) ? "internal RAM" : "PSRAM");
     NextionTerminal::_job_capacity = NextionTerminal::_job_pixels != NULL ? needed : 0;
     if (NextionTerminal::_job_pixels == NULL) {
@@ -463,7 +463,7 @@ bool NextionTerminal::_session_once() {
     Nextion::terminal_release(false);
     return true;
   }
-  ESP_LOGI(TAG, "Receiver found (%s).", text);
+  ESP_LOGD(TAG, "Receiver found (%s).", text);
 
   uint16_t session = (uint16_t)esp_timer_get_time() | 1;
   char sys2[24];
@@ -545,7 +545,7 @@ IRAM_ATTR bool NextionTerminal::_stream_session(uint16_t session) {
         continue;
       }
       if ((reply.status == protocol::READY || reply.status == protocol::READY_BRIGHTNESS) && engine.stage() == StreamEngine::Stage::IDLE) {
-        ESP_LOGI(TAG, "Receiver ready%s.", reply.status == protocol::READY_BRIGHTNESS ? " (live brightness)" : "");
+        ESP_LOGD(TAG, "Receiver ready%s.", reply.status == protocol::READY_BRIGHTNESS ? " (live brightness)" : "");
         NextionTerminal::_brightness_changed = true; // A new session starts at the TFT's own level.
         NextionTerminal::_set_streaming(true);
       } else if (reply.status == protocol::ERROR) {
@@ -561,7 +561,7 @@ IRAM_ATTR bool NextionTerminal::_stream_session(uint16_t session) {
         bool mapped = NextionTerminal::_map_touch(raw_x, raw_y, x, y);
         // Edges at info, moves at debug: what the receiver reports, and where it lands on the screen.
         if (down != was_down) {
-          ESP_LOGI(TAG, "Touch %s: receiver %d,%d (mask 0x%02X) -> screen %d,%d.", down ? "down" : "up", raw_x, raw_y, reply.mask, mapped ? x : -1,
+          ESP_LOGD(TAG, "Touch %s: receiver %d,%d (mask 0x%02X) -> screen %d,%d.", down ? "down" : "up", raw_x, raw_y, reply.mask, mapped ? x : -1,
                    mapped ? y : -1);
         } else if (down) {
           ESP_LOGD(TAG, "Touch move: receiver %d,%d -> screen %d,%d.", raw_x, raw_y, mapped ? x : -1, mapped ? y : -1);
