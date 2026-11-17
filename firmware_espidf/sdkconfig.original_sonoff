@@ -4073,7 +4073,7 @@ CONFIG_LV_LABEL_WAIT_CHAR_COUNT=3
 # default:
 # CONFIG_LV_USE_RLOTTIE is not set
 # default:
-# CONFIG_LV_USE_ROLLER is not set
+CONFIG_LV_USE_ROLLER=y
 # CONFIG_LV_USE_SCALE is not set
 # default:
 CONFIG_LV_USE_SLIDER=y

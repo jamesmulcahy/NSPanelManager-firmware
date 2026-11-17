@@ -102,3 +102,5 @@ lightning-bolt F140B
 home-lightning-bolt F1903
 transmission-tower F0D3E
 lightbulb-on F06E8
+# Timers
+timer-outline F051B

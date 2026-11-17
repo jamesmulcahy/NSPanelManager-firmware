@@ -44,6 +44,7 @@ void MenuView::show(const MenuState &state) {
     }
     // Children: note, icon, label (the note was moved in front).
     Ui::set_text(MenuView::_notes[i], item.note);
+    Ui::set_text_color(MenuView::_notes[i], item.note_neutral ? Theme::text() : Theme::danger());
     Ui::set_visible(MenuView::_notes[i], !item.note.empty());
     Ui::set_text(lv_obj_get_child(tile, 1), item.icon);
     Ui::set_text(lv_obj_get_child(tile, 2), item.label);

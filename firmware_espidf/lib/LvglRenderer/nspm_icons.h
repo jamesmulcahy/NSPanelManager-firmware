@@ -94,3 +94,4 @@
 #define NSPM_ICON_HOME_LIGHTNING_BOLT            "\xEE\x81\x99" /* mdi-home-lightning-bolt, U+F1903 */
 #define NSPM_ICON_TRANSMISSION_TOWER             "\xEE\x81\x9A" /* mdi-transmission-tower, U+F0D3E */
 #define NSPM_ICON_LIGHTBULB_ON                   "\xEE\x81\x9B" /* mdi-lightbulb-on, U+F06E8 */
+#define NSPM_ICON_TIMER_OUTLINE                  "\xEE\x81\x9C" /* mdi-timer-outline, U+F051B */
