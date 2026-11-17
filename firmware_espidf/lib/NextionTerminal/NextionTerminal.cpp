@@ -645,7 +645,7 @@ IRAM_ATTR bool NextionTerminal::_stream_session(uint16_t session) {
       uint32_t rects = NextionTerminal::_rectangles - stats_rects;
       uint32_t bytes = NextionTerminal::_bytes - stats_bytes;
       if (rects > 0) {
-        ESP_LOGI(TAG, "Last %lld s: %lu rectangles, %lu KB on the wire (%lu KB/s), %lu resyncs since boot.", (now_us - last_stats) / 1000000,
+        ESP_LOGD(TAG, "Last %lld s: %lu rectangles, %lu KB on the wire (%lu KB/s), %lu resyncs since boot.", (now_us - last_stats) / 1000000,
                  (unsigned long)rects, (unsigned long)(bytes / 1024), (unsigned long)(bytes * 1000000ULL / (now_us - last_stats) / 1024),
                  (unsigned long)NextionTerminal::_resyncs);
       }
