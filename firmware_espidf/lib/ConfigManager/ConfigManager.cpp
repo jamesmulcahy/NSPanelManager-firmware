@@ -174,6 +174,23 @@ esp_err_t ConfigManager::load_config() {
     ConfigManager::lvgl_theme = config_data["lvgl_theme"].get<std::string>();
   }
 
+  ConfigManager::timers.clear();
+  if (config_data.contains("timers") && config_data["timers"].is_array()) {
+    for (const auto &entry : config_data["timers"]) {
+      // Skip malformed entries rather than failing the whole config.
+      if (!entry.is_object() || !entry.contains("duration_s") || !entry["duration_s"].is_number_integer() || !entry.contains("deadline_epoch_s") ||
+          !entry["deadline_epoch_s"].is_number_integer()) {
+        continue;
+      }
+      int64_t duration_s = entry["duration_s"].get<int64_t>();
+      int64_t deadline_epoch_s = entry["deadline_epoch_s"].get<int64_t>();
+      if (duration_s < 1 || duration_s > UINT32_MAX || deadline_epoch_s <= 0) {
+        continue;
+      }
+      ConfigManager::timers.push_back({static_cast<uint32_t>(duration_s), deadline_epoch_s});
+    }
+  }
+
   if (config_data.contains("lvgl_look_unconfirmed") && config_data["lvgl_look_unconfirmed"].is_boolean()) {
     ConfigManager::lvgl_look_unconfirmed = config_data["lvgl_look_unconfirmed"].get<bool>();
   }
@@ -255,6 +272,7 @@ void ConfigManager::create_default() {
   ConfigManager::lvgl_theme = "auto";
   ConfigManager::lvgl_look_unconfirmed = false;
   ConfigManager::loop_watchdog = false;
+  ConfigManager::timers.clear();
 }
 
 esp_err_t ConfigManager::save_config() {
@@ -273,6 +291,10 @@ esp_err_t ConfigManager::save_config() {
   json["lvgl_theme"] = ConfigManager::lvgl_theme;
   json["lvgl_look_unconfirmed"] = ConfigManager::lvgl_look_unconfirmed;
   json["loop_watchdog"] = ConfigManager::loop_watchdog;
+  json["timers"] = nlohmann::json::array();
+  for (const auto &timer : ConfigManager::timers) {
+    json["timers"].push_back({{"duration_s", timer.duration_s}, {"deadline_epoch_s", timer.deadline_epoch_s}});
+  }
   json["wifi_hostname"] = ConfigManager::wifi_hostname;
   json["wifi_ssid"] = ConfigManager::wifi_ssid;
   json["wifi_psk"] = ConfigManager::wifi_psk;

@@ -5,6 +5,14 @@
 #include <freertos/semphr.h>
 #include <string>
 
+ESP_EVENT_DECLARE_BASE(PANEL_CLOCK_EVENT);
+
+enum panel_clock_event {
+  // The wall clock was set from the manager for the first time since boot. Posted once to the default event
+  // loop, with no data. From then on is_set() is true.
+  CLOCK_SET,
+};
+
 // Sets the panel's wall clock from the time the manager sends on nspanel/mqttmanager_<address>/status/epoch,
 // and its timezone from NSPanelConfig.tz_posix. An older manager sends neither, in which case the clock is
 // never set and is_set() stays false, so anything using the wall clock must check is_set() first.

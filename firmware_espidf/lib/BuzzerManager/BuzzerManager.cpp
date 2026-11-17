@@ -190,6 +190,9 @@ bool BuzzerManager::_handle_event(buzzer_event_t event) {
   case buzzer_event_t::SCENE_SAVED:
     ESP_LOGD("BuzzerManager", "Got SCENE_SAVED event.");
     break;
+  case buzzer_event_t::TIMER_FIRED:
+    ESP_LOGD("BuzzerManager", "Got TIMER_FIRED event.");
+    break;
   default:
     return false;
   }
@@ -231,6 +234,9 @@ void BuzzerManager::_config_event_handler(void *arg, esp_event_base_t event_base
       break;
     case NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__SCENE_SAVED:
       event = buzzer_event_t::SCENE_SAVED;
+      break;
+    case NSPANEL_CONFIG__NSPANEL_SOUND_EVENT__TIMER_FIRED:
+      event = buzzer_event_t::TIMER_FIRED;
       break;
     default:
       ESP_LOGD("BuzzerManager", "Ignoring sound for unknown event %d.", sound->event);

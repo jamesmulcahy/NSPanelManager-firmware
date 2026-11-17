@@ -10,6 +10,8 @@
 #include <esp_log.h>
 #include <sys/time.h>
 
+ESP_EVENT_DEFINE_BASE(PANEL_CLOCK_EVENT);
+
 void PanelClock::init() {
   esp_log_level_set("PanelClock", ConfigManager::log_level);
 
@@ -103,6 +105,10 @@ void PanelClock::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int
   if (!PanelClock::_clock_set.exchange(true)) {
     ESP_LOGI("PanelClock", "Clock set from manager to %lld ms since the Unix epoch.", epoch_ms.value());
     PanelClock::_log_local_time();
+    // Timeout 0: this runs on the MQTT task, which must not wait on the default loop's queue (see CLAUDE.md).
+    if (esp_event_post(PANEL_CLOCK_EVENT, panel_clock_event::CLOCK_SET, NULL, 0, 0) != ESP_OK) {
+      ESP_LOGW("PanelClock", "Failed to post CLOCK_SET; things waiting for the clock will not be told.");
+    }
   } else {
     // How far the clock had drifted since the last time, plus however long this message took to arrive.
     ESP_LOGD("PanelClock", "Clock set from manager, moved by %lld ms.", epoch_ms.value() - now_ms);

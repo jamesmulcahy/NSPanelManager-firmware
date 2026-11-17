@@ -4,6 +4,7 @@
 #include <EventLoopWatchdog.hpp>
 #include <InterfaceManager.hpp>
 #include <LvglLook.hpp>
+#include <LvglUi.hpp>
 #include <LittleFS.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
@@ -13,6 +14,7 @@
 #include <PanelMetrics.hpp>
 #include <RoomManager.hpp>
 #include <StatusUpdateManager.hpp>
+#include <TimerManager.hpp>
 #include <UpdateManager.hpp>
 #include <WebManager.hpp>
 #include <WiFiManager.hpp>
@@ -223,6 +225,11 @@ extern "C" void app_main() {
   // The LVGL look from the manager's config, and reports of one chosen on the panel (after
   // InterfaceManager::init(), which decides whether LVGL is the UI).
   LvglLook::init();
+
+  // Countdown timers, which are part of the LVGL UI.
+  if (LvglUi::active()) {
+    TimerManager::init();
+  }
 
   // Wait until we have been accepted by a manager and received both address and port
   while (NSPM_ConfigManager::get_manager_address().empty() && NSPM_ConfigManager::get_manager_port() == 0) {
