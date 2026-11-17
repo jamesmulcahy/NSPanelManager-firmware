@@ -229,6 +229,7 @@ extern "C" void app_main() {
   // Countdown timers, which are part of the LVGL UI.
   if (LvglUi::active()) {
     TimerManager::init();
+    TimerManager::on_fired = InterfaceManager::request_timer_alarm;
   }
 
   // Wait until we have been accepted by a manager and received both address and port

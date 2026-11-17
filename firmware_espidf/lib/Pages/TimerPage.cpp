@@ -87,6 +87,9 @@ void TimerPage::show_alarm() {
   std::vector<TimerInfo> fired = TimerManager::fired();
   ESP_LOGI("TimerPage", "Showing the timer alarm (%d done).", (int)fired.size());
   InterfaceManager::begin_page(TimerPage::unshow_alarm);
+  // The screensaver must not take over an alarm nobody has seen yet: its timeout posts a SLEEP_EVENT,
+  // which InterfaceManager ignores while this is set.
+  InterfaceManager::set_alarm_blocks_screensaver(true);
   TimerView::on_action = [](TimerView::Action action, int32_t value) {
     LvglUi::defer([action, value]() { TimerPage::_action((int)action, value); });
   };
@@ -104,6 +107,7 @@ void TimerPage::show_alarm() {
 }
 
 void TimerPage::unshow_alarm() {
+  InterfaceManager::set_alarm_blocks_screensaver(false);
 }
 
 void TimerPage::_action(int action, int32_t value) {
@@ -152,6 +156,7 @@ void TimerPage::_action(int action, int32_t value) {
   case TimerView::Action::DISMISS:
     if (InterfaceManager::is_current_page(TimerPage::unshow_alarm)) {
       TimerManager::dismiss();
+      InterfaceManager::set_alarm_blocks_screensaver(false);
       if (TimerManager::snapshot().empty()) {
         InterfaceManager::show_default_page();
       } else {

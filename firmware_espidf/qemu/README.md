@@ -194,7 +194,7 @@ With `NSPM_QEMU_TERMINAL=us` (or `eu-on-us`) the fake display runs
 `NSPM` banner, and nextion-tools' protocol-8 receiver behind it. The firmware's LvglUi then draws
 every page and streams the pixels, and `FakeManager` says `is_us_panel` to match. Screenshots are
 the receiver's framebuffer, turned upright; `nextion.tap_screen(x, y)` touches a point of the
-screen as a screenshot shows it. `tests/test_lvgl_terminal.py` runs only in this mode (and skips
+screen as a screenshot shows it. `tests/test_lvgl_terminal.py` and `tests/test_timers.py` run only in this mode (and skips
 otherwise); its touch coordinates are for the US layout. Without the variable, the rest of the
 suite runs against NSPM's TFT as before; with it, the Nextion-page tests do not apply.
 
