@@ -468,7 +468,9 @@ void ScreensaverPage::_task_update_displayed_weather_data(void *param) {
         ESP_LOGE("ScreensaverPage", "Got new weather data but failed to decode it into protobuf object.");
       }
     } else {
-      ESP_LOGE("ScreensaverPage", "Trying to update screensaver page but no data to decode protobuf is available.");
+      // Expected at boot: show() runs before the retained weather message has arrived (the topic name needs the manager
+      // address from the config). The MQTT handler renders the weather as soon as it does arrive.
+      ESP_LOGD("ScreensaverPage", "No weather data received yet, skipping weather update.");
     }
 
     xSemaphoreGive(ScreensaverPage::_weather_update_data_mutex);
