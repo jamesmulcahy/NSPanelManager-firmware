@@ -905,15 +905,9 @@ CONFIG_EFUSE_MAX_BLK_LEN=192
 # ESP-TLS
 #
 # default:
-CONFIG_ESP_TLS_USING_MBEDTLS=y
+# CONFIG_ESP_TLS_USING_MBEDTLS is not set
 # default:
-# CONFIG_ESP_TLS_CUSTOM_STACK is not set
-# default:
-# CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS is not set
-# default:
-# CONFIG_ESP_TLS_SERVER_CERT_SELECT_HOOK is not set
-# default:
-# CONFIG_ESP_TLS_SERVER_MIN_AUTH_MODE_OPTIONAL is not set
+CONFIG_ESP_TLS_CUSTOM_STACK=y
 # default:
 # CONFIG_ESP_TLS_PSK_VERIFICATION is not set
 # default:
@@ -2705,69 +2699,7 @@ CONFIG_MBEDTLS_ASN1_WRITE_C=y
 # end of Certificates
 
 # default:
-CONFIG_MBEDTLS_TLS_ENABLED=y
-
-#
-# TLS Protocol Configuration
-#
-# default:
-CONFIG_MBEDTLS_SSL_PROTO_TLS1_2=y
-# default:
-# CONFIG_MBEDTLS_SSL_PROTO_TLS1_3 is not set
-# default:
-# CONFIG_MBEDTLS_SSL_PROTO_GMTSSL1_1 is not set
-# default:
-CONFIG_MBEDTLS_TLS_CLIENT=y
-# default:
-# CONFIG_MBEDTLS_TLS_SERVER_AND_CLIENT is not set
-# default:
-# CONFIG_MBEDTLS_TLS_SERVER_ONLY is not set
-# default:
-CONFIG_MBEDTLS_TLS_CLIENT_ONLY=y
-# default:
-# CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE is not set
-# default:
-# CONFIG_MBEDTLS_SSL_CONTEXT_SERIALIZATION is not set
-# default:
-# CONFIG_MBEDTLS_SSL_CACHE_C is not set
-# default:
-CONFIG_MBEDTLS_SSL_ALL_ALERT_MESSAGES=y
-
-#
-# TLS Key Exchange Configuration
-#
-# default:
-# CONFIG_MBEDTLS_PSK_MODES is not set
-# default:
-# CONFIG_MBEDTLS_KEY_EXCHANGE_RSA is not set
-# default:
-CONFIG_MBEDTLS_KEY_EXCHANGE_ELLIPTIC_CURVE=y
-# default:
-CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_RSA=y
-# default:
-CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA=y
-# end of TLS Key Exchange Configuration
-
-# default:
-CONFIG_MBEDTLS_SSL_SERVER_NAME_INDICATION=y
-# default:
-CONFIG_MBEDTLS_SSL_ALPN=y
-# default:
-CONFIG_MBEDTLS_SSL_MAX_FRAGMENT_LENGTH=y
-# default:
-# CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH is not set
-# default:
-# CONFIG_MBEDTLS_SSL_RENEGOTIATION is not set
-# default:
-CONFIG_MBEDTLS_CLIENT_SSL_SESSION_TICKETS=y
-# default:
-# CONFIG_MBEDTLS_SERVER_SSL_SESSION_TICKETS is not set
-# default:
-# CONFIG_MBEDTLS_SSL_KEYING_MATERIAL_EXPORT is not set
-# end of TLS Protocol Configuration
-
-# default:
-# CONFIG_MBEDTLS_SSL_PROTO_DTLS is not set
+# CONFIG_MBEDTLS_TLS_ENABLED is not set
 
 #
 # Symmetric Ciphers
@@ -3376,7 +3308,7 @@ CONFIG_MQTT_PROTOCOL_311=y
 # default:
 # CONFIG_MQTT_PROTOCOL_5 is not set
 # default:
-CONFIG_MQTT_TRANSPORT_SSL=y
+# CONFIG_MQTT_TRANSPORT_SSL is not set
 # default:
 # CONFIG_MQTT_TRANSPORT_WEBSOCKET is not set
 # default:
