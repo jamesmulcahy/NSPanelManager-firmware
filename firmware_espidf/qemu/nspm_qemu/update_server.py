@@ -1,4 +1,4 @@
-"""Fake service: the manager's HTTP side of an update (firmware, LittleFS, GUI), with hooks to
+"""Fake service: the manager's HTTP side of an update (firmware, GUI), with hooks to
 break it mid-download.
 
 The panel fetches its update files from NSPanelManager's Django views
@@ -12,6 +12,9 @@ The panel fetches its update files from NSPanelManager's Django views
   GET /checksum_firmware?model=  its md5
   GET /download_data_file?model= the LittleFS image, whole
   GET /checksum_data_file?model= its md5
+
+The two data_file endpoints are what firmware from before the web UI moved into the app calls.
+The firmware under test never does, and tests stage a file here to prove it.
 
 UpdateServer reproduces exactly that, quirks included, so the firmware sees what
 it sees in the house. Every request is recorded, and faults are armed against

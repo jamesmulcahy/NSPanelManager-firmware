@@ -1,11 +1,12 @@
 """Library: builds the flash and eFuse images QEMU boots from.
 
 The flash image is what flashing a 4 MB part would leave: bootloader, partition table, OTA
-data, app, and a LittleFS partition built from data/ plus a config.json, so the panel boots
-already configured. It is merged by `esptool merge-bin`, as build_image.sh merges
-merged-flash.bin. That script is not reused because it takes `buildfs`'s littlefs.bin, which has
-no config.json, and the original_sonoff build directory rather than the qemu one; QEMU also
-needs the image padded to the full flash size and the OTA data partition written.
+data, app, and a LittleFS partition holding only a config.json, so the panel boots already
+configured. The setup web UI is in the app, so every boot test also proves it is served from
+flash. The image is merged by `esptool merge-bin`, as build_image.sh merges merged-flash.bin.
+That script is not reused because it has no config.json partition and reads the original_sonoff
+build directory rather than the qemu one; QEMU also needs the image padded to the full flash
+size and the OTA data partition written.
 """
 
 import csv
@@ -57,24 +58,27 @@ def find_mklittlefs() -> str:
     for c in candidates:
         if c and os.path.exists(c):
             return c
-    raise FileNotFoundError("mklittlefs not found; set MKLITTLEFS or run `pio run -e qemu -t buildfs` once to install it")
+    raise FileNotFoundError("mklittlefs not found; set MKLITTLEFS or run `pio pkg install --global --tool platformio/tool-mklittlefs@~1.203.0`")
 
 
-def build_littlefs(data_dir: str, files: Dict[str, bytes], size: int, out_path: str) -> None:
+def build_littlefs(files: Dict[str, bytes], size: int, out_path: str) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "fs")
-        shutil.copytree(data_dir, root)
+        os.makedirs(root)
         for name, content in files.items():
             dest = os.path.join(root, name)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "wb") as f:
                 f.write(content)
-        # Same page and block size PlatformIO's buildfs target uses.
+        # The page and block size the firmware mounts with (sdkconfig: CONFIG_LITTLEFS_PAGE_SIZE=256).
         subprocess.run([find_mklittlefs(), "-c", root, "-s", str(size), "-p", "256", "-b", "4096", out_path],
                        check=True, stdout=subprocess.DEVNULL)
 
 
-def build_flash_image(build_dir: str, project_dir: str, panel_config: Optional[dict], out_path: str) -> None:
+def build_flash_image(build_dir: str, project_dir: str, panel_config: Optional[dict], out_path: str,
+                      blank_littlefs: bool = False) -> None:
+    """With `blank_littlefs` the partition is left erased (all 0xFF), as after a flash that wrote
+    no filesystem image."""
     parts = read_partitions(os.path.join(project_dir, "partitions.csv"))
     fs = parts["spiffs"]  # LittleFS lives in the partition named "spiffs" (lib/LittleFSManager)
     files = {}
@@ -82,7 +86,11 @@ def build_flash_image(build_dir: str, project_dir: str, panel_config: Optional[d
         files["config.json"] = json.dumps(panel_config, indent=2).encode()
     with tempfile.TemporaryDirectory() as tmp:
         fs_path = os.path.join(tmp, "littlefs.bin")
-        build_littlefs(os.path.join(project_dir, "data"), files, fs["size"], fs_path)
+        if blank_littlefs:
+            with open(fs_path, "wb") as f:
+                f.write(b"\xff" * fs["size"])
+        else:
+            build_littlefs(files, fs["size"], fs_path)
         regions = [
             (BOOTLOADER_OFFSET, os.path.join(build_dir, "bootloader.bin")),
             (PARTITION_TABLE_OFFSET, os.path.join(build_dir, "partitions.bin")),
