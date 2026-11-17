@@ -93,7 +93,8 @@ jobs:
         run: |
           pip install platformio
           pio run --environment qemu
-          pio run --environment qemu --target buildfs
+          # mklittlefs, which builds each test's LittleFS image (qemu/nspm_qemu/image.py).
+          pio pkg install --global --tool "platformio/tool-mklittlefs@~1.203.0"
 
       - name: Wait for MQTTManager
         id: wait-mqttmanager

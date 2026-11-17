@@ -127,7 +127,7 @@ umask 077
 STAGING="$(mktemp -d)"
 trap 'rm -rf "${STAGING}"' EXIT
 
-cp -r data/. "${STAGING}/data"
+mkdir "${STAGING}/fs"
 # Passed through the environment rather than argv so the passwords never appear
 # in the process list. Keys not written here keep ConfigManager's defaults.
 WIFI_SSID="${WIFI_SSID}" WIFI_PSK="${WIFI_PSK}" MQTT_SERVER="${MQTT_SERVER}" MQTT_PORT="${MQTT_PORT}" \
@@ -145,13 +145,12 @@ config = {
 }
 with open(sys.argv[1], "w") as f:
     json.dump(config, f)
-' "${STAGING}/data/config.json"
+' "${STAGING}/fs/config.json"
 
-# Same parameters as `pio run --target buildfs`, but written to the staging
-# directory so .pio/build/*/littlefs.bin, which build_and_upload.sh uploads,
-# never contains the passwords.
+# The filesystem holds only config.json (the web UI is in firmware.bin). Built in a staging
+# directory so that no image in .pio/build/ ever contains the passwords.
 SPIFFS_SIZE="$(get_partition_field spiffs 5)"
-"${MKLITTLEFS}" -c "${STAGING}/data" -s "$((SPIFFS_SIZE))" -p 256 -b 4096 "${STAGING}/littlefs.bin" >/dev/null
+"${MKLITTLEFS}" -c "${STAGING}/fs" -s "$((SPIFFS_SIZE))" -p 256 -b 4096 "${STAGING}/littlefs.bin" >/dev/null
 
 "${ESPTOOL_CMD[@]}" "${CHIP_ARGS[@]}" -o "${OUTPUT}" \
   "${BOOTLOADER_OFFSET}" "${BUILD_DIR}/bootloader.bin" \
