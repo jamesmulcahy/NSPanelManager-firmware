@@ -22,9 +22,8 @@ fi
 
 if [[ "${NSPM_QEMU_SKIP_BUILD:-}" != "1" ]]; then
   "$PIO" run --environment qemu
-  # The harness builds its own LittleFS image (data/ plus a config.json), but
-  # buildfs is what makes PlatformIO install mklittlefs.
-  "$PIO" run --environment qemu --target buildfs
+  # The harness builds its own LittleFS image (a config.json only), with PlatformIO's mklittlefs.
+  "$PIO" pkg install --global --tool "platformio/tool-mklittlefs@~1.203.0"
 fi
 
 VENV="$QEMU_DIR/.venv"

@@ -169,6 +169,7 @@ class QemuPanel:
         self._proc: Optional[subprocess.Popen] = None
         self._console_log = None
         self._reader: Optional[threading.Thread] = None
+        self.blank_littlefs = False  # flash a blank (all 0xFF) LittleFS partition instead of config.json
         self.boot_display = True  # emit the TFT's NSPM flag on power-on
         self._stopping = False
         self._relaunching = False
@@ -182,7 +183,7 @@ class QemuPanel:
 
     def start(self) -> None:
         os.makedirs(self.workdir, exist_ok=True)
-        build_flash_image(self.build_dir, self.project_dir, self.panel_config, self._flash)
+        build_flash_image(self.build_dir, self.project_dir, self.panel_config, self._flash, self.blank_littlefs)
         build_efuse_image(self.mac, self._efuse)
         self._console_log = open(os.path.join(self.workdir, "console.log"), "w")
         self._reader = threading.Thread(target=self._run, name="qemu-console", daemon=True)

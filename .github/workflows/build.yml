@@ -1,8 +1,8 @@
 name: Build firmware
 
-# Builds the firmware and LittleFS image for both boards and keeps the images
-# as a downloadable artifact on the run: firmware.bin and littlefs.bin for an
-# OTA update through the manager, plus the bootloader, partition table and OTA
+# Builds the firmware for both boards and keeps the images as a downloadable
+# artifact on the run: firmware.bin for an OTA update through the manager (the
+# setup web UI is part of it), plus the bootloader, partition table and OTA
 # data for a full serial flash, and firmware.elf for decoding backtraces.
 
 on:
@@ -52,16 +52,13 @@ jobs:
       - name: Build firmware
         run: pio run --environment ${{ matrix.environment }}
 
-      - name: Build LittleFS image
-        run: pio run --target buildfs --environment ${{ matrix.environment }}
-
       - name: Collect images
         id: collect
         run: |
           build=.pio/build/${{ matrix.environment }}
           dist=${{ github.workspace }}/dist
           mkdir -p "$dist"
-          cp "$build"/firmware.bin "$build"/littlefs.bin "$build"/firmware.elf \
+          cp "$build"/firmware.bin "$build"/firmware.elf \
              "$build"/bootloader.bin "$build"/partitions.bin "$build"/ota_data_initial.bin "$dist"/
           # Panels report builds by md5 only, so record them next to the images.
           (cd "$dist" && md5sum *.bin > md5sums.txt)
@@ -79,7 +76,7 @@ jobs:
             echo
             echo "| Image | Size | MD5 |"
             echo "|---|---:|---|"
-            for f in firmware.bin littlefs.bin; do
+            for f in firmware.bin; do
               echo "| \`$f\` | $(stat -c %s "$dist/$f") | \`$(md5sum "$dist/$f" | cut -d' ' -f1)\` |"
             done
           } >> "$GITHUB_STEP_SUMMARY"

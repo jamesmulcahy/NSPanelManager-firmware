@@ -121,6 +121,13 @@ void WiFiManager::start_ap(std::string *ssid) {
   WiFiManager::_connected = false;
   WiFiManager::_ip_info.set({});
 
+#if defined(NSPM_QEMU)
+  // No Wi-Fi radio to run an AP on: the Ethernet link stands in, so that the setup page of a panel
+  // without settings can be reached (and tested) in QEMU.
+  WiFiManager::_start_qemu_ethernet(ssid);
+  return;
+#endif
+
   esp_wifi_stop();
 
   wifi_config_t ap_config = {};

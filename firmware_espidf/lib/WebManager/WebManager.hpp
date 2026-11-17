@@ -28,12 +28,13 @@ private:
   static esp_err_t _handle_uri_metrics(httpd_req_t *req);
 
   /**
-   * @brief Read a file from LittleFS and send response
+   * @brief Send a gzip-compressed asset embedded in the firmware, as stored
    * @param req: The request to respond to
-   * @param file: The file path to read from
-   * @param content_type: What content type to send, for example "text/html"
+   * @param content_type: The type of the uncompressed file, for example "text/html"
+   * @param data: The gzip data
+   * @param length: Its length in bytes
    */
-  static esp_err_t _read_file_and_response(httpd_req_t *req, const char *file, const char *content_type);
+  static esp_err_t _send_embedded_gzip(httpd_req_t *req, const char *content_type, const uint8_t *data, size_t length);
 
   /**
    * @brief Decode URI data from base64 encoding to chars and split into fields with associated values

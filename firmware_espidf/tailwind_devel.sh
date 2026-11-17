@@ -1,3 +1,3 @@
 #!/bin/bash
 
-npx tailwindcss -i ./data/static/build.css -o ./data/static/main.css --watch
+npx tailwindcss -i ./web/static/build.css -o ./web/static/main.css --watch

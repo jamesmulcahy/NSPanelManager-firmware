@@ -72,7 +72,7 @@ public:
   static void set_low_latency(bool low_latency);
 
   /**
-   * @brief Keep the Wi-Fi radio awake for the length of a firmware, LittleFS or GUI update.
+   * @brief Keep the Wi-Fi radio awake for the length of a firmware or GUI update.
    * The download runs for minutes, and in modem sleep every downlink packet waits for a beacon.
    * A reconnect during the update shows the screensaver again, which would otherwise put the radio
    * back into modem sleep halfway through the download.

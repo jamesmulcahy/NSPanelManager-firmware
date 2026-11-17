@@ -828,14 +828,14 @@ select {
   margin-right: auto;
 }
 
-.my-auto {
-  margin-top: auto;
-  margin-bottom: auto;
-}
-
 .my-4 {
   margin-top: 1rem;
   margin-bottom: 1rem;
+}
+
+.my-auto {
+  margin-top: auto;
+  margin-bottom: auto;
 }
 
 .mb-2 {
@@ -872,10 +872,6 @@ select {
 
 .mt-5 {
   margin-top: 1.25rem;
-}
-
-.mb-4 {
-  margin-bottom: 1rem;
 }
 
 .block {

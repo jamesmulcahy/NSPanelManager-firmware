@@ -14,6 +14,15 @@ esp_err_t LittleFS::mount() {
   conf.dont_mount = false;
   esp_err_t result = esp_vfs_littlefs_register(&conf);
 
+  if (result == ESP_FAIL) {
+    // The partition holds only config.json (the web UI is in the firmware), so a format is a safe
+    // recovery: the panel then starts its setup AP, with a working setup page, instead of staying
+    // broken. A blank partition, as after a fresh flash without a LittleFS image, comes here too.
+    ESP_LOGW("LittleFS", "Could not mount LittleFS, formatting the partition.");
+    conf.format_if_mount_failed = true;
+    result = esp_vfs_littlefs_register(&conf);
+  }
+
   if (result == ESP_OK) {
     ESP_LOGI("LittleFS", "Mounted LittleFS successfully!");
     LittleFS::_is_mounted = true;

@@ -12,11 +12,12 @@ From `firmware_espidf/`:
 ```
 pio run -e original_sonoff                  # firmware for the Sonoff NSPanel (ESP32)
 pio run -e custom_pcb                       # firmware for the custom PCB (ESP32-S3)
-pio run -e original_sonoff -t buildfs       # the LittleFS image (the panel's web UI, from data/)
 pio device monitor -e original_sonoff       # serial console, 115200 baud
 ```
 
-The images land in `.pio/build/<env>/` (`firmware.bin`, `littlefs.bin`). `build_and_upload.sh`
+The image lands in `.pio/build/<env>/firmware.bin`. The panel's setup web UI (`web/`) is gzipped into
+it by `gen_web_assets.py`; after changing the HTML, regenerate `web/static/main.css` with
+`tailwind_devel.sh` and commit it. `build_and_upload.sh`
 builds both boards, bumps the version (unless `--no-ver`), and uploads the images to an NSPanel
 Manager, which then offers them to its panels as an update.
 

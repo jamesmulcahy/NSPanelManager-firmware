@@ -1,6 +1,7 @@
 """Library: one emulated panel with its broker, manager and display, started and stopped together.
 The tests' `rig` fixture (tests/conftest.py) and web_panel.py are both built on it."""
 
+import gzip
 import json
 import os
 import time
@@ -143,6 +144,8 @@ class Rig:
     def http_get(self, path: str, timeout: float = 30):
         with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.panel.web_port, path), timeout=timeout) as r:
             body = r.read()
+            if r.headers.get("Content-Encoding") == "gzip":
+                body = gzip.decompress(body)  # as a browser does: the setup page is sent gzipped
             if r.headers.get_content_type() == "application/json":
                 return r.status, json.loads(body)
             return r.status, body

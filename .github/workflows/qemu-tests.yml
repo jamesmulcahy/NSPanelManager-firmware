@@ -71,18 +71,11 @@ jobs:
           # NSPM's own TFT: the suite (the LVGL tests skip themselves), less the update tests.
           - display: nextion
             terminal: ""
-            tests: "not test_gui_update_faults and not test_littlefs_update"
+            tests: "not test_gui_update_faults"
             marks: ""
             timeout: 60
-          # The update tests, also on NSPM's TFT. Each flashes the panel and reboots it, often more
-          # than once, so they take most of the time and are split three ways to run side by side
-          # (about 15-20 minutes each; in one job they took 50).
-          # Firmware and LittleFS updates.
-          - display: littlefs-updates
-            terminal: ""
-            tests: "test_littlefs_update"
-            marks: ""
-            timeout: 45
+          # The GUI update tests, also on NSPM's TFT. Each flashes the panel and reboots it, often more
+          # than once, so they take most of the time and are split two ways to run side by side.
           # GUI updates under faults that the firmware handles.
           - display: gui-updates
             terminal: ""
