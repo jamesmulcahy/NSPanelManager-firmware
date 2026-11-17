@@ -9,6 +9,7 @@
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_version.hpp>
+#include "NoTlsStack.hpp"
 #include <Nextion.hpp>
 #include <PanelClock.hpp>
 #include <PanelMetrics.hpp>
@@ -127,6 +128,7 @@ static_assert(INCLUDE_vTaskSuspend == 1, "portMAX_DELAY is not an indefinite blo
 
 extern "C" void app_main() {
   ESP_LOGI("Main", "Starting NSPanel Manager firmware. Version " NSPM_VERSION ". Marking boot as successful.");
+  register_no_tls_stack();
   UpdateManager::mark_boot_successful();
 
   esp_event_loop_create_default();
