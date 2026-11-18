@@ -7,6 +7,7 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <MqttSubscriptions.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -76,7 +77,7 @@ private:
   /**
    * @brief Handle RTTTL strings published to the raw buzzer command topic.
    */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _mqtt_message_handler(const mqtt::Message &message, void *context);
 
   /**
    * @brief Handle touch events from the Nextion display. Raise a TOUCH event on press, or on release
@@ -137,6 +138,7 @@ private:
   static inline bool _touch_event_replaced = false;
 
   static inline std::string _raw_command_topic;
+  static inline mqtt::Subscription _raw_command_subscription;
 
   static constexpr const ledc_mode_t _ledc_mode = LEDC_LOW_SPEED_MODE;
   static constexpr const ledc_timer_t _ledc_timer = LEDC_TIMER_1;
