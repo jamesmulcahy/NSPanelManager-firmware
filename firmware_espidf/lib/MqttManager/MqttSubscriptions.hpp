@@ -70,6 +70,9 @@ struct Hooks {
   void (*log)(LogLevel level, const char *format, va_list args) = nullptr;
   void (*latency)(const LatencyReport &report) = nullptr; // Called on the on_data caller, lock not held.
   void (*callback_duration)(int metrics_id, int64_t elapsed_us) = nullptr;
+  // After each callback returns, with the topic it was delivered for (not NUL-terminated). Runs on the
+  // deliver() caller, lock not held. The panel uses it to watch mqtt_dispatch's stack.
+  void (*callback_done)(int metrics_id, std::string_view topic) = nullptr;
 };
 
 struct Limits {

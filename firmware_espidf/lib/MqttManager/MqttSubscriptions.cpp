@@ -921,6 +921,9 @@ void Subscriptions::deliver() {
     if (_hooks.callback_duration != nullptr) {
       _hooks.callback_duration(metrics_id, _hooks.now_us() - start_us);
     }
+    if (_hooks.callback_done != nullptr) {
+      _hooks.callback_done(metrics_id, blob->topic());
+    }
     _unref(blob);
     lock.lock();
   }
