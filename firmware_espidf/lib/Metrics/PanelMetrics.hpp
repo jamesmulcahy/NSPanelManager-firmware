@@ -57,6 +57,10 @@ enum MqttHandler { HANDLER_MQTT_MANAGER,
                    HANDLER_ENTITY_PAGE,
                    HANDLER_COUNT };
 extern FastHistogram mqtt_handler_duration[HANDLER_COUNT];
+// nspanel_mqtt_handler_stack_peak_bytes{handler}: the most stack mqtt_dispatch had used, in bytes, when
+// a callback of this handler pushed it to a new peak. 0 when the handler never did. Only the handler
+// that set each new peak is credited, so a deep handler running after a deeper one stays at its old value.
+extern Gauge mqtt_handler_stack_peak[HANDLER_COUNT];
 
 // nspanel_nextion_window_wait_seconds{class}: time each write to the display waited for room in
 // its buffer, recorded by NextionWindow::wait_for_room(). Bulk writes are album art fills.

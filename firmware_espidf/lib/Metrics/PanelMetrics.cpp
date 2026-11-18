@@ -21,6 +21,7 @@ Counter log_lines_dropped;
 Gauge log_queue_high_water;
 FastHistogram esp_timer_callback_duration[TIMER_COUNT];
 FastHistogram mqtt_handler_duration[HANDLER_COUNT];
+Gauge mqtt_handler_stack_peak[HANDLER_COUNT];
 FastHistogram nextion_window_wait[NEXTION_WRITE_COUNT];
 Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 
@@ -162,6 +163,17 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_PANEL_CLOCK], {"handler", "panel_clock"}),
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_SCREENSAVER_PAGE], {"handler", "screensaver_page"}),
     metric("nspanel_mqtt_handler_duration_seconds", mqtt_handler_duration[HANDLER_ENTITY_PAGE], {"handler", "entity_page"}),
+    // How deep mqtt_dispatch's stack went, credited to the handler whose callback set each new peak.
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_MQTT_MANAGER], {"handler", "mqtt_manager"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_NSPM_CONFIG_MANAGER], {"handler", "nspm_config_manager"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_ROOM_MANAGER], {"handler", "room_manager"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_INTERFACE_MANAGER], {"handler", "interface_manager"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_BUTTON_MANAGER], {"handler", "button_manager"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_UPDATE_MANAGER], {"handler", "update_manager"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_BUZZER_MANAGER], {"handler", "buzzer_manager"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_PANEL_CLOCK], {"handler", "panel_clock"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_SCREENSAVER_PAGE], {"handler", "screensaver_page"}),
+    metric("nspanel_mqtt_handler_stack_peak_bytes", mqtt_handler_stack_peak[HANDLER_ENTITY_PAGE], {"handler", "entity_page"}),
     // Writes to the display, paced by NextionWindow so they never overflow its serial buffer. Every
     // write is in the wait histogram, so its _count is writes by class and its buckets how long they
     // waited for room. Bulk writes may use only half the window, keeping the rest for normal ones.
