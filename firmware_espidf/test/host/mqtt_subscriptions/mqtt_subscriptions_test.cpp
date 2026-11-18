@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -157,6 +158,16 @@ struct Rig {
   mqtt::Subscription hold(const std::string &filter, Consumer &consumer, mqtt::Kind kind = mqtt::Kind::STATE) {
     return core->subscribe(filter, kind, &Consumer::callback, &consumer, 7);
   }
+  // One COMMAND handle per filter, for tests of the broker traffic that need a hold and nothing
+  // else: cmd() is idempotent per filter, uncmd() releases it at once (no linger for COMMAND).
+  void cmd(const std::string &filter) {
+    if (cmds.find(filter) == cmds.end()) {
+      cmds.emplace(filter, core->subscribe(filter, mqtt::Kind::COMMAND, &Consumer::callback, &sink, 7));
+    }
+  }
+  void uncmd(const std::string &filter) { cmds.erase(filter); }
+  Consumer sink;
+  std::map<std::string, mqtt::Subscription> cmds; // Last: released before the core goes.
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -648,26 +659,29 @@ static void fragments() {
   STAT(rig.core->stats(), dropped_oversize, 1);
   STAT(rig.core->stats(), messages_received, 3);
 
-  // A topic nobody with a callback holds is never copied.
+  // A topic nobody holds any more (the message was in flight when the handle went) is never copied.
   rig.core->on_connected();
   long before = live_allocations;
-  rig.core->legacy_hold("legacy");
+  rig.cmd("late");
   rig.run();
+  rig.uncmd("late");
+  CHECK_EQ(rig.core->known("late"), true); // Its UNSUBSCRIBE is still to be sent.
   long with_entry = live_allocations;
-  CHECK_EQ(with_entry, before + 1); // The entry only.
-  send("legacy", 0, 4096, 10000);
+  send("late", 0, 4096, 10000);
   CHECK_EQ(live_allocations, with_entry);
+  rig.run();
+  CHECK_EQ(live_allocations, before);
 }
 
 static void failed_unsubscribe_blocks_only_its_filter() {
   // FIXES_PENDING #3.
   Rig rig;
-  rig.core->legacy_hold("a");
+  rig.cmd("a");
   rig.run();
   rig.transport.fail_unsubscribes["a"] = 2;
-  rig.core->legacy_release("a");
-  rig.core->legacy_hold("b");
-  rig.core->legacy_hold("a"); // Wants it back, but its UNSUBSCRIBE has not gone out.
+  rig.uncmd("a");
+  rig.cmd("b");
+  rig.cmd("a"); // Wants it back, but its UNSUBSCRIBE has not gone out.
   rig.run();
   CHECK_EQ(rig.transport.log(1), Strings({"UNSUB a!", "SUB b"}));
   CHECK_EQ(logged("E Failed to unsubscribe from 'a'. Got return code: -1. Will retry in 1000ms."), true);
@@ -695,15 +709,15 @@ static void failed_unsubscribe_blocks_only_its_filter() {
 static void timed_out_unsubscribe_is_retried() {
   // FIXES_PENDING #4.
   Rig rig;
-  rig.core->legacy_hold("a");
-  rig.core->legacy_hold("b");
+  rig.cmd("a");
+  rig.cmd("b");
   rig.run();
   rig.broker->drop_unsubscribes = true; // Lost, as when the outbox expires.
-  rig.core->legacy_release("a");
+  rig.uncmd("a");
   rig.run();
   CHECK_EQ(rig.core->known("a"), true); // Still waiting for its UNSUBACK.
   advance_ms(30000);
-  rig.core->legacy_release("b");
+  rig.uncmd("b");
   rig.run();
   CHECK_EQ(rig.transport.log(2), Strings({"UNSUB a", "UNSUB b"}));
   advance_ms(31000);
@@ -729,12 +743,12 @@ static void timed_out_unsubscribe_is_retried() {
   // Held again while its UNSUBSCRIBE is unanswered: the SUBSCRIBE goes straight after it (the
   // order on the wire is what matters), and the old UNSUBSCRIBE is never resent.
   Rig again;
-  again.core->legacy_hold("a");
+  again.cmd("a");
   again.run();
   again.broker->drop_acks = true;
-  again.core->legacy_release("a");
+  again.uncmd("a");
   again.run();
-  again.core->legacy_hold("a");
+  again.cmd("a");
   again.run();
   again.broker->drop_acks = false;
   advance_ms(61000);
@@ -754,7 +768,7 @@ static void timed_out_unsubscribe_is_retried() {
 static void suback_failure_and_timeout() {
   Rig rig;
   rig.transport.fail_subscribes = 1;
-  rig.core->legacy_hold("a");
+  rig.cmd("a");
   rig.run();
   CHECK_EQ(rig.transport.log(), Strings({"SUB a!"}));
   CHECK_EQ(logged("E Failed to subscribe to 'a'. Got return code: -1. Will retry in 1000ms."), true);
@@ -763,7 +777,7 @@ static void suback_failure_and_timeout() {
   CHECK_EQ(rig.transport.log(1), Strings({"SUB a"}));
 
   // The broker rejects it (an ACL): retried with backoff.
-  rig.core->legacy_hold("denied");
+  rig.cmd("denied");
   rig.core->service();
   rig.broker->skip();
   rig.core->on_suback(rig.transport.calls.back().msg_id, true);
@@ -774,7 +788,7 @@ static void suback_failure_and_timeout() {
 
   // No SUBACK at all: sent again after the timeout.
   rig.broker->drop_acks = true;
-  rig.core->legacy_hold("slow");
+  rig.cmd("slow");
   rig.run();
   advance_ms(60000);
   rig.run();
@@ -796,7 +810,7 @@ static void in_flight_cap() {
   Rig rig;
   rig.broker->drop_acks = true;
   for (int i = 0; i < 6; i++) {
-    rig.core->legacy_hold("t" + std::to_string(i));
+    rig.cmd("t" + std::to_string(i));
   }
   rig.run();
   CHECK_EQ(rig.transport.calls.size(), (size_t)4);
@@ -811,9 +825,9 @@ static void in_flight_cap() {
 static void message_id_wrap_and_early_acks() {
   Rig rig;
   rig.transport.next_id = 65534;
-  rig.core->legacy_hold("a");
-  rig.core->legacy_hold("b");
-  rig.core->legacy_hold("c");
+  rig.cmd("a");
+  rig.cmd("b");
+  rig.cmd("c");
   rig.run();
   CHECK_EQ(rig.transport.calls[2].msg_id, 1); // 65534, 65535, then 1.
   CHECK_EQ(rig.core->holds("c"), (size_t)1);
@@ -826,7 +840,7 @@ static void message_id_wrap_and_early_acks() {
     }
   };
   rig.broker->drop_acks = true;
-  rig.core->legacy_hold("early");
+  rig.cmd("early");
   rig.run();
   rig.transport.during = nullptr;
   // Matched: no resend after the timeout.
@@ -840,7 +854,7 @@ static void message_id_wrap_and_early_acks() {
   stale.core->on_suback(5, false); // Nobody's.
   advance_ms(61000);
   stale.transport.next_id = 5;
-  stale.core->legacy_hold("x");
+  stale.cmd("x");
   stale.run();
   CHECK_EQ(stale.transport.calls[0].msg_id, 5);
   advance_ms(60001);
@@ -849,7 +863,7 @@ static void message_id_wrap_and_early_acks() {
 
   // An early UNSUBACK is matched the same way, and only to an UNSUBSCRIBE.
   Rig unsub;
-  unsub.core->legacy_hold("y");
+  unsub.cmd("y");
   unsub.run();
   unsub.broker->drop_acks = true;
   unsub.transport.during = [&](const Call &call) {
@@ -857,7 +871,7 @@ static void message_id_wrap_and_early_acks() {
       unsub.core->on_unsuback(call.msg_id);
     }
   };
-  unsub.core->legacy_release("y");
+  unsub.uncmd("y");
   unsub.run();
   CHECK_EQ(unsub.core->known("y"), false);
 }
@@ -869,11 +883,11 @@ static void release_and_hold_during_a_send() {
   rig.transport.during = [&](const Call &call) {
     if (call.type == Call::SUB && once) {
       once = false;
-      rig.core->legacy_release("t");
-      rig.core->legacy_hold("t");
+      rig.uncmd("t");
+      rig.cmd("t");
     }
   };
-  rig.core->legacy_hold("t");
+  rig.cmd("t");
   rig.run();
   rig.run();
   CHECK_EQ(rig.transport.log(), Strings({"SUB t", "UNSUB t", "SUB t"}));
@@ -886,47 +900,59 @@ static void release_and_hold_during_a_send() {
     reconnect.core->on_disconnected();
     reconnect.core->on_connected();
   };
-  reconnect.core->legacy_hold("t");
+  reconnect.cmd("t");
   reconnect.run();
   reconnect.run();
   CHECK_EQ(reconnect.transport.log(), Strings({"SUB t", "SUB t"}));
 }
 
-// ---- The legacy shims: MqttManager::subscribe()/unsubscribe() as today ----
+// ---- One hold per filter and the order of SUBSCRIBE and UNSUBSCRIBE (COMMAND handles) ----
 
-static void legacy_idempotent() {
+static void command_holds_share_a_filter() {
   Rig rig;
-  rig.core->legacy_hold("t");
-  rig.core->legacy_hold("t"); // A config reload subscribing again.
-  rig.run();
-  rig.core->legacy_hold("t");
+  rig.cmd("t");
+  rig.cmd("t"); // The same handle again: nothing new.
   rig.run();
   CHECK_EQ(rig.transport.log(), Strings({"SUB t"}));
   CHECK_EQ(rig.core->holds("t"), (size_t)1);
-  // One unsubscribe releases it, however many subscribes there were, at once (no linger).
-  rig.core->legacy_release("t");
+  // Released at once: a COMMAND filter has no linger.
+  rig.uncmd("t");
   rig.run();
   CHECK_EQ(rig.transport.log(), Strings({"SUB t", "UNSUB t"}));
   CHECK_EQ(rig.core->known("t"), false);
   // Releasing something not held does nothing.
-  rig.core->legacy_release("t");
-  rig.core->legacy_release("never");
+  rig.uncmd("t");
+  rig.uncmd("never");
   rig.run();
   CHECK_EQ(rig.transport.calls.size(), (size_t)2);
   // Released before its SUBSCRIBE went out: nothing reaches the broker.
-  rig.core->legacy_hold("brief");
-  rig.core->legacy_release("brief");
+  rig.cmd("brief");
+  rig.uncmd("brief");
   rig.run();
   CHECK_EQ(rig.transport.calls.size(), (size_t)2);
   CHECK_EQ(rig.core->known("brief"), false);
+
+  // Two handles on one filter: the second does not subscribe again, and the filter goes with the last.
+  Consumer a, b;
+  mqtt::Subscription ha = rig.hold("two", a, mqtt::Kind::COMMAND);
+  mqtt::Subscription hb = rig.hold("two", b, mqtt::Kind::COMMAND);
+  rig.run();
+  CHECK_EQ(rig.core->holds("two"), (size_t)2);
+  ha.reset();
+  rig.run();
+  CHECK_EQ(rig.transport.log(2), Strings({"SUB two"}));
+  hb.reset();
+  rig.run();
+  CHECK_EQ(rig.transport.log(2), Strings({"SUB two", "UNSUB two"}));
 }
 
-static void legacy_unsubscribe_then_subscribe_replays() {
-  // RoomManager::go_to_room() for the room already shown: unsubscribe(topic), then subscribe(topic)
-  // must reach the broker in that order, so it replays the retained state.
+static void release_then_hold_resubscribes_in_order() {
+  // A handle released and taken again for the same filter (RoomManager::go_to_room() used to do
+  // this for the room already shown): UNSUBSCRIBE, then SUBSCRIBE, on the wire in that order, so
+  // the broker replays the retained value.
   Rig rig;
   rig.broker->retained["room/1/state"] = "s";
-  rig.core->legacy_hold("room/1/state");
+  rig.cmd("room/1/state");
   rig.run();
   CHECK_EQ(latency_topics, Strings({"room/1/state"}));
   CHECK_EQ(latencies[0].after_reconnect, false);
@@ -934,57 +960,60 @@ static void legacy_unsubscribe_then_subscribe_replays() {
   CHECK_EQ(latencies[0].suback_ms > 0, true);
 
   advance_ms(5000);
-  rig.core->legacy_release("room/1/state");
-  rig.core->legacy_hold("room/1/state");
+  rig.uncmd("room/1/state");
+  rig.cmd("room/1/state");
   rig.run();
   CHECK_EQ(rig.transport.log(), Strings({"SUB room/1/state", "UNSUB room/1/state", "SUB room/1/state"}));
   CHECK_EQ(rig.broker->subscriptions.count("room/1/state"), (size_t)1);
   // The replay arrived, and is logged as a fresh subscribe() latency.
   CHECK_EQ(latency_topics, Strings({"room/1/state", "room/1/state"}));
   CHECK_EQ(latencies[1].requested_ms, now_us / 1000);
-  // A legacy hold has no callback and no cache.
+  // A COMMAND handle caches nothing.
   CHECK_EQ(rig.core->cached_topics(), (size_t)0);
 
   // Same while the first SUBSCRIBE is still unacknowledged.
   Rig in_flight;
   in_flight.broker->drop_acks = true;
-  in_flight.core->legacy_hold("t");
+  in_flight.cmd("t");
   in_flight.run();
-  in_flight.core->legacy_release("t");
-  in_flight.core->legacy_hold("t");
+  in_flight.uncmd("t");
+  in_flight.cmd("t");
   in_flight.run();
   CHECK_EQ(in_flight.transport.log(), Strings({"SUB t", "UNSUB t", "SUB t"}));
 }
 
-static void legacy_and_handles_together() {
+static void command_and_state_handles_together() {
   Rig rig;
   Consumer a;
   rig.broker->retained["t"] = "v";
-  // A handle holds the topic; a legacy release elsewhere does not drop it (#5 is fixed for handles).
+  // A STATE handle holds the topic; a COMMAND handle released elsewhere does not drop it (#5).
   mqtt::Subscription h = rig.hold("t", a);
   rig.run();
-  rig.core->legacy_hold("t");
+  rig.cmd("t");
   rig.run();
-  // The legacy holder reads esp-mqtt itself, so it needs the broker's replay: SUBSCRIBE again.
-  CHECK_EQ(rig.transport.log(), Strings({"SUB t", "SUB t"}));
+  // A COMMAND holder never wants a replay: nothing more on the wire.
+  CHECK_EQ(rig.transport.log(), Strings({"SUB t"}));
+  rig.uncmd("t");
+  rig.run();
+  CHECK_EQ(rig.transport.calls.size(), (size_t)1);
   rig.core->deliver();
-  CHECK_EQ(a.payloads(), Strings({"v"})); // The identical replay is not delivered twice.
-  rig.core->legacy_release("t");
-  rig.run();
-  CHECK_EQ(rig.transport.calls.size(), (size_t)2);
+  CHECK_EQ(a.payloads(), Strings({"v"}));
   rig.broker->publish("t", "w", true);
   rig.core->deliver();
   CHECK_EQ(a.payloads(), Strings({"v", "w"}));
 
-  // The other way round: the legacy hold keeps it after the handle goes, with no linger left behind.
-  rig.core->legacy_hold("u");
+  // The other way round: the COMMAND hold keeps the filter after the STATE handle goes, with no
+  // linger left behind to drop it.
+  rig.cmd("u");
   mqtt::Subscription hu = rig.hold("u", a);
   rig.run();
   hu.reset();
   rig.run();
-  rig.core->legacy_release("u");
+  CHECK_EQ(rig.core->holds("u"), (size_t)1);
+  CHECK_EQ(rig.transport.log(1), Strings({"SUB u"}));
+  rig.uncmd("u");
   rig.run();
-  CHECK_EQ(rig.transport.log(2), Strings({"SUB u", "UNSUB u"}));
+  CHECK_EQ(rig.transport.log(1), Strings({"SUB u", "UNSUB u"}));
 }
 
 static void no_leaks() {
@@ -995,7 +1024,7 @@ static void no_leaks() {
     rig.broker->retained["t"] = "v";
     mqtt::Subscription h = rig.hold("t", a);
     mqtt::Subscription c = rig.hold("c", a, mqtt::Kind::COMMAND);
-    rig.core->legacy_hold("l");
+    rig.cmd("l");
     rig.run();
     rig.broker->publish("c", "queued", false);
     mqtt::DataEvent partial;
@@ -1029,9 +1058,9 @@ int main() {
   in_flight_cap();
   message_id_wrap_and_early_acks();
   release_and_hold_during_a_send();
-  legacy_idempotent();
-  legacy_unsubscribe_then_subscribe_replays();
-  legacy_and_handles_together();
+  command_holds_share_a_filter();
+  release_then_hold_resubscribes_in_order();
+  command_and_state_handles_together();
   no_leaks();
   std::printf("%d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;

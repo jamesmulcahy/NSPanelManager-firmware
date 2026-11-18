@@ -133,20 +133,14 @@ void Subscriptions::_start_subscribe(Entry *entry, int64_t now) {
   entry->retained_seen = false;
 }
 
-bool Subscriptions::_hold(Entry *entry, Kind kind, bool legacy) {
+bool Subscriptions::_hold(Entry *entry, Kind kind) {
   bool was_held = entry->sub.state != OpState::NONE;
   bool was_caching = _caches(entry);
-  // Whether this holder needs the broker to replay the retained value: a legacy holder reads
-  // esp-mqtt's events itself, and a STATE holder gets the cache, which is empty unless something
-  // was caching the filter already. A COMMAND holder never wants a replay.
+  // Whether this holder needs the broker to replay the retained value: a STATE holder gets the
+  // cache, which is empty unless something was caching the filter already. A COMMAND holder never
+  // wants a replay.
   bool wants_replay;
-  if (legacy) {
-    if (entry->legacy) {
-      return false; // Already held: subscribe() is idempotent per topic.
-    }
-    entry->legacy = true;
-    wants_replay = true;
-  } else if (kind == Kind::STATE) {
+  if (kind == Kind::STATE) {
     entry->state_holds++;
     entry->linger_until_ms = 0; // Held again: it is caching anyway, the linger is over.
     wants_replay = !was_caching;
@@ -169,7 +163,7 @@ bool Subscriptions::_hold(Entry *entry, Kind kind, bool legacy) {
 }
 
 void Subscriptions::_after_release(Entry *entry, bool state_release) {
-  if (entry->legacy || entry->state_holds > 0 || entry->command_holds > 0) {
+  if (entry->state_holds > 0 || entry->command_holds > 0) {
     if (!_caches(entry)) {
       _purge_cache();
     }
@@ -236,7 +230,7 @@ Subscription Subscriptions::subscribe(std::string filter, Kind kind, Callback ca
       _log(LogLevel::ERROR, "Out of memory subscribing to '%s'.", filter.c_str());
       return Subscription();
     }
-    _hold(entry, kind, false);
+    _hold(entry, kind);
     id = _next_holder_id++;
     _holders.push_back(Holder{id, entry, kind, kind == Kind::STATE, callback, context, metrics_id});
     if (kind == Kind::STATE) {
@@ -255,41 +249,6 @@ Subscription Subscriptions::subscribe(std::string filter, Kind kind, Callback ca
     _hooks.wake_delivery();
   }
   return Subscription(this, id);
-}
-
-bool Subscriptions::legacy_hold(const std::string &filter) {
-  bool changed;
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    Entry *entry = _find_or_add(filter);
-    if (entry == nullptr) [[unlikely]] {
-      _log(LogLevel::ERROR, "Out of memory subscribing to '%s'.", filter.c_str());
-      return false;
-    }
-    if (!entry->legacy) {
-      _log(LogLevel::DEBUG, "Subscribing to '%s'", filter.c_str());
-    }
-    changed = _hold(entry, Kind::COMMAND, true);
-  }
-  if (changed && _hooks.wake_service != nullptr) {
-    _hooks.wake_service();
-  }
-  return true;
-}
-
-void Subscriptions::legacy_release(const std::string &filter) {
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    Entry *entry = _find(filter);
-    if (entry == nullptr || !entry->legacy) {
-      return;
-    }
-    entry->legacy = false;
-    _after_release(entry, false);
-  }
-  if (_hooks.wake_service != nullptr) {
-    _hooks.wake_service();
-  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -431,7 +390,7 @@ void Subscriptions::_expire(int64_t now) {
     Entry *entry = _entries[i];
     if (entry->linger_until_ms != 0 && now >= entry->linger_until_ms) {
       entry->linger_until_ms = 0;
-      if (entry->legacy || entry->state_holds > 0 || entry->command_holds > 0) {
+      if (entry->state_holds > 0 || entry->command_holds > 0) {
         _purge_cache();
       } else {
         _drop(entry); // May erase the entry.
@@ -982,7 +941,7 @@ size_t Subscriptions::holds(const std::string &filter) {
   if (entry == nullptr) {
     return 0;
   }
-  return (entry->legacy ? 1 : 0) + entry->state_holds + entry->command_holds;
+  return entry->state_holds + entry->command_holds;
 }
 
 bool Subscriptions::known(const std::string &filter) {
