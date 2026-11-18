@@ -7,6 +7,8 @@
 #include <LoadingPage.hpp>
 #include <LvglUi.hpp>
 #include <MqttManager.hpp>
+#include <MqttSubscriptions.hpp>
+#include <iterator>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -70,7 +72,6 @@ void InterfaceManager::init() {
   if (RoomManager::event_loop() != NULL) {
     esp_event_handler_register_with(RoomManager::event_loop(), ROOMMANAGER_EVENT, ESP_EVENT_ANY_ID, InterfaceManager::_page_event_dispatcher, RoomManager::event_loop());
   }
-  MqttManager::register_handler<&InterfaceManager::_mqtt_event_handler, PanelMetrics::HANDLER_INTERFACE_MANAGER>(MQTT_EVENT_ANY, NULL);
   RoomManager::register_handler(ESP_EVENT_ANY_ID, InterfaceManager::_room_manager_event_handler, NULL);
 
   // Show boot page
@@ -590,105 +591,95 @@ void InterfaceManager::_room_manager_event_handler(void *arg, esp_event_base_t e
   }
 }
 
-void InterfaceManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  if (event_id == MQTT_EVENT_DATA) {
-    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    if (event->data_len == 0) {
-      return;
-    }
+void InterfaceManager::_mqtt_message_handler(const mqtt::Message &message, void *context) {
+  if (message.payload.empty()) {
+    return;
+  }
 
-    std::string topic_string = std::string(event->topic, event->topic_len);
-    std::string data = std::string(event->data, event->data_len);
-    // esp_mqtt_client_handle_t client = event->client;
+  std::string topic_string(message.topic);
+  std::string data(reinterpret_cast<const char *>(message.payload.data()), message.payload.size());
 
-    switch ((esp_mqtt_event_id_t)event_id) {
-    case MQTT_EVENT_DATA: {
-      if (topic_string.compare(InterfaceManager::_screen_brightness_command_topic) == 0) {
-        std::shared_ptr<NSPanelConfig> mutable_config;
-        if (NSPM_ConfigManager::get_mutable_config(&mutable_config) == ESP_OK) [[likely]] {
-          uint8_t new_brightness = std::stoi(data);
-          if (new_brightness > 100) [[unlikely]] { // Clamp value to a max of 100%
-            new_brightness = 100;
-          }
-          mutable_config->screen_dim_level = new_brightness;
-          if (!ScreensaverPage::showing()) { // We are not on screensaver, update screen brightness
-            Nextion::set_brightness_level(new_brightness, 1000);
-          }
-          std::string send_data = std::to_string(new_brightness).c_str();
-          MqttManager::publish(std::string(InterfaceManager::_screen_brightness_state_topic), data.c_str(), send_data.length(), true);
-          NSPM_ConfigManager::replace_config(&mutable_config);
-        } else {
-          ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
-        }
-      } else if (topic_string.compare(InterfaceManager::_screensaver_brightness_command_topic) == 0) {
-        std::shared_ptr<NSPanelConfig> mutable_config;
-        if (NSPM_ConfigManager::get_mutable_config(&mutable_config) == ESP_OK) [[likely]] {
-          uint8_t new_brightness = std::stoi(data);
-          if (new_brightness > 100) [[unlikely]] { // Clamp value to a max of 100%
-            new_brightness = 100;
-          }
-          mutable_config->screensaver_dim_level = new_brightness;
-          if (ScreensaverPage::showing()) { // We are not on screensaver, update screen brightness
-            Nextion::set_brightness_level(new_brightness, 1000);
-          }
-          std::string send_data = std::to_string(new_brightness).c_str();
-          MqttManager::publish(std::string(InterfaceManager::_screensaver_brightness_state_topic), data.c_str(), send_data.length(), true);
-          NSPM_ConfigManager::replace_config(&mutable_config);
-        } else {
-          ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
-        }
-      } else if (topic_string.compare(InterfaceManager::_screen_on_off_command_topic) == 0) {
-        // Never switch pages here, on the MQTT client task: see _task_page_transitions.
-        if (data.compare("0") == 0) {
-          InterfaceManager::_request_page(PageRequest::SCREENSAVER);
-          MqttManager::publish(InterfaceManager::_screen_on_off_state_topic, "0", strlen("0"), true);
-        } else if (data.compare("1") == 0) {
-          InterfaceManager::_request_page(PageRequest::SCREEN_ON);
-          MqttManager::publish(InterfaceManager::_screen_on_off_state_topic, "1", strlen("1"), true);
-        } else {
-          ESP_LOGE("InterfaceManager", "Got request to turn screen on/off but got unknown data: '%s'. Valid data is 0 or 1", data.c_str());
-        }
-      } else if (topic_string.compare(InterfaceManager::_screensaver_mode_command_topic) == 0) {
-        std::shared_ptr<NSPanelConfig> mutable_config;
-        if (NSPM_ConfigManager::get_mutable_config(&mutable_config) == ESP_OK) [[likely]] {
-          if (data.compare("with_background") == 0) {
-            mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND;
-            NSPM_ConfigManager::replace_config(&mutable_config);
-          } else if (data.compare("without_background") == 0) {
-            mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITHOUT_BACKGROUND;
-            NSPM_ConfigManager::replace_config(&mutable_config);
-          } else if (data.compare("datetime_with_background") == 0) {
-            mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITH_BACKGROUND;
-            NSPM_ConfigManager::replace_config(&mutable_config);
-          } else if (data.compare("datetime_without_background") == 0) {
-            mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITHOUT_BACKGROUND;
-            NSPM_ConfigManager::replace_config(&mutable_config);
-          } else if (data.compare("no_screensaver") == 0) {
-            mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__NO_SCREENSAVER;
-            NSPM_ConfigManager::replace_config(&mutable_config);
-          } else {
-            ESP_LOGE("InterfaceManager", "Got request to update screensaver mode to '%s' but that is not a valid screensaver mode!", data.c_str());
-          }
-        } else {
-          ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
-        }
-      } else if (topic_string.compare(InterfaceManager::_screen_raw_commands) == 0) {
-        ESP_LOGD("InterfaceManager", "Writing raw Nextion command to display. Command: %s", data.c_str());
-        Nextion::send_raw_command(data.c_str(), 5000); // Try writing raw command data to the Nextion display.
+  if (topic_string.compare(InterfaceManager::_screen_brightness_command_topic) == 0) {
+    std::shared_ptr<NSPanelConfig> mutable_config;
+    if (NSPM_ConfigManager::get_mutable_config(&mutable_config) == ESP_OK) [[likely]] {
+      uint8_t new_brightness = std::stoi(data);
+      if (new_brightness > 100) [[unlikely]] { // Clamp value to a max of 100%
+        new_brightness = 100;
       }
-      break;
+      mutable_config->screen_dim_level = new_brightness;
+      if (!ScreensaverPage::showing()) { // We are not on screensaver, update screen brightness
+        Nextion::set_brightness_level(new_brightness, 1000);
+      }
+      std::string send_data = std::to_string(new_brightness).c_str();
+      MqttManager::publish(std::string(InterfaceManager::_screen_brightness_state_topic), data.c_str(), send_data.length(), true);
+      NSPM_ConfigManager::replace_config(&mutable_config);
+    } else {
+      ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
     }
-
-    default:
-      break;
+  } else if (topic_string.compare(InterfaceManager::_screensaver_brightness_command_topic) == 0) {
+    std::shared_ptr<NSPanelConfig> mutable_config;
+    if (NSPM_ConfigManager::get_mutable_config(&mutable_config) == ESP_OK) [[likely]] {
+      uint8_t new_brightness = std::stoi(data);
+      if (new_brightness > 100) [[unlikely]] { // Clamp value to a max of 100%
+        new_brightness = 100;
+      }
+      mutable_config->screensaver_dim_level = new_brightness;
+      if (ScreensaverPage::showing()) { // We are not on screensaver, update screen brightness
+        Nextion::set_brightness_level(new_brightness, 1000);
+      }
+      std::string send_data = std::to_string(new_brightness).c_str();
+      MqttManager::publish(std::string(InterfaceManager::_screensaver_brightness_state_topic), data.c_str(), send_data.length(), true);
+      NSPM_ConfigManager::replace_config(&mutable_config);
+    } else {
+      ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
     }
+  } else if (topic_string.compare(InterfaceManager::_screen_on_off_command_topic) == 0) {
+    // Never switch pages here, on the mqtt_dispatch task: see _task_page_transitions.
+    if (data.compare("0") == 0) {
+      InterfaceManager::_request_page(PageRequest::SCREENSAVER);
+      MqttManager::publish(InterfaceManager::_screen_on_off_state_topic, "0", strlen("0"), true);
+    } else if (data.compare("1") == 0) {
+      InterfaceManager::_request_page(PageRequest::SCREEN_ON);
+      MqttManager::publish(InterfaceManager::_screen_on_off_state_topic, "1", strlen("1"), true);
+    } else {
+      ESP_LOGE("InterfaceManager", "Got request to turn screen on/off but got unknown data: '%s'. Valid data is 0 or 1", data.c_str());
+    }
+  } else if (topic_string.compare(InterfaceManager::_screensaver_mode_command_topic) == 0) {
+    std::shared_ptr<NSPanelConfig> mutable_config;
+    if (NSPM_ConfigManager::get_mutable_config(&mutable_config) == ESP_OK) [[likely]] {
+      if (data.compare("with_background") == 0) {
+        mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND;
+        NSPM_ConfigManager::replace_config(&mutable_config);
+      } else if (data.compare("without_background") == 0) {
+        mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITHOUT_BACKGROUND;
+        NSPM_ConfigManager::replace_config(&mutable_config);
+      } else if (data.compare("datetime_with_background") == 0) {
+        mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITH_BACKGROUND;
+        NSPM_ConfigManager::replace_config(&mutable_config);
+      } else if (data.compare("datetime_without_background") == 0) {
+        mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITHOUT_BACKGROUND;
+        NSPM_ConfigManager::replace_config(&mutable_config);
+      } else if (data.compare("no_screensaver") == 0) {
+        mutable_config->screensaver_mode = NSPanelConfig__NSPanelScreensaverMode::NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__NO_SCREENSAVER;
+        NSPM_ConfigManager::replace_config(&mutable_config);
+      } else {
+        ESP_LOGE("InterfaceManager", "Got request to update screensaver mode to '%s' but that is not a valid screensaver mode!", data.c_str());
+      }
+    } else {
+      ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
+    }
+  } else if (topic_string.compare(InterfaceManager::_screen_raw_commands) == 0) {
+    ESP_LOGD("InterfaceManager", "Writing raw Nextion command to display. Command: %s", data.c_str());
+    Nextion::send_raw_command(data.c_str(), 5000); // Try writing raw command data to the Nextion display.
   }
 }
 
 void InterfaceManager::_subscribe_to_relevant_mqtt_topics() {
-  MqttManager::subscribe(InterfaceManager::_screen_on_off_command_topic);
-  MqttManager::subscribe(InterfaceManager::_screen_brightness_command_topic);
-  MqttManager::subscribe(InterfaceManager::_screensaver_brightness_command_topic);
-  MqttManager::subscribe(InterfaceManager::_screensaver_mode_command_topic);
-  MqttManager::subscribe(InterfaceManager::_screen_raw_commands);
+  // All commands: each is delivered once, in order, and never replayed. One hold per topic, replaced if init runs again.
+  const std::string *topics[] = {&InterfaceManager::_screen_on_off_command_topic, &InterfaceManager::_screen_brightness_command_topic, &InterfaceManager::_screensaver_brightness_command_topic,
+                                 &InterfaceManager::_screensaver_mode_command_topic, &InterfaceManager::_screen_raw_commands};
+  static_assert(std::size(topics) == std::size(InterfaceManager::_command_subscriptions));
+  for (size_t i = 0; i < std::size(topics); i++) {
+    InterfaceManager::_command_subscriptions[i] = mqtt::subscribe(*topics[i], mqtt::Kind::COMMAND, &InterfaceManager::_mqtt_message_handler, NULL, PanelMetrics::HANDLER_INTERFACE_MANAGER);
+  }
 }
