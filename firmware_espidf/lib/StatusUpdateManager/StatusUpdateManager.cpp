@@ -110,6 +110,7 @@ void StatusUpdateManager::init() {
       cali_config.unit_id = ADC_UNIT_1;
       cali_config.atten = ADC_ATTEN_DB_12;
       cali_config.bitwidth = ADC_BITWIDTH_12;
+      cali_config.default_vref = 1100; // Used when the chip has no factory reference voltage burned in; without one the conversion fails every time.
       if (adc_cali_create_scheme_line_fitting(&cali_config, &StatusUpdateManager::_temp_calibration_data) == ESP_OK) {
         ESP_LOGI("StatusUpdateManager", "Temperature ADC init successfully!");
       } else {
@@ -155,7 +156,30 @@ void StatusUpdateManager::_post_average_temperature(TickType_t timeout) {
   esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, &average, sizeof(average), timeout);
 }
 
+void StatusUpdateManager::_note_bad_temperature_reading(const char *reason) {
+  // Log when a run of bad readings starts and when it becomes a failure, not once a second.
+  if (StatusUpdateManager::_bad_temperature_readings == 0) {
+    ESP_LOGW("StatusUpdateManager", "Temperature reading unusable: %s. Will keep trying every second.", reason);
+  }
+  if (StatusUpdateManager::_bad_temperature_readings < StatusUpdateManager::_TEMPERATURE_FAILURE_READINGS) {
+    StatusUpdateManager::_bad_temperature_readings++;
+    if (StatusUpdateManager::_bad_temperature_readings == StatusUpdateManager::_TEMPERATURE_FAILURE_READINGS) {
+      ESP_LOGE("StatusUpdateManager", "No usable temperature reading for %d seconds (last: %s). Reporting no temperature and switching thermostat relays off.", (int)StatusUpdateManager::_TEMPERATURE_FAILURE_READINGS, reason);
+      StatusUpdateManager::_temperature_valid = false;
+      // Start over when the sensor comes back: a new warm-up, not an average with readings from before the outage.
+      StatusUpdateManager::_measured_temperature_next_index = 0;
+      StatusUpdateManager::_measured_temperature_total_samples = 0;
+      StatusUpdateManager::_readings_since_average = 0;
+      esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED, NULL, 0, pdMS_TO_TICKS(250));
+    }
+  }
+}
+
 void StatusUpdateManager::_add_temperature_reading(double celsius) {
+  if (StatusUpdateManager::_bad_temperature_readings > 0) {
+    ESP_LOGI("StatusUpdateManager", "Temperature readings are usable again after %d bad ones.", (int)StatusUpdateManager::_bad_temperature_readings);
+    StatusUpdateManager::_bad_temperature_readings = 0;
+  }
   StatusUpdateManager::_measured_temperatures[StatusUpdateManager::_measured_temperature_next_index++] = celsius;
   if (StatusUpdateManager::_measured_temperature_next_index >= StatusUpdateManager::_TEMPERATURE_AVERAGE_READINGS) {
     StatusUpdateManager::_measured_temperature_next_index = 0;
@@ -279,24 +303,26 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
 #else
     int read_voltage_mv_raw;
     if (adc_oneshot_read(StatusUpdateManager::_temp_adc_handle, ADC_CHANNEL_2, &read_voltage_mv_raw) != ESP_OK) {
-      ESP_LOGE("StatusUpdateManager", "Failed to read raw voltage data from temp sensor. Will retry in 5 seconds.");
+      StatusUpdateManager::_note_bad_temperature_reading("ADC read failed");
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }
 
     if (adc_cali_raw_to_voltage(StatusUpdateManager::_temp_calibration_data, read_voltage_mv_raw, &read_voltage_mv) != ESP_OK) {
-      ESP_LOGE("StatusUpdateManager", "Failed to convert read raw voltage with calibration data.");
-      return;
+      // A task that returns is aborted by the OS and reboots the panel, so retry instead.
+      StatusUpdateManager::_note_bad_temperature_reading("ADC calibration conversion failed");
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      continue;
     }
 #endif
 
     // We now have temperature as a voltage. Convert voltage into celsius:
-    double read_voltage_v = (double)read_voltage_mv / 1000.0; // Convert mV to V.
-    if (read_voltage_v <= 0.5 || read_voltage_v >= 3.25) {
-      ESP_LOGW("StatusUpdateManager", "Voltage read from thermistor outside of range. Will skip measurement.");
+    if (read_voltage_mv <= StatusUpdateManager::_TEMPERATURE_ADC_MIN_MV || read_voltage_mv >= StatusUpdateManager::_TEMPERATURE_ADC_MAX_MV) {
+      StatusUpdateManager::_note_bad_temperature_reading("thermistor voltage near the ADC's rails");
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }
+    double read_voltage_v = (double)read_voltage_mv / 1000.0; // Convert mV to V.
 
     // Calculate temperature from NTC using the Steinhart–Hart equation
     // See https://robertvicol.com/tech/arduino-measuring-temperature-with-ntc-steinhart-hart-formula/ for example
@@ -326,7 +352,13 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(1));
       }
 
-      ESP_ERROR_CHECK(bmx280_readoutFloat(StatusUpdateManager::_bme280_dev_handle, &temperature, &pressure, &humidity));
+      // ESP_ERROR_CHECK here aborted, rebooting the panel on a single I2C glitch. Count it as a bad reading instead.
+      esp_err_t readout = bmx280_readoutFloat(StatusUpdateManager::_bme280_dev_handle, &temperature, &pressure, &humidity);
+      if (readout != ESP_OK) {
+        StatusUpdateManager::_note_bad_temperature_reading(esp_err_to_name(readout));
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        continue;
+      }
 
       // Update temperature. The reading stays in Celsius; unit and offset are applied on output.
       StatusUpdateManager::_add_temperature_reading(temperature);
@@ -369,7 +401,8 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
         esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_PRESSURE_UPDATE, &current_average_pressure, sizeof(current_average_pressure), pdMS_TO_TICKS(250));
       }
     } else {
-      ESP_LOGW("StatusUpdateManager", "Skipping temperature, humidity and pressure reading as BME280 sensor was not initialized correctly.");
+      // Logged once, and fails safe like any other run of bad readings, rather than a warning every second.
+      StatusUpdateManager::_note_bad_temperature_reading("BME280 sensor was not initialized correctly");
 
       if ((esp_timer_get_time() / 1000) - StatusUpdateManager::_last_bme280_init_try >= 10000) { // More than >= 10 seconds since last init try.
         StatusUpdateManager::_initialize_bme280();

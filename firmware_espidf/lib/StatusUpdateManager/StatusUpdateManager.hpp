@@ -74,11 +74,25 @@ private:
    */
   static void _add_temperature_reading(double celsius);
 
+  /**
+   * Account for a reading that could not be used. Logs when a run of bad readings starts, and after
+   * _TEMPERATURE_FAILURE_READINGS in a row clears the valid flag and posts TEMPERATURE_SENSOR_FAILED.
+   */
+  static void _note_bad_temperature_reading(const char *reason);
+
   // Post AVERAGE_TEMP_UPDATE with the current average in the display unit. The caller says how long it may wait for room in the event queue.
   static void _post_average_temperature(TickType_t timeout);
 
   // Number of readings the first average waits for.
   static constexpr uint8_t _TEMPERATURE_WARMUP_READINGS = 5;
+
+  // Consecutive bad readings (about one a second) after which the sensor counts as failed.
+  static constexpr uint8_t _TEMPERATURE_FAILURE_READINGS = 60;
+
+  // Thermistor divider voltage, in mV, outside which a reading is taken to be the ADC at a rail (a broken or
+  // disconnected thermistor) and not a temperature. About -19 C at the top, and well beyond 60 C at the bottom.
+  static constexpr int _TEMPERATURE_ADC_MIN_MV = 500;
+  static constexpr int _TEMPERATURE_ADC_MAX_MV = 3000;
 
   // Size of the reading buffer, and the number of readings between two averages once warmed up.
   static constexpr uint8_t _TEMPERATURE_AVERAGE_READINGS = 30;
@@ -107,6 +121,9 @@ private:
 
   // How many readings have been read from the temperature sensor (at most the buffer size)
   static inline uint8_t _measured_temperature_total_samples;
+
+  // Bad readings in a row, and whether the failed state has been reported.
+  static inline uint8_t _bad_temperature_readings = 0;
 
   // Readings taken since the last average was published.
   static inline uint8_t _readings_since_average;
