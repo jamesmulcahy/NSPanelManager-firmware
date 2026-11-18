@@ -81,6 +81,22 @@ static void record_callback_duration(int id, int64_t elapsed_us) {
   }
 }
 
+// Lowest free stack mqtt_dispatch has had so far, in bytes (uxTaskGetStackHighWaterMark() is in bytes on
+// ESP-IDF). Only touched on mqtt_dispatch. Logged whenever a callback drives it lower, to find which
+// consumer is the deepest.
+static UBaseType_t dispatch_stack_low = UINT32_MAX;
+
+static void log_dispatch_stack_after(int id, std::string_view topic) {
+  UBaseType_t free_now = uxTaskGetStackHighWaterMark(NULL); // Read before logging: the log call uses stack.
+  if (free_now >= dispatch_stack_low) [[likely]] {
+    return;
+  }
+  UBaseType_t was = dispatch_stack_low;
+  dispatch_stack_low = free_now;
+  ESP_LOGI("MqttManager", "mqtt_dispatch stack low %u B free after '%.*s' (id %d), was %u", static_cast<unsigned>(free_now),
+           static_cast<int>(topic.size()), topic.data(), id, static_cast<unsigned>(was));
+}
+
 // Payloads, the cache and the per-filter bookkeeping. PSRAM, falling back to internal RAM.
 static void *subscriptions_alloc(size_t size) {
   return heap_caps_malloc_prefer(size, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
@@ -140,6 +156,7 @@ static mqtt::Hooks subscriptions_hooks() {
   hooks.log = &subscriptions_log;
   hooks.latency = &log_subscribe_latency;
   hooks.callback_duration = &record_callback_duration;
+  hooks.callback_done = &log_dispatch_stack_after;
   return hooks;
 }
 
@@ -401,6 +418,8 @@ void MqttManager::_send_online_update(OnlineUpdate &online) {
 }
 
 void MqttManager::_task_dispatch(void *param) {
+  dispatch_stack_low = uxTaskGetStackHighWaterMark(NULL);
+  ESP_LOGI("MqttManager", "mqtt_dispatch started, %u B stack free", static_cast<unsigned>(dispatch_stack_low));
   for (;;) {
     // Waits only for work: deliver() never waits on the network, and every callback runs without
     // the subscriptions lock. A notification while deliver() runs brings it straight back.

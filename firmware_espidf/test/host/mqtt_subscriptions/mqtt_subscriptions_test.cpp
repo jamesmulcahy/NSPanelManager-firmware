@@ -52,6 +52,8 @@ static Strings logs;
 static std::vector<mqtt::LatencyReport> latencies;
 static std::vector<std::string> latency_topics;
 static int durations_recorded = 0;
+static int done_recorded = 0;
+static std::string done_topic;
 
 static void advance_ms(int64_t ms) { now_us += ms * 1000; }
 
@@ -79,6 +81,7 @@ static mqtt::Hooks hooks() {
     latency_topics.push_back(std::string(report.topic));
   };
   h.callback_duration = [](int, int64_t) { durations_recorded++; };
+  h.callback_done = [](int, std::string_view topic) { done_recorded++; done_topic = std::string(topic); };
   return h;
 }
 
@@ -227,6 +230,8 @@ static void two_holds_one_topic() {
   CHECK_EQ(rig.core->cached_topics(), (size_t)0);
   CHECK_EQ(rig.core->known("t"), false); // UNSUBACK received: forgotten.
   CHECK_EQ(durations_recorded > 0, true);
+  CHECK_EQ(done_recorded, durations_recorded);
+  CHECK_EQ(done_topic.empty(), false);
 }
 
 static void rehold_within_linger() {
