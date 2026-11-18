@@ -48,6 +48,7 @@ void StatusUpdateManager::init() {
   StatusUpdateManager::_status_report.update_progress = 0;
   StatusUpdateManager::_status_report.rssi = 0;
   StatusUpdateManager::_status_report.temperature = 0;
+  StatusUpdateManager::_status_report.has_temperature = false; // Until the first average exists.
   StatusUpdateManager::_status_report.mac_address = (char *)WiFiManager::mac_string();
   StatusUpdateManager::_status_report.md5_firmware = (char *)ConfigManager::md5_firmware.c_str();
   StatusUpdateManager::_status_report.md5_littlefs = (char *)NSPM_WEB_UI_EMBEDDED;
@@ -134,8 +135,54 @@ void StatusUpdateManager::init() {
   }
 }
 
+double StatusUpdateManager::_to_display_temperature(double celsius) {
+  if (StatusUpdateManager::_measure_temperature_in_fahrenheit) {
+    celsius = (celsius * 1.8) + 32;
+  }
+  return celsius + StatusUpdateManager::_temperature_offset_calibration;
+}
+
 float StatusUpdateManager::current_temperature() {
-  return StatusUpdateManager::_measured_average_temperature.get();
+  return StatusUpdateManager::_to_display_temperature(StatusUpdateManager::_measured_average_temperature.get());
+}
+
+bool StatusUpdateManager::has_valid_temperature() {
+  return StatusUpdateManager::_temperature_valid;
+}
+
+void StatusUpdateManager::_post_average_temperature(TickType_t timeout) {
+  double average = StatusUpdateManager::_to_display_temperature(StatusUpdateManager::_measured_average_temperature.get());
+  esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, &average, sizeof(average), timeout);
+}
+
+void StatusUpdateManager::_add_temperature_reading(double celsius) {
+  StatusUpdateManager::_measured_temperatures[StatusUpdateManager::_measured_temperature_next_index++] = celsius;
+  if (StatusUpdateManager::_measured_temperature_next_index >= StatusUpdateManager::_TEMPERATURE_AVERAGE_READINGS) {
+    StatusUpdateManager::_measured_temperature_next_index = 0;
+  }
+  if (StatusUpdateManager::_measured_temperature_total_samples < StatusUpdateManager::_TEMPERATURE_AVERAGE_READINGS) {
+    StatusUpdateManager::_measured_temperature_total_samples++;
+  }
+  StatusUpdateManager::_readings_since_average++;
+
+  // The first average comes once a few readings exist, then one every _TEMPERATURE_AVERAGE_READINGS readings to skip unnecessary events.
+  bool first_average_due = !StatusUpdateManager::_temperature_valid && StatusUpdateManager::_temperature_unit_known && StatusUpdateManager::_measured_temperature_total_samples >= StatusUpdateManager::_TEMPERATURE_WARMUP_READINGS;
+  bool regular_average_due = StatusUpdateManager::_temperature_valid && StatusUpdateManager::_readings_since_average >= StatusUpdateManager::_TEMPERATURE_AVERAGE_READINGS;
+  if (!first_average_due && !regular_average_due) {
+    return;
+  }
+
+  double average = 0;
+  for (int i = 0; i < StatusUpdateManager::_measured_temperature_total_samples; i++) {
+    average += StatusUpdateManager::_measured_temperatures[i] / StatusUpdateManager::_measured_temperature_total_samples;
+  }
+  StatusUpdateManager::_measured_average_temperature.set(average);
+  if (first_average_due) {
+    ESP_LOGI("StatusUpdateManager", "Temperature: first average %.1f from %d readings.", StatusUpdateManager::_to_display_temperature(average), (int)StatusUpdateManager::_measured_temperature_total_samples);
+  }
+  StatusUpdateManager::_temperature_valid = true;
+  StatusUpdateManager::_readings_since_average = 0;
+  StatusUpdateManager::_post_average_temperature(pdMS_TO_TICKS(250));
 }
 
 void StatusUpdateManager::reboot() {
@@ -182,7 +229,8 @@ void StatusUpdateManager::_send_status_update(void *arg) {
     }
     StatusUpdateManager::_status_report.lvgl_theme = (char *)StatusUpdateManager::_lvgl_theme_text.c_str();
     StatusUpdateManager::_status_report.lvgl_background = (char *)StatusUpdateManager::_lvgl_background_text.c_str();
-    StatusUpdateManager::_status_report.temperature = StatusUpdateManager::_measured_average_temperature.get();
+    StatusUpdateManager::_status_report.has_temperature = StatusUpdateManager::_temperature_valid;
+    StatusUpdateManager::_status_report.temperature = StatusUpdateManager::_temperature_valid ? StatusUpdateManager::current_temperature() : 0;
 #if defined(BOARD_CUSTOM)
     StatusUpdateManager::_status_report.humidity = StatusUpdateManager::_measured_average_humidity.get();
     StatusUpdateManager::_status_report.pressure = StatusUpdateManager::_measured_average_pressure.get();
@@ -261,29 +309,7 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
     steinhart = 1.0 / steinhart;                     // Invert
     double current_temperature = steinhart - 273.15; // convert Kelvin to *C
 
-    if (StatusUpdateManager::_measure_temperature_in_fahrenheit) {
-      current_temperature = (current_temperature * 1.8) + 32;
-    }
-
-    current_temperature += StatusUpdateManager::_temperature_offset_calibration;
-
-    StatusUpdateManager::_measured_temperatures[StatusUpdateManager::_measured_temperature_next_index++] = current_temperature;
-    // We only have space for 30 samples.
-    if (StatusUpdateManager::_measured_temperature_total_samples < 30) {
-      StatusUpdateManager::_measured_temperature_total_samples++;
-    }
-
-    if (StatusUpdateManager::_measured_temperature_next_index >= 30) {
-      StatusUpdateManager::_measured_temperature_next_index = 0;
-      // Only calculate and send event ever 30 seconds to skip unnecessary events
-
-      double current_average_temperature = 0;
-      for (int i = 0; i < StatusUpdateManager::_measured_temperature_total_samples; i++) {
-        current_average_temperature += StatusUpdateManager::_measured_temperatures[i] / StatusUpdateManager::_measured_temperature_total_samples;
-      }
-      StatusUpdateManager::_measured_average_temperature.set(current_average_temperature);
-      esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, &current_average_temperature, sizeof(current_average_temperature), pdMS_TO_TICKS(250));
-    }
+    StatusUpdateManager::_add_temperature_reading(current_temperature);
 
     vTaskDelay(pdMS_TO_TICKS(1000)); // Read temp again in 1 second
   }
@@ -302,29 +328,8 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
 
       ESP_ERROR_CHECK(bmx280_readoutFloat(StatusUpdateManager::_bme280_dev_handle, &temperature, &pressure, &humidity));
 
-      // Update temperature
-      temperature += StatusUpdateManager::_temperature_offset_calibration;
-      if (StatusUpdateManager::_measure_temperature_in_fahrenheit) {
-        temperature = (temperature * 1.8) + 32;
-      }
-
-      StatusUpdateManager::_measured_temperatures[StatusUpdateManager::_measured_temperature_next_index++] = temperature;
-      // We only have space for 30 samples.
-      if (StatusUpdateManager::_measured_temperature_total_samples < 30) {
-        StatusUpdateManager::_measured_temperature_total_samples++;
-      }
-
-      if (StatusUpdateManager::_measured_temperature_next_index >= 30) {
-        StatusUpdateManager::_measured_temperature_next_index = 0;
-        // Only calculate and send event ever 30 seconds to skip unnecessary events
-
-        double current_average_temperature = 0;
-        for (int i = 0; i < StatusUpdateManager::_measured_temperature_total_samples; i++) {
-          current_average_temperature += StatusUpdateManager::_measured_temperatures[i] / StatusUpdateManager::_measured_temperature_total_samples;
-        }
-        StatusUpdateManager::_measured_average_temperature.set(current_average_temperature);
-        esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, &current_average_temperature, sizeof(current_average_temperature), pdMS_TO_TICKS(250));
-      }
+      // Update temperature. The reading stays in Celsius; unit and offset are applied on output.
+      StatusUpdateManager::_add_temperature_reading(temperature);
 
       // Update humidity
       StatusUpdateManager::_measured_humidity[StatusUpdateManager::_measured_humidity_next_index++] = humidity;
@@ -450,9 +455,16 @@ void StatusUpdateManager::_update_from_config() {
   if (NSPM_ConfigManager::get_config(&config) == ESP_OK) {
     StatusUpdateManager::_measure_temperature_in_fahrenheit = config->use_fahrenheit;
     StatusUpdateManager::_temperature_offset_calibration = (config->temperature_calibration / 10.0);
+    // A new unit or offset changes what the average reads as. Tell the listeners now rather than at the next average.
+    if (StatusUpdateManager::_temperature_valid) {
+      ESP_LOGI("StatusUpdateManager", "Temperature: unit or offset changed, average is now %.1f.", StatusUpdateManager::current_temperature());
+      // Don't wait: this runs on the default event loop, which is the queue being posted to.
+      StatusUpdateManager::_post_average_temperature(0);
+    }
   } else {
     ESP_LOGE("StatusUpdateManager", "Failed to get config to determine if we should measure temperature in C or F. Will assume C.");
   }
+  StatusUpdateManager::_temperature_unit_known = true;
 }
 
 void StatusUpdateManager::_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {

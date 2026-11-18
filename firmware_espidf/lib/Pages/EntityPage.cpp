@@ -519,7 +519,11 @@ void EntityPage::_update_display_thermostat() {
     chars_written = snprintf(buf, sizeof(buf), "%.1f°", state->thermostat->current_temperature);
   } else {
     ESP_LOGI("EntityPage", "Thermostat does not have a valid temperature for location. Will use internal sensor.");
-    chars_written = snprintf(buf, sizeof(buf), "%.1f°", StatusUpdateManager::current_temperature());
+    if (StatusUpdateManager::has_valid_temperature()) {
+      chars_written = snprintf(buf, sizeof(buf), "%.1f°", StatusUpdateManager::current_temperature());
+    } else {
+      chars_written = snprintf(buf, sizeof(buf), "--");
+    }
   }
 
   if (chars_written > 0) {
@@ -950,7 +954,13 @@ void EntityPage::_lvgl_render_thermostat() {
   const NSPanelEntityState__Thermostat *thermostat = state->thermostat;
   ThermostatState view;
   view.name = LvglText::utf8(thermostat->name);
-  view.current = temperature_text(thermostat->has_current_temperature ? thermostat->current_temperature : StatusUpdateManager::current_temperature());
+  if (thermostat->has_current_temperature) {
+    view.current = temperature_text(thermostat->current_temperature);
+  } else if (StatusUpdateManager::has_valid_temperature()) {
+    view.current = temperature_text(StatusUpdateManager::current_temperature());
+  } else {
+    view.current = "--"; // The internal sensor has no reading yet.
+  }
   // tempup/tempdown replace current_value/current_icon under the spinlock: copy them under it too,
   // into fixed buffers (no allocation with interrupts off).
   char names[ThermostatState::MAX_OPTIONS][32] = {}, values[ThermostatState::MAX_OPTIONS][32] = {};
