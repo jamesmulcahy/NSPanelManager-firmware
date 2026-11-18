@@ -50,7 +50,7 @@ esp_err_t LvglRenderer::start() {
     draw_buffer = static_cast<uint8_t *>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_SPIRAM));
   }
   LvglRenderer::_text_mutex = xSemaphoreCreateMutex();
-  LvglRenderer::_touches = xQueueCreate(16, sizeof(Touch));
+  LvglRenderer::_touches = xQueueCreate(TOUCH_QUEUE_LENGTH, sizeof(Touch));
   LvglRenderer::_work = xQueueCreate(32, sizeof(std::function<void()> *));
   if (draw_buffer == NULL || LvglRenderer::_text_mutex == NULL || LvglRenderer::_touches == NULL || LvglRenderer::_work == NULL) {
     ESP_LOGE(TAG, "Failed to allocate LVGL's buffers.");
@@ -126,10 +126,28 @@ void LvglRenderer::inject_touch(bool down, uint16_t x, uint16_t y) {
     return;
   }
   static bool was_down = false;
+  static uint16_t last_x = UINT16_MAX, last_y = UINT16_MAX;
+  bool edge = down != was_down;
+  if (!edge) {
+    // The touch controller reports a move every few milliseconds while a finger is down, most of them
+    // at the same point. While the GUI task is busy redrawing, those moves would fill the queue and the
+    // release behind them would be lost, so the tap never clicks. Skip moves that go nowhere, and keep
+    // the last few slots for presses and releases.
+    if (x == last_x && y == last_y) {
+      return;
+    }
+    if (uxQueueSpacesAvailable(LvglRenderer::_touches) <= TOUCH_EDGE_RESERVE) {
+      return; // The next move or the release carries the position on.
+    }
+  }
   Touch touch = {x, y, down};
-  // A full queue drops moves quietly; an edge lost is worth a warning.
-  if (xQueueSend(LvglRenderer::_touches, &touch, 0) != pdTRUE && down != was_down) {
-    ESP_LOGW(TAG, "Touch queue full, dropped a %s.", down ? "press" : "release");
+  if (xQueueSend(LvglRenderer::_touches, &touch, 0) != pdTRUE) {
+    if (edge) {
+      ESP_LOGW(TAG, "Touch queue full, dropped a %s.", down ? "press" : "release");
+    }
+  } else {
+    last_x = x;
+    last_y = y;
   }
   was_down = down;
   LvglRenderer::notify();
