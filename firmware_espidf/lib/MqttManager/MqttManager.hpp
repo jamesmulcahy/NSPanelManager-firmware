@@ -58,6 +58,15 @@ public:
   static esp_err_t publish(std::string topic, const char *data, size_t data_length, bool retain);
 
   /**
+   * @brief Be told when the broker connection comes up or goes down. Called on the MQTT client task, after
+   * MqttManager has dealt with the event itself, with true for a connect and false for a disconnect. Timed as
+   * metrics_id (a PanelMetrics::MqttHandler) like a handler. Unlike a message callback it runs on the MQTT task, so
+   * it must be quick and must not wait on MQTT. Up to four listeners; register at start-up, not from a callback.
+   * @return false if the table is full.
+   */
+  static bool add_connection_listener(void (*listener)(bool connected), int metrics_id);
+
+  /**
    * @brief Register Handler for MQTT events, timed as Id (a PanelMetrics::MqttHandler) in
    * nspanel_mqtt_handler_duration_seconds.
    * @param event_id: The MQTT event id to subscribe to.
@@ -93,6 +102,14 @@ private:
   // In MqttManager.cpp, so this header does not need PanelMetrics.hpp (PlatformIO's LDF does not
   // follow includes made from another library's headers).
   static void _record_handler_duration(int id, int64_t elapsed_us);
+
+  struct ConnectionListener {
+    void (*listener)(bool connected);
+    int metrics_id;
+  };
+  static inline ConnectionListener _connection_listeners[4];
+  static inline std::atomic<size_t> _connection_listener_count = 0;
+  static void _notify_connection_listeners(bool connected);
 
   /**
    * @brief Handle MQTT events.

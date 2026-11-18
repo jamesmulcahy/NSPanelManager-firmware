@@ -1,6 +1,7 @@
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <iterator>
 #include <EspMqttTransport.hpp>
 #include <MqttSubscriptions.hpp>
 #include <PanelMetrics.hpp>
@@ -327,6 +328,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
     subscriptions.on_connected();
     // on_connected() wakes mqtt_subs too, but the online status must not depend on that.
     wake_subscriptions();
+    MqttManager::_notify_connection_listeners(true);
     break;
 
   case MQTT_EVENT_SUBSCRIBED:
@@ -360,6 +362,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
     MqttManager::_online_update_generation++;
     ESP_LOGW("MqttManager", "Lost connection to MQTT server. Online status generation %lu.", MqttManager::_online_update_generation.load());
     subscriptions.on_disconnected();
+    MqttManager::_notify_connection_listeners(false);
     break;
 
   case MQTT_EVENT_ERROR:
@@ -378,6 +381,25 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
 
   default:
     break;
+  }
+}
+
+bool MqttManager::add_connection_listener(void (*listener)(bool connected), int metrics_id) {
+  size_t count = MqttManager::_connection_listener_count.load();
+  if (count >= std::size(MqttManager::_connection_listeners)) {
+    return false;
+  }
+  MqttManager::_connection_listeners[count] = {listener, metrics_id};
+  MqttManager::_connection_listener_count.store(count + 1);
+  return true;
+}
+
+void MqttManager::_notify_connection_listeners(bool connected) {
+  size_t count = MqttManager::_connection_listener_count.load();
+  for (size_t i = 0; i < count; i++) {
+    int64_t start_us = esp_timer_get_time();
+    MqttManager::_connection_listeners[i].listener(connected);
+    MqttManager::_record_handler_duration(MqttManager::_connection_listeners[i].metrics_id, esp_timer_get_time() - start_us);
   }
 }
 
