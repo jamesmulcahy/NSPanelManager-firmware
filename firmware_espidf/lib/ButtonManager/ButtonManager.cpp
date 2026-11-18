@@ -3,11 +3,13 @@
 #include <ConfigManager.hpp>
 #include <InterfaceManager.hpp>
 #include <MqttManager.hpp>
+#include <MqttSubscriptions.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <StatusUpdateManager_events.hpp>
 #include <WiFiManager.hpp>
+#include <algorithm>
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -73,10 +75,12 @@ void ButtonManager::init() {
 
 void ButtonManager::init_mqtt() {
   // Setup and subscribe to MQTT
-  MqttManager::register_handler<&ButtonManager::_mqtt_event_handler, PanelMetrics::HANDLER_BUTTON_MANAGER>(MQTT_EVENT_ANY, NULL);
+  MqttManager::add_connection_listener(&ButtonManager::_mqtt_connection_listener, PanelMetrics::HANDLER_BUTTON_MANAGER);
 
-  MqttManager::subscribe(ButtonManager::_relay1_cmd_topic);
-  MqttManager::subscribe(ButtonManager::_relay2_cmd_topic);
+  // COMMAND: every message is delivered once, in order, and never replayed from the cache. "2" is a toggle, so
+  // two of them must both count. The context is the relay's number.
+  ButtonManager::_relay1_cmd_subscription = mqtt::subscribe(ButtonManager::_relay1_cmd_topic, mqtt::Kind::COMMAND, &ButtonManager::_mqtt_relay_command_handler, reinterpret_cast<void *>(1), PanelMetrics::HANDLER_BUTTON_MANAGER);
+  ButtonManager::_relay2_cmd_subscription = mqtt::subscribe(ButtonManager::_relay2_cmd_topic, mqtt::Kind::COMMAND, &ButtonManager::_mqtt_relay_command_handler, reinterpret_cast<void *>(2), PanelMetrics::HANDLER_BUTTON_MANAGER);
 }
 
 void ButtonManager::_button1_key_down(void) {
@@ -331,68 +335,52 @@ void ButtonManager::_handle_mqtt_relay_group_topics() {
     return;
   }
 
-  // Unsubscribe from any removed relay1 group
-  for (int i = 0; i < current_relay1_group_ids.size(); i++) {
-    bool group_found = false;
-    for (int j = 0; j < new_relay1_group_ids.size(); j++) {
-      if (new_relay1_group_ids[j] == current_relay1_group_ids[i]) {
-        group_found = true;
-        break;
-      }
-    }
-
-    if (!group_found) {
-      ESP_LOGI("ButtonManager", "Removing relay group %ld from relay1 binding.", current_relay1_group_ids[i]);
-      std::string relay_group_topic = "nspanel/mqttmanager_";
-      relay_group_topic.append(NSPM_ConfigManager::get_manager_address());
-      relay_group_topic.append("/relay_groups/");
-      relay_group_topic.append(std::to_string(current_relay1_group_ids[i]));
-      relay_group_topic.append("/state");
-      MqttManager::unsubscribe(relay_group_topic);
-    }
-  }
-
-  // Unsubscribe from any removed relay2 group
-  for (int i = 0; i < current_relay2_group_ids.size(); i++) {
-    bool group_found = false;
-    for (int j = 0; j < new_relay2_group_ids.size(); j++) {
-      if (new_relay2_group_ids[j] == current_relay2_group_ids[i]) {
-        group_found = true;
-        break;
-      }
-    }
-
-    if (!group_found) {
-      ESP_LOGI("ButtonManager", "Removing relay group %ld from relay2 binding.", current_relay2_group_ids[i]);
-      std::string relay_group_topic = "nspanel/mqttmanager_";
-      relay_group_topic.append(NSPM_ConfigManager::get_manager_address());
-      relay_group_topic.append("/relay_groups/");
-      relay_group_topic.append(std::to_string(current_relay2_group_ids[i]));
-      relay_group_topic.append("/state");
-      MqttManager::unsubscribe(relay_group_topic);
-    }
-  }
-
-  // Subscribe to any added relay1 group
-  for (int i = 0; i < new_relay1_group_ids.size(); i++) {
-    ESP_LOGI("ButtonManager", "Adding relay1 to relay group ID %ld.", new_relay1_group_ids[i]);
+  auto group_topic = [](int32_t group_id) {
     std::string relay_group_topic = "nspanel/mqttmanager_";
     relay_group_topic.append(NSPM_ConfigManager::get_manager_address());
     relay_group_topic.append("/relay_groups/");
-    relay_group_topic.append(std::to_string(new_relay1_group_ids[i]));
+    relay_group_topic.append(std::to_string(group_id));
     relay_group_topic.append("/state");
-    MqttManager::subscribe(relay_group_topic);
+    return relay_group_topic;
+  };
+
+  for (int32_t group_id : current_relay1_group_ids) {
+    if (std::find(new_relay1_group_ids.begin(), new_relay1_group_ids.end(), group_id) == new_relay1_group_ids.end()) {
+      ESP_LOGI("ButtonManager", "Removing relay group %ld from relay1 binding.", group_id);
+    }
+  }
+  for (int32_t group_id : current_relay2_group_ids) {
+    if (std::find(new_relay2_group_ids.begin(), new_relay2_group_ids.end(), group_id) == new_relay2_group_ids.end()) {
+      ESP_LOGI("ButtonManager", "Removing relay group %ld from relay2 binding.", group_id);
+    }
   }
 
-  // Subscribe to any added relay2 group
-  for (int i = 0; i < new_relay2_group_ids.size(); i++) {
-    ESP_LOGI("ButtonManager", "Adding relay2 to relay group ID %ld.", new_relay2_group_ids[i]);
-    std::string relay_group_topic = "nspanel/mqttmanager_";
-    relay_group_topic.append(NSPM_ConfigManager::get_manager_address());
-    relay_group_topic.append("/relay_groups/");
-    relay_group_topic.append(std::to_string(new_relay2_group_ids[i]));
-    relay_group_topic.append("/state");
-    MqttManager::subscribe(relay_group_topic);
+  // The topics the groups need now. A group in both lists is one topic, held once.
+  std::vector<std::string> wanted;
+  for (int32_t group_id : new_relay1_group_ids) {
+    ESP_LOGI("ButtonManager", "Adding relay1 to relay group ID %ld.", group_id);
+    wanted.push_back(group_topic(group_id));
+  }
+  for (int32_t group_id : new_relay2_group_ids) {
+    ESP_LOGI("ButtonManager", "Adding relay2 to relay group ID %ld.", group_id);
+    wanted.push_back(group_topic(group_id));
+  }
+
+  // Release the holds that are no longer wanted. The others are kept as they are: replacing a hold would only get
+  // its cached value delivered again.
+  for (auto it = ButtonManager::_relay_group_subscriptions.begin(); it != ButtonManager::_relay_group_subscriptions.end();) {
+    if (std::find(wanted.begin(), wanted.end(), it->first) == wanted.end()) {
+      it = ButtonManager::_relay_group_subscriptions.erase(it); // Releases the hold.
+    } else {
+      ++it;
+    }
+  }
+  // STATE: a group's state is absolute, and only the newest one matters.
+  for (const std::string &topic : wanted) {
+    mqtt::Subscription &subscription = ButtonManager::_relay_group_subscriptions[topic];
+    if (!subscription.active()) {
+      subscription = mqtt::subscribe(topic, mqtt::Kind::STATE, &ButtonManager::_mqtt_relay_group_handler, NULL, PanelMetrics::HANDLER_BUTTON_MANAGER);
+    }
   }
 }
 
@@ -568,118 +556,129 @@ void ButtonManager::_new_temperature_event(void *arg, esp_event_base_t event_bas
   }
 }
 
-void ButtonManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  if (event_id == MQTT_EVENT_DATA) {
-    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    if (event->data_len == 0) {
-      return;
-    }
-
-    std::string topic_string = std::string(event->topic, event->topic_len);
-    std::string data = std::string(event->data, event->data_len);
-
-    if (topic_string.compare(ButtonManager::_relay1_cmd_topic) == 0) {
-      if (data.compare("0") == 0) {
-        if (ButtonManager::_get_relay_state(1) == true) {
-          ButtonManager::_set_relay_state(1, false, true);
-        }
-      } else if (data.compare("1") == 0) {
-        if (ButtonManager::_get_relay_state(1) == false) {
-          ButtonManager::_set_relay_state(1, true, true);
-        }
-      } else if (data.compare("2") == 0) {
-        ButtonManager::_set_relay_state(1, !ButtonManager::_get_relay_state(1), true);
-      } else {
-        ESP_LOGE("ButtonManager", "Got command to set relay1 state but command data was not recognized.");
-      }
-    } else if (topic_string.compare(ButtonManager::_relay2_cmd_topic) == 0) {
-      if (data.compare("0") == 0) {
-        if (ButtonManager::_get_relay_state(2) == true) {
-          ButtonManager::_set_relay_state(2, false, true);
-        }
-      } else if (data.compare("1") == 0) {
-        if (ButtonManager::_get_relay_state(2) == false) {
-          ButtonManager::_set_relay_state(2, true, true);
-        }
-      } else if (data.compare("2") == 0) {
-        ButtonManager::_set_relay_state(2, !ButtonManager::_relay2_current_state, true);
-      } else {
-        ESP_LOGE("ButtonManager", "Got command to set relay2 state but command data was not recognized.");
-      }
-    }
-
-    // Check if it is a relay1 bound group
-    std::shared_ptr<NSPanelConfig> config = ButtonManager::_current_config;
-    if (config != nullptr) [[likely]] {
-      std::string relay_group_base_topic = "nspanel/mqttmanager_";
-      relay_group_base_topic.append(NSPM_ConfigManager::get_manager_address());
-      relay_group_base_topic.append("/relay_groups/");
-      std::string relay_group_topic;
-
-      for (int i = 0; i < config->n_relay1_relay_group; i++) {
-        relay_group_topic = relay_group_base_topic;
-        relay_group_topic.append(std::to_string(config->relay1_relay_group[i]));
-        relay_group_topic.append("/state");
-
-        if (topic_string.compare(relay_group_topic) == 0) {
-          if (data.compare("0") == 0) {
-            if (ButtonManager::_get_relay_state(1)) { // Relay 1 is on, turn off.
-              ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state OFF.", config->relay1_relay_group[i]);
-              if (ButtonManager::_get_relay_state(1) == true) {
-                ButtonManager::_set_relay_state(1, false, true);
-              }
-            }
-          } else if (data.compare("1") == 0) {
-            if (!ButtonManager::_get_relay_state(1)) { // Relay 1 is off, turn off.
-              ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state ON.", config->relay1_relay_group[i]);
-              if (ButtonManager::_get_relay_state(1) == false) {
-                ButtonManager::_set_relay_state(1, true, true);
-              }
-            }
-          } else {
-            ESP_LOGE("ButtonManager", "Found matching relay group topic but failed to determine state.");
-          }
-        }
-        break;
-      }
-
-      // Check if it is a relay2 bound group
-      for (int i = 0; i < config->n_relay2_relay_group; i++) {
-        relay_group_topic = relay_group_base_topic;
-        relay_group_topic.append(std::to_string(config->relay2_relay_group[i]));
-        relay_group_topic.append("/state");
-
-        if (topic_string.compare(relay_group_topic) == 0) {
-          if (data.compare("0") == 0) {
-            if (ButtonManager::_get_relay_state(2)) { // Relay 2 is on, turn off.
-              ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state OFF.", config->relay2_relay_group[i]);
-              if (ButtonManager::_get_relay_state(2) == true) {
-                ButtonManager::_set_relay_state(2, false, true);
-              }
-            }
-          } else if (data.compare("1") == 0) {
-            if (!ButtonManager::_get_relay_state(2)) { // Relay 2 is off, turn off.
-              ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state ON.", config->relay2_relay_group[i]);
-              if (ButtonManager::_get_relay_state(2) == false) {
-                ButtonManager::_set_relay_state(2, true, true);
-              }
-            }
-          } else {
-            ESP_LOGE("ButtonManager", "Found matching relay group topic but failed to determine state.");
-          }
-        }
-        break;
-      }
-    } else {
-      ESP_LOGW("ButtonManager", "No config currently loaded/set. Unable to determine if received message was from a relay group. Will not change any relay state.");
-    }
-  } else if (event_id == MQTT_EVENT_CONNECTED) {
-    // MqttManager re-subscribes the relay and relay group topics after a reconnect.
-    // Publish current state to relay state topics
-    bool state = ButtonManager::_get_relay_state(1);
-    MqttManager::publish(ButtonManager::_relay1_state_topic, state ? "1" : "0", strlen(state ? "1" : "0"), true);
-
-    state = ButtonManager::_get_relay_state(2);
-    MqttManager::publish(ButtonManager::_relay2_state_topic, state ? "1" : "0", strlen(state ? "1" : "0"), true);
+void ButtonManager::_mqtt_relay_command_handler(const mqtt::Message &message, void *context) {
+  if (message.payload.empty()) {
+    return;
   }
+
+  int relay = static_cast<int>(reinterpret_cast<uintptr_t>(context));
+  std::string data(reinterpret_cast<const char *>(message.payload.data()), message.payload.size());
+
+  if (relay == 1) {
+    if (data.compare("0") == 0) {
+      if (ButtonManager::_get_relay_state(1) == true) {
+        ButtonManager::_set_relay_state(1, false, true);
+      }
+    } else if (data.compare("1") == 0) {
+      if (ButtonManager::_get_relay_state(1) == false) {
+        ButtonManager::_set_relay_state(1, true, true);
+      }
+    } else if (data.compare("2") == 0) {
+      ButtonManager::_set_relay_state(1, !ButtonManager::_get_relay_state(1), true);
+    } else {
+      ESP_LOGE("ButtonManager", "Got command to set relay1 state but command data was not recognized.");
+    }
+  } else if (relay == 2) {
+    if (data.compare("0") == 0) {
+      if (ButtonManager::_get_relay_state(2) == true) {
+        ButtonManager::_set_relay_state(2, false, true);
+      }
+    } else if (data.compare("1") == 0) {
+      if (ButtonManager::_get_relay_state(2) == false) {
+        ButtonManager::_set_relay_state(2, true, true);
+      }
+    } else if (data.compare("2") == 0) {
+      ButtonManager::_set_relay_state(2, !ButtonManager::_relay2_current_state, true);
+    } else {
+      ESP_LOGE("ButtonManager", "Got command to set relay2 state but command data was not recognized.");
+    }
+  }
+}
+
+void ButtonManager::_mqtt_relay_group_handler(const mqtt::Message &message, void *context) {
+  if (message.payload.empty()) {
+    return;
+  }
+
+  std::string topic_string(message.topic);
+  std::string data(reinterpret_cast<const char *>(message.payload.data()), message.payload.size());
+
+  // Check if it is a relay1 bound group
+  std::shared_ptr<NSPanelConfig> config = ButtonManager::_current_config;
+  if (config != nullptr) [[likely]] {
+    std::string relay_group_base_topic = "nspanel/mqttmanager_";
+    relay_group_base_topic.append(NSPM_ConfigManager::get_manager_address());
+    relay_group_base_topic.append("/relay_groups/");
+    std::string relay_group_topic;
+
+    for (int i = 0; i < config->n_relay1_relay_group; i++) {
+      relay_group_topic = relay_group_base_topic;
+      relay_group_topic.append(std::to_string(config->relay1_relay_group[i]));
+      relay_group_topic.append("/state");
+
+      if (topic_string.compare(relay_group_topic) == 0) {
+        if (data.compare("0") == 0) {
+          if (ButtonManager::_get_relay_state(1)) { // Relay 1 is on, turn off.
+            ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state OFF.", config->relay1_relay_group[i]);
+            if (ButtonManager::_get_relay_state(1) == true) {
+              ButtonManager::_set_relay_state(1, false, true);
+            }
+          }
+        } else if (data.compare("1") == 0) {
+          if (!ButtonManager::_get_relay_state(1)) { // Relay 1 is off, turn off.
+            ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state ON.", config->relay1_relay_group[i]);
+            if (ButtonManager::_get_relay_state(1) == false) {
+              ButtonManager::_set_relay_state(1, true, true);
+            }
+          }
+        } else {
+          ESP_LOGE("ButtonManager", "Found matching relay group topic but failed to determine state.");
+        }
+      }
+      break;
+    }
+
+    // Check if it is a relay2 bound group
+    for (int i = 0; i < config->n_relay2_relay_group; i++) {
+      relay_group_topic = relay_group_base_topic;
+      relay_group_topic.append(std::to_string(config->relay2_relay_group[i]));
+      relay_group_topic.append("/state");
+
+      if (topic_string.compare(relay_group_topic) == 0) {
+        if (data.compare("0") == 0) {
+          if (ButtonManager::_get_relay_state(2)) { // Relay 2 is on, turn off.
+            ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state OFF.", config->relay2_relay_group[i]);
+            if (ButtonManager::_get_relay_state(2) == true) {
+              ButtonManager::_set_relay_state(2, false, true);
+            }
+          }
+        } else if (data.compare("1") == 0) {
+          if (!ButtonManager::_get_relay_state(2)) { // Relay 2 is off, turn off.
+            ESP_LOGD("ButtonManager", "Received update from relay group %ld, new state ON.", config->relay2_relay_group[i]);
+            if (ButtonManager::_get_relay_state(2) == false) {
+              ButtonManager::_set_relay_state(2, true, true);
+            }
+          }
+        } else {
+          ESP_LOGE("ButtonManager", "Found matching relay group topic but failed to determine state.");
+        }
+      }
+      break;
+    }
+  } else {
+    ESP_LOGW("ButtonManager", "No config currently loaded/set. Unable to determine if received message was from a relay group. Will not change any relay state.");
+  }
+}
+
+void ButtonManager::_mqtt_connection_listener(bool connected) {
+  if (!connected) {
+    return;
+  }
+  // Runs on the MQTT client task. MqttManager re-subscribes the relay and relay group topics after a reconnect.
+  // Publish current state to relay state topics
+  bool state = ButtonManager::_get_relay_state(1);
+  MqttManager::publish(ButtonManager::_relay1_state_topic, state ? "1" : "0", strlen(state ? "1" : "0"), true);
+
+  state = ButtonManager::_get_relay_state(2);
+  MqttManager::publish(ButtonManager::_relay2_state_topic, state ? "1" : "0", strlen(state ? "1" : "0"), true);
 }

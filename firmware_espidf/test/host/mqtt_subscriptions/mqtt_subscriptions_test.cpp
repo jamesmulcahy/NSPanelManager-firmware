@@ -345,6 +345,25 @@ static void relay_group_echo_after_reconnect() {
   CHECK_EQ(relay.payloads(), Strings({"1", "0"}));
 }
 
+static void relay_toggle_command_never_coalesced() {
+  // ButtonManager's relayN_cmd: "2" is a toggle. Two in a row must both be delivered, and one the broker holds
+  // retained is delivered on every reconnect as the wire message it is, never as a cached value.
+  Rig rig;
+  Consumer relay;
+  mqtt::Subscription h = rig.hold("relayN_cmd", relay, mqtt::Kind::COMMAND);
+  rig.run();
+  rig.broker->publish("relayN_cmd", "2", false);
+  rig.broker->publish("relayN_cmd", "2", false);
+  rig.core->deliver();
+  CHECK_EQ(relay.payloads(), Strings({"2", "2"}));
+
+  // A second holder of the same topic gets nothing from before it held.
+  Consumer late;
+  mqtt::Subscription h2 = rig.hold("relayN_cmd", late, mqtt::Kind::COMMAND);
+  rig.core->deliver();
+  CHECK_EQ(late.payloads(), Strings({}));
+}
+
 static void retained_clear() {
   Rig rig;
   Consumer a, b;
@@ -895,6 +914,7 @@ int main() {
   move_assign_releases_old();
   reconnect();
   relay_group_echo_after_reconnect();
+  relay_toggle_command_never_coalesced();
   retained_clear();
   wildcards();
   coalescing_versus_command_order();

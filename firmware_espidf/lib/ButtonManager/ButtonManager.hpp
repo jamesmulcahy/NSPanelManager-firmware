@@ -2,12 +2,14 @@
 #define BUTTON_MANAGER_HPP
 
 #include <InterruptButton.h>
+#include <MqttSubscriptions.hpp>
 #include <atomic>
 #include <driver/gpio.h>
 #include <esp_event.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <map>
 #include <memory>
 #include <protobuf_nspanel.pb-c.h>
 #include <string>
@@ -81,9 +83,27 @@ private:
   static void _temperature_sensor_failed_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
-   * @brief Handle data received over MQTT
+   * @brief A command on relayN_cmd ("0", "1", or "2" to toggle); the context is the relay's number.
+   * Runs on mqtt_dispatch.
    */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _mqtt_relay_command_handler(const mqtt::Message &message, void *context);
+
+  /**
+   * @brief The state another panel published for a relay group this panel's relays are bound to.
+   * Runs on mqtt_dispatch.
+   */
+  static void _mqtt_relay_group_handler(const mqtt::Message &message, void *context);
+
+  /**
+   * @brief MQTT connect: publish the relays' state. Runs on the MQTT client task, see MqttManager::add_connection_listener().
+   */
+  static void _mqtt_connection_listener(bool connected);
+
+  // COMMAND holds for relay1_cmd and relay2_cmd, and a STATE hold per relay group topic (by topic).
+  // _relay_group_subscriptions is only touched from the default event loop task and init_mqtt().
+  static inline mqtt::Subscription _relay1_cmd_subscription;
+  static inline mqtt::Subscription _relay2_cmd_subscription;
+  static inline std::map<std::string, mqtt::Subscription> _relay_group_subscriptions;
 
   // Settings
   static inline std::atomic<bool> _reverse_relays = false;      // Should relays be reversed/flipped?
