@@ -1,5 +1,7 @@
 #pragma once
 
+#include <MqttSubscriptions.hpp>
+#include <atomic>
 #include <esp_err.h>
 #include <esp_event_base.h>
 #include <esp_task.h>
@@ -70,9 +72,24 @@ public:
 
 private:
   /**
-   * @brief MQTT events, such as "reload config" and "room config" updates.
+   * @brief The panel's command topic: register_accept (other commands on it are for UpdateManager). Runs on mqtt_dispatch.
    */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _mqtt_command_handler(const mqtt::Message &message, void *context);
+
+  /**
+   * @brief New config from the manager. Runs on mqtt_dispatch, where the protobuf is decoded.
+   */
+  static void _mqtt_config_handler(const mqtt::Message &message, void *context);
+
+  /**
+   * @brief The manager's online/offline status. Runs on mqtt_dispatch.
+   */
+  static void _mqtt_manager_status_handler(const mqtt::Message &message, void *context);
+
+  /**
+   * @brief MQTT connect and disconnect. Runs on the MQTT client task, see MqttManager::add_connection_listener().
+   */
+  static void _mqtt_connection_listener(bool connected);
 
   /**
    * @brief sending request_requests to any manager.
@@ -155,13 +172,25 @@ private:
   static inline uint16_t _manager_port;
 
   // Last known MQTT manager status state
-  static inline bool _manager_online = false;
+  static inline std::atomic<bool> _manager_online = false;
+  // What _manager_online was when the connection dropped, put back on reconnect (see _mqtt_connection_listener()).
+  // Only accessed from the MQTT client task.
+  static inline bool _manager_online_before_disconnect = false;
 
   // Topic for manager status message
   static inline std::string _mqtt_manager_status_topic;
 
   // MQTT topic used from manager to send new config data to panel
   static inline std::string _mqtt_config_topic;
+
+  // The holds, and for the two that move, a generation their deliveries carry as context so one from a replaced
+  // hold is dropped. _config_subscription_topic is the topic that hold was taken for.
+  static inline mqtt::Subscription _command_subscription;
+  static inline mqtt::Subscription _config_subscription;
+  static inline std::string _config_subscription_topic;
+  static inline std::atomic<uint32_t> _config_generation = 0;
+  static inline mqtt::Subscription _manager_status_subscription;
+  static inline std::atomic<uint32_t> _manager_status_generation = 0;
 
   // Mutex used to lock the writing to the NSPanel Config object.
   static inline SemaphoreHandle_t _config_mutex;

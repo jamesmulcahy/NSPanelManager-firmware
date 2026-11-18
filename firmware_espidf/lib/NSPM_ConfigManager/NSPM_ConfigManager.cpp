@@ -1,6 +1,7 @@
 #include "NSPM_ConfigManager.hpp"
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <MqttSubscriptions.hpp>
 #include <PsramProtobuf.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -25,15 +26,19 @@ void NSPM_ConfigManager::init() {
     ESP_LOGE("NSPM_ConfigManager", "Failed to create task to post CONFIG_LOADED. Will post inline instead.");
     NSPM_ConfigManager::_task_post_config_loaded_handle = NULL;
   }
-  MqttManager::register_handler<&NSPM_ConfigManager::_mqtt_event_handler, PanelMetrics::HANDLER_NSPM_CONFIG_MANAGER>(MQTT_EVENT_ANY, NULL);
+  MqttManager::add_connection_listener(&NSPM_ConfigManager::_mqtt_connection_listener, PanelMetrics::HANDLER_NSPM_CONFIG_MANAGER);
 
   // Subscribe to the topic the manager answers register_request on. It is keyed on the MAC,
   // so it survives the manager renaming the panel.
   NSPM_ConfigManager::_mqtt_command_topic = "nspanel/";
   NSPM_ConfigManager::_mqtt_command_topic.append(WiFiManager::mac_string());
   NSPM_ConfigManager::_mqtt_command_topic.append("/command");
-  // Wait until subscribe is successful
-  while (MqttManager::subscribe(NSPM_ConfigManager::_mqtt_command_topic) != ESP_OK) {
+  // Wait until subscribe is successful. A COMMAND hold: every message is delivered once and never replayed.
+  for (;;) {
+    NSPM_ConfigManager::_command_subscription = mqtt::subscribe(NSPM_ConfigManager::_mqtt_command_topic, mqtt::Kind::COMMAND, &NSPM_ConfigManager::_mqtt_command_handler, NULL, PanelMetrics::HANDLER_NSPM_CONFIG_MANAGER);
+    if (NSPM_ConfigManager::_command_subscription.active()) {
+      break;
+    }
     ESP_LOGE("NSPM_ConfigManager", "Tried to subscribe to NSPanel command topic '%s' but subscribe call was unsuccessful! Will try again.", NSPM_ConfigManager::_mqtt_command_topic.c_str());
     vTaskDelay(pdMS_TO_TICKS(100));
   }
@@ -48,34 +53,49 @@ void NSPM_ConfigManager::init() {
   NSPM_ConfigManager::_start_register_request_task();
 }
 
-void NSPM_ConfigManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  if (event_id == MQTT_EVENT_DATA) {
-    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    // A fragment of a message larger than the MQTT buffer would unpack as a truncated config. MqttManager logs the drop.
-    if (event->data_len != event->total_data_len) [[unlikely]] {
-      return;
-    }
-    std::string topic_string = std::string(event->topic, event->topic_len);
-    // esp_mqtt_client_handle_t client = event->client;
+static inline void *generation_context(uint32_t generation) { return reinterpret_cast<void *>(static_cast<uintptr_t>(generation)); }
+static inline bool current(void *context, const std::atomic<uint32_t> &generation) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(context)) == generation.load(); }
 
-    // This topic also carries other commands (reboot, updates), which _handle_register_accept() ignores.
-    if (NSPM_ConfigManager::_mqtt_command_topic.compare(topic_string) == 0) {
-      NSPM_ConfigManager::_handle_register_accept(event->data, event->data_len);
-    } else if (NSPM_ConfigManager::_mqtt_config_topic.compare(topic_string) == 0) {
-      NSPM_ConfigManager::_handle_new_config_data(event->data, event->data_len);
-    } else if (NSPM_ConfigManager::_mqtt_manager_status_topic.compare(topic_string) == 0) {
-      if (!NSPM_ConfigManager::_manager_online && strncmp("online", event->data, event->data_len) == 0) {
-        ESP_LOGI("NSPM_ConfigManager", "Manager is online!");
-        NSPM_ConfigManager::_manager_online = true;
-        esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
-      } else if (NSPM_ConfigManager::_manager_online && strncmp("offline", event->data, event->data_len) == 0) {
-        ESP_LOGE("NSPM_ConfigManager", "Manager is offline!");
-        NSPM_ConfigManager::_manager_online = false;
-        esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
-      }
-    }
-  } else if (event_id == MQTT_EVENT_CONNECTED) {
+void NSPM_ConfigManager::_mqtt_command_handler(const mqtt::Message &message, void *context) {
+  // This topic also carries other commands (reboot, updates), which _handle_register_accept() ignores.
+  NSPM_ConfigManager::_handle_register_accept(reinterpret_cast<const char *>(message.payload.data()), message.payload.size());
+}
+
+void NSPM_ConfigManager::_mqtt_config_handler(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, NSPM_ConfigManager::_config_generation)) {
+    return; // A cleared retained config, or a delivery from a config topic that has been replaced since.
+  }
+  NSPM_ConfigManager::_handle_new_config_data(reinterpret_cast<const char *>(message.payload.data()), message.payload.size());
+}
+
+void NSPM_ConfigManager::_mqtt_manager_status_handler(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, NSPM_ConfigManager::_manager_status_generation)) {
+    return; // A cleared retained status, or a delivery from a topic that has been replaced since.
+  }
+  const char *data = reinterpret_cast<const char *>(message.payload.data());
+  size_t data_length = message.payload.size();
+  if (!NSPM_ConfigManager::_manager_online && strncmp("online", data, data_length) == 0) {
+    ESP_LOGI("NSPM_ConfigManager", "Manager is online!");
+    NSPM_ConfigManager::_manager_online = true;
+    esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
+  } else if (NSPM_ConfigManager::_manager_online && strncmp("offline", data, data_length) == 0) {
+    ESP_LOGE("NSPM_ConfigManager", "Manager is offline!");
+    NSPM_ConfigManager::_manager_online = false;
+    esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
+  }
+}
+
+void NSPM_ConfigManager::_mqtt_connection_listener(bool connected) {
+  // Runs on the MQTT client task.
+  if (connected) {
     // MqttManager re-subscribes the command, manager status and config topics after a reconnect.
+
+    // The broker replays the retained manager status, but a replay identical to the last one delivered is not
+    // delivered again. The disconnect cleared _manager_online, so put back what the last status said: a replay that
+    // differs (the manager went offline meanwhile) is delivered and overrides it.
+    if (NSPM_ConfigManager::_manager_online_before_disconnect && !NSPM_ConfigManager::_manager_online.exchange(true)) {
+      esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
+    }
 
     // Re-announce ourselves to any manager listening. Covers the case where
     // the manager container restarted and lost its in-memory panel state:
@@ -84,8 +104,8 @@ void NSPM_ConfigManager::_mqtt_event_handler(void *arg, esp_event_base_t event_b
     if (!NSPM_ConfigManager::_manager_address.empty()) {
       NSPM_ConfigManager::_start_register_request_task();
     }
-  } else if (event_id == MQTT_EVENT_DISCONNECTED) {
-    NSPM_ConfigManager::_manager_online = false;
+  } else {
+    NSPM_ConfigManager::_manager_online_before_disconnect = NSPM_ConfigManager::_manager_online.exchange(false);
     esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
   }
 }
@@ -122,9 +142,7 @@ void NSPM_ConfigManager::_handle_register_accept(const char *data, size_t data_l
 
   if (json.contains("config_topic") && json["config_topic"].is_string() && json["config_topic"].get<std::string>().length() > 0) {
     std::string config_topic = json["config_topic"].get<std::string>();
-    if (!NSPM_ConfigManager::_mqtt_config_topic.empty() && NSPM_ConfigManager::_mqtt_config_topic.compare(config_topic) != 0) {
-      MqttManager::unsubscribe(NSPM_ConfigManager::_mqtt_config_topic);
-    }
+    // The old config topic is released when its handle is replaced below.
     NSPM_ConfigManager::_mqtt_config_topic = config_topic;
   } else {
     ESP_LOGE("NSPM_ConfigManager", "register_accept does not contain valid 'config_topic' field.");
@@ -138,7 +156,15 @@ void NSPM_ConfigManager::_handle_register_accept(const char *data, size_t data_l
   // Subscribe to where the NSPanel Manager container will send the config for this panel.
   // Only stop sending register_requests once that has succeeded, otherwise the panel is
   // registered with no way to receive a config and nothing left to retry.
-  if (MqttManager::subscribe(NSPM_ConfigManager::_mqtt_config_topic) != ESP_OK) {
+  // A repeated register_accept for the topic already held changes nothing: replacing the hold would only get the
+  // cached config delivered again.
+  if (!NSPM_ConfigManager::_config_subscription.active() || NSPM_ConfigManager::_config_subscription_topic != NSPM_ConfigManager::_mqtt_config_topic) {
+    uint32_t generation = ++NSPM_ConfigManager::_config_generation;
+    NSPM_ConfigManager::_config_subscription = mqtt::subscribe(NSPM_ConfigManager::_mqtt_config_topic, mqtt::Kind::STATE, &NSPM_ConfigManager::_mqtt_config_handler, generation_context(generation),
+                                                               PanelMetrics::HANDLER_NSPM_CONFIG_MANAGER);
+    NSPM_ConfigManager::_config_subscription_topic = NSPM_ConfigManager::_mqtt_config_topic;
+  }
+  if (!NSPM_ConfigManager::_config_subscription.active()) {
     ESP_LOGE("NSPM_ConfigManager", "Failed to subscribe to NSPanel config topic '%s'. Will keep sending register_requests.", NSPM_ConfigManager::_mqtt_config_topic.c_str());
     return;
   }
@@ -150,12 +176,10 @@ void NSPM_ConfigManager::_handle_register_accept(const char *data, size_t data_l
 void NSPM_ConfigManager::_handle_new_config_data(const char *data, size_t data_length) {
   ESP_LOGD("NSPM_ConfigManager", "Received new config data, start processing.");
   if (xSemaphoreTake(NSPM_ConfigManager::_config_mutex, pdMS_TO_TICKS(5000))) {
-    // Every delivery is applied, including byte-identical repeats after an MQTT reconnect.
-    // Filtering duplicates out here is not worth it: re-applying is cheap (ScreensaverPage
-    // ::init() only re-subscribes when a topic actually changed, and MqttManager::subscribe()
-    // is idempotent), and _notify_config_loaded() already collapses a burst of deliveries
-    // into a single CONFIG_LOADED. A byte comparison that decides not to notify would only
-    // add a way for a config to be received and then never reach anything.
+    // Every delivery is applied. A reconnect's replay of the config already delivered never gets here (the
+    // subscription core drops a replay identical to the last value), but a manager that publishes the same config
+    // again does, and re-applying is cheap: _notify_config_loaded() collapses a burst of deliveries into a single
+    // CONFIG_LOADED.
     bool trigger_new_config_event = false;
     NSPanelConfig *new_config = nspanel_config__unpack(psram_protobuf_allocator(), data_length, (const uint8_t *)data);
     if (new_config != NULL) [[likely]] {
@@ -171,12 +195,12 @@ void NSPM_ConfigManager::_handle_new_config_data(const char *data, size_t data_l
     new_manager_status_topic.append(NSPM_ConfigManager::get_manager_address());
     new_manager_status_topic.append("/status/status");
     if (new_manager_status_topic != NSPM_ConfigManager::_mqtt_manager_status_topic) {
-      // Empty on the first config of this boot: there is nothing subscribed yet to move away from.
-      if (!NSPM_ConfigManager::_mqtt_manager_status_topic.empty()) {
-        MqttManager::unsubscribe(NSPM_ConfigManager::_mqtt_manager_status_topic);
-      }
+      // Replacing the handle releases the old topic (none on the first config of this boot).
       NSPM_ConfigManager::_mqtt_manager_status_topic = new_manager_status_topic;
-      if (MqttManager::subscribe(NSPM_ConfigManager::_mqtt_manager_status_topic.c_str()) != ESP_OK) {
+      uint32_t generation = ++NSPM_ConfigManager::_manager_status_generation;
+      NSPM_ConfigManager::_manager_status_subscription = mqtt::subscribe(new_manager_status_topic, mqtt::Kind::STATE, &NSPM_ConfigManager::_mqtt_manager_status_handler, generation_context(generation),
+                                                                         PanelMetrics::HANDLER_NSPM_CONFIG_MANAGER);
+      if (!NSPM_ConfigManager::_manager_status_subscription.active()) {
         ESP_LOGE("NSPM_ConfigManager", "Failed to subscribe to manager status topic.");
       }
     }
