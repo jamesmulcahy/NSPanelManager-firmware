@@ -10,8 +10,8 @@
 //   - service(): the subscription task (mqtt_subs), and nowhere else. It is the only caller of the
 //     Transport, and never holds the lock across a Transport call.
 //   - subscribe()/Subscription::reset()/legacy_hold()/legacy_release(): any task. Never block on the network.
-//   - deliver(): runs the holders' callbacks on the calling task. No task calls it on the panel yet
-//     (step 2 of the plan adds mqtt_dispatch); the host tests call it directly.
+//   - deliver(): runs the holders' callbacks on the calling task: mqtt_dispatch on the panel, woken
+//     through Hooks::wake_delivery. The host tests call it directly.
 #include "MqttTopic.hpp"
 #include "MqttTransport.hpp"
 

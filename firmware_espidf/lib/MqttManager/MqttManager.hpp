@@ -100,23 +100,42 @@ private:
   static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
-   * Task that publishes the "online" retained status message, retrying every 5s until it
-   * succeeds. Created once in start() and never deleted: esp-mqtt dispatches its events
+   * The broker housekeeping task (mqtt_subs): on every pass it first publishes the "online"
+   * status if a connect still owes it (_send_online_update), then sends whatever
+   * SUBSCRIBE/UNSUBSCRIBE traffic is due (mqtt::Subscriptions::service(), see MqttSubscriptions.hpp).
+   * Both can block for seconds on a weak link, so neither happens on the MQTT client task or the
+   * default event loop. Woken by subscribe()/unsubscribe()/connect/SUBACK and otherwise every
+   * second (sooner when an online status retry is due), to retry failed or unacknowledged packets
+   * and end lingers. Created once in start() and never deleted: esp-mqtt dispatches its events
    * synchronously on whichever task called into it, so MQTT_EVENT_DISCONNECTED can be delivered
-   * to _mqtt_event_handler on this very task, from inside the publish below. Deleting it from
-   * there would orphan esp-mqtt's internal API lock and wedge the client for good. Woken on
-   * MQTT_EVENT_CONNECTED, gives up when its generation is superseded.
-   */
-  static void _task_send_online_update(void *param);
-
-  /**
-   * Task that owns all SUBSCRIBE/UNSUBSCRIBE traffic: it runs mqtt::Subscriptions::service() (see
-   * MqttSubscriptions.hpp, which keeps the subscriptions). Sending either can block for seconds on
-   * a weak link, so it never happens on the MQTT client task or the default event loop. Woken by
-   * subscribe()/unsubscribe()/connect/SUBACK and otherwise every second, to retry failed or
-   * unacknowledged packets and end lingers.
+   * to _mqtt_event_handler on this very task, from inside a publish or a subscribe. Deleting it
+   * from there would orphan esp-mqtt's internal API lock and wedge the client for good.
    */
   static void _task_manage_subscriptions(void *param);
+
+  /**
+   * Where the online status stands, for _send_online_update. Only mqtt_subs touches it.
+   */
+  struct OnlineUpdate {
+    uint32_t generation = 0;      // The _online_update_generation last seen.
+    bool pending = false;         // That generation is a connect whose "online" is not published yet.
+    int64_t next_attempt_us = 0;  // After a failed publish, when to try again (esp_timer clock).
+  };
+
+  /**
+   * Publish the retained "online" status once per connect, retrying every 5s until it succeeds.
+   * Gives up when its generation is superseded (a disconnect or a newer connect) or the client is
+   * disconnected. Never sleeps: a retry is due at next_attempt_us, and the task's wait is cut short
+   * for it, so a failing publish does not hold up the SUBSCRIBE traffic.
+   */
+  static void _send_online_update(OnlineUpdate &online);
+
+  /**
+   * The delivery task (mqtt_dispatch): runs the callbacks of mqtt::subscribe() holders, through
+   * mqtt::Subscriptions::deliver(), off the MQTT client task. Woken by a task notification whenever
+   * there is something to deliver. Its stack is internal RAM, never PSRAM: callbacks may write flash.
+   */
+  static void _task_dispatch(void *param);
 
   /**
    * The configuration used to init and setup the MQTT client.
@@ -144,20 +163,15 @@ private:
   static inline std::string _last_will_message;
 
   /**
-   * Pre-built "online" JSON payload published by _task_send_online_update.
+   * Pre-built "online" JSON payload published by _send_online_update.
    * Built once in start() so the task holds no heap allocation of its own.
    */
   static inline std::string _online_status_message;
 
   /**
-   * Handle of the permanent online-status publish task, notified on every MQTT_EVENT_CONNECTED.
-   */
-  static inline TaskHandle_t _send_online_update_task_handle = NULL;
-
-  /**
-   * Bumped on every connect and every disconnect. _task_send_online_update reads it before it
-   * starts publishing and stops retrying as soon as it changes, so a retry left over from a
-   * dropped connection can never publish "online" on behalf of a connection that is gone.
+   * Bumped on every connect and every disconnect. _send_online_update picks up a new connect from
+   * it and stops retrying as soon as it changes, so a retry left over from a dropped connection
+   * can never publish "online" on behalf of a connection that is gone.
    */
   static inline std::atomic<uint32_t> _online_update_generation = 0;
 };
