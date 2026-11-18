@@ -1,4 +1,5 @@
 #include <ConfigManager.hpp>
+#include <PsramProtobuf.hpp>
 #include <GUI_data.hpp>
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
@@ -345,7 +346,7 @@ void ScreensaverPage::_new_temperature_event(void *arg, esp_event_base_t event_b
 }
 
 void ScreensaverPage::_shared_ptr_weather_update_cleanup(NSPanelWeatherUpdate *data) {
-  nspanel_weather_update__free_unpacked(data, NULL);
+  nspanel_weather_update__free_unpacked(data, psram_protobuf_allocator());
 }
 
 void ScreensaverPage::_subscribe_to_mqtt_topics() {
@@ -435,7 +436,7 @@ void ScreensaverPage::_task_update_displayed_weather_data(void *param) {
     ESP_LOGD("ScreensaverPage", "Screensaver no longer shown, skipping weather update.");
   } else if (_weather_update_data_mutex != NULL && xSemaphoreTake(ScreensaverPage::_weather_update_data_mutex, pdMS_TO_TICKS(1000)) == pdPASS) [[likely]] {
     if (ScreensaverPage::_weather_update_mqtt_data.size() > 0) [[likely]] {
-      NSPanelWeatherUpdate *new_weather_data = nspanel_weather_update__unpack(NULL, ScreensaverPage::_weather_update_mqtt_data.size(), ScreensaverPage::_weather_update_mqtt_data.data());
+      NSPanelWeatherUpdate *new_weather_data = nspanel_weather_update__unpack(psram_protobuf_allocator(), ScreensaverPage::_weather_update_mqtt_data.size(), ScreensaverPage::_weather_update_mqtt_data.data());
       if (new_weather_data != NULL) [[likely]] {
         ESP_LOGD("ScreensaverPage", "Updating screensaver page data.");
         ScreensaverPage::_weather_update_data = std::shared_ptr<NSPanelWeatherUpdate>(new_weather_data, &ScreensaverPage::_shared_ptr_weather_update_cleanup);
@@ -673,10 +674,10 @@ void ScreensaverPage::_decode_calendar_if_stale() {
   // an older update after a newer one.
   if (ScreensaverPage::_calendar_stale) {
     ScreensaverPage::_calendar_stale = false;
-    NSPanelCalendarUpdate *update = nspanel_calendar_update__unpack(NULL, ScreensaverPage::_calendar_mqtt_data.size(), ScreensaverPage::_calendar_mqtt_data.data());
+    NSPanelCalendarUpdate *update = nspanel_calendar_update__unpack(psram_protobuf_allocator(), ScreensaverPage::_calendar_mqtt_data.size(), ScreensaverPage::_calendar_mqtt_data.data());
     if (update != NULL) {
       ESP_LOGI("ScreensaverPage", "Calendar update: %zu event(s), looking %d h ahead.", update->n_events, (int)update->lookahead_hours);
-      ScreensaverPage::_calendar.set(std::shared_ptr<NSPanelCalendarUpdate>(update, [](NSPanelCalendarUpdate *data) { nspanel_calendar_update__free_unpacked(data, NULL); }));
+      ScreensaverPage::_calendar.set(std::shared_ptr<NSPanelCalendarUpdate>(update, [](NSPanelCalendarUpdate *data) { nspanel_calendar_update__free_unpacked(data, psram_protobuf_allocator()); }));
     } else {
       ESP_LOGE("ScreensaverPage", "Got a calendar update but failed to decode it. Keeping the previous one.");
     }
@@ -691,12 +692,12 @@ void ScreensaverPage::_decode_energy_if_stale() {
   }
   if (ScreensaverPage::_energy_stale) {
     ScreensaverPage::_energy_stale = false;
-    NSPanelEnergyUpdate *update = nspanel_energy_update__unpack(NULL, ScreensaverPage::_energy_mqtt_data.size(), ScreensaverPage::_energy_mqtt_data.data());
+    NSPanelEnergyUpdate *update = nspanel_energy_update__unpack(psram_protobuf_allocator(), ScreensaverPage::_energy_mqtt_data.size(), ScreensaverPage::_energy_mqtt_data.data());
     if (update != NULL) {
       // The cost in cents: no float formatting in the log.
       ESP_LOGI("ScreensaverPage", "Energy update: power %d (%ld W), cost %d (%ld cents %s/day), lights %d (%ld, alert: %s).", (int)update->power, (long)update->power_watts, (int)update->cost,
                std::lround(update->cost_per_day * 100), update->currency != NULL ? update->currency : "", (int)update->lights, (long)update->lights_on, update->lights_alert ? "yes" : "no");
-      ScreensaverPage::_energy.set(std::shared_ptr<NSPanelEnergyUpdate>(update, [](NSPanelEnergyUpdate *data) { nspanel_energy_update__free_unpacked(data, NULL); }));
+      ScreensaverPage::_energy.set(std::shared_ptr<NSPanelEnergyUpdate>(update, [](NSPanelEnergyUpdate *data) { nspanel_energy_update__free_unpacked(data, psram_protobuf_allocator()); }));
     } else {
       ESP_LOGE("ScreensaverPage", "Got an energy update but failed to decode it. Keeping the previous one.");
     }

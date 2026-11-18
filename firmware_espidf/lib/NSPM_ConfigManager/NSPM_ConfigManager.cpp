@@ -1,6 +1,7 @@
 #include "NSPM_ConfigManager.hpp"
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <PsramProtobuf.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <NSPM_version.hpp>
@@ -156,7 +157,7 @@ void NSPM_ConfigManager::_handle_new_config_data(const char *data, size_t data_l
     // into a single CONFIG_LOADED. A byte comparison that decides not to notify would only
     // add a way for a config to be received and then never reach anything.
     bool trigger_new_config_event = false;
-    NSPanelConfig *new_config = nspanel_config__unpack(NULL, data_length, (const uint8_t *)data);
+    NSPanelConfig *new_config = nspanel_config__unpack(psram_protobuf_allocator(), data_length, (const uint8_t *)data);
     if (new_config != NULL) [[likely]] {
       NSPM_ConfigManager::_config = std::shared_ptr<NSPanelConfig>(new_config, &NSPM_ConfigManager::_delete_nspanelconfig_object_from_shared_ptr);
       trigger_new_config_event = true;
@@ -224,7 +225,7 @@ void NSPM_ConfigManager::_notify_config_loaded() {
 }
 
 void NSPM_ConfigManager::_delete_nspanelconfig_object_from_shared_ptr(NSPanelConfig *config) {
-  nspanel_config__free_unpacked(config, NULL);
+  nspanel_config__free_unpacked(config, psram_protobuf_allocator());
 }
 
 esp_err_t NSPM_ConfigManager::get_config(std::shared_ptr<NSPanelConfig> *config) {
@@ -248,7 +249,7 @@ esp_err_t NSPM_ConfigManager::get_mutable_config(std::shared_ptr<NSPanelConfig> 
       nspanel_config__pack(NSPM_ConfigManager::_config.get(), buffer.data());
       NSPanelConfig *temp_config;
 
-      temp_config = nspanel_config__unpack(NULL, config_pack_size, buffer.data());
+      temp_config = nspanel_config__unpack(psram_protobuf_allocator(), config_pack_size, buffer.data());
       if (temp_config != NULL) [[likely]] {
         xSemaphoreGive(NSPM_ConfigManager::_config_mutex);
         (*config) = std::shared_ptr<NSPanelConfig>(temp_config, &NSPM_ConfigManager::_delete_nspanelconfig_object_from_shared_ptr);

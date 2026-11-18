@@ -13,6 +13,7 @@
 #include <MqttManager.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
+#include <PsramProtobuf.hpp>
 #include <Nextion.hpp>
 #include <Nextion_event.hpp>
 #include <StatusUpdateManager.hpp>
@@ -66,7 +67,7 @@ void EntityPage::_handle_mqtt_event(void *arg, esp_event_base_t event_base, int3
     }
     std::string topic_string = std::string(event->topic, event->topic_len);
     if (topic_string.compare(EntityPage::_current_entity_mqtt_topic) == 0) {
-      NSPanelEntityState *new_state = nspanel_entity_state__unpack(NULL, event->data_len, (const uint8_t *)event->data);
+      NSPanelEntityState *new_state = nspanel_entity_state__unpack(psram_protobuf_allocator(), event->data_len, (const uint8_t *)event->data);
       if (new_state != NULL) [[likely]] {
         if (xSemaphoreTake(EntityPage::_current_state_mutex, pdMS_TO_TICKS(500)) == pdPASS) [[likely]] {
           EntityPage::_current_state = std::shared_ptr<NSPanelEntityState>(new_state, &EntityPage::_delete_nspanel_entity_state_object);
@@ -102,7 +103,7 @@ void EntityPage::_handle_mqtt_event(void *arg, esp_event_base_t event_base, int3
           EntityPage::_update_display();
         } else {
           ESP_LOGE("EntityPage", "Failed to take mutex to update current state.");
-          nspanel_entity_state__free_unpacked(new_state, NULL);
+          nspanel_entity_state__free_unpacked(new_state, psram_protobuf_allocator());
         }
       } else {
         ESP_LOGE("EntityPage", "Received new state but failed to parse into protobuf object.");
@@ -725,7 +726,7 @@ void EntityPage::_handle_string_event_thermostat(const std::shared_ptr<NSPanelEn
 }
 
 void EntityPage::_delete_nspanel_entity_state_object(NSPanelEntityState *object) {
-  nspanel_entity_state__free_unpacked(object, NULL);
+  nspanel_entity_state__free_unpacked(object, psram_protobuf_allocator());
 }
 
 std::shared_ptr<NSPanelEntityState> EntityPage::_get_current_state() {

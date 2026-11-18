@@ -1,6 +1,7 @@
 #include <PanelRestart.hpp>
 #include "RoomManager.hpp"
 #include <ConfigManager.hpp>
+#include <PsramProtobuf.hpp>
 #include <MqttManager.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
@@ -83,7 +84,7 @@ esp_err_t RoomManager::get_home_page_status_mutable(std::shared_ptr<NSPanelRoomS
     nspanel_room_status__pack(RoomManager::_home_page.get(), buffer.data());
     NSPanelRoomStatus *temp_status;
 
-    temp_status = nspanel_room_status__unpack(NULL, status_pack_size, buffer.data());
+    temp_status = nspanel_room_status__unpack(psram_protobuf_allocator(), status_pack_size, buffer.data());
     if (temp_status != NULL) [[likely]] {
       xSemaphoreGive(RoomManager::_home_page_mutex);
       (*status) = std::shared_ptr<NSPanelRoomStatus>(temp_status, &RoomManager::_nspanel_room_status_shared_ptr_deleter);
@@ -110,7 +111,7 @@ esp_err_t RoomManager::get_home_page_status_mutable_all_rooms(std::shared_ptr<NS
     nspanel_room_status__pack(RoomManager::_home_page_all_rooms.get(), buffer.data());
     NSPanelRoomStatus *temp_status;
 
-    temp_status = nspanel_room_status__unpack(NULL, status_pack_size, buffer.data());
+    temp_status = nspanel_room_status__unpack(psram_protobuf_allocator(), status_pack_size, buffer.data());
     if (temp_status != NULL) [[likely]] {
       xSemaphoreGive(RoomManager::_home_page_mutex);
       (*status) = std::shared_ptr<NSPanelRoomStatus>(temp_status, &RoomManager::_nspanel_room_status_shared_ptr_deleter);
@@ -681,7 +682,7 @@ void RoomManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
     std::string topic_string = std::string(event->topic, event->topic_len);
 
     if (topic_string.compare(RoomManager::_current_home_page_status_topic.get()) == 0) {
-      NSPanelRoomStatus *room_status = nspanel_room_status__unpack(NULL, event->data_len, (const uint8_t *)event->data);
+      NSPanelRoomStatus *room_status = nspanel_room_status__unpack(psram_protobuf_allocator(), event->data_len, (const uint8_t *)event->data);
       if (room_status != NULL) {
         RoomManager::_note_room_name(RoomManager::_current_room_id, room_status->name, true);
         if (xSemaphoreTake(RoomManager::_home_page_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
@@ -694,13 +695,13 @@ void RoomManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
           }
         } else {
           ESP_LOGE("RoomManager", "Got new status for home page but couldn't take mutex to update it! Will free new state.");
-          nspanel_room_status__free_unpacked(room_status, NULL);
+          nspanel_room_status__free_unpacked(room_status, psram_protobuf_allocator());
         }
       } else {
         ESP_LOGE("RoomManager", "Got new status for home page but failed to unpack it.");
       }
     } else if (topic_string.compare(RoomManager::_current_entities_page_status_topic.get()) == 0) {
-      NSPanelRoomEntitiesPage *entities_page = nspanel_room_entities_page__unpack(NULL, event->data_len, (const uint8_t *)event->data);
+      NSPanelRoomEntitiesPage *entities_page = nspanel_room_entities_page__unpack(psram_protobuf_allocator(), event->data_len, (const uint8_t *)event->data);
       if (entities_page != NULL) {
         if (xSemaphoreTake(RoomManager::_entities_page_mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
           ESP_LOGD("RoomManager", "Received new entities page state update.");
@@ -714,13 +715,13 @@ void RoomManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
           }
         } else {
           ESP_LOGE("RoomManager", "Got new status for entities page but couldn't take mutex to update it! Will free unpacked data.");
-          nspanel_room_entities_page__free_unpacked(entities_page, NULL);
+          nspanel_room_entities_page__free_unpacked(entities_page, psram_protobuf_allocator());
         }
       } else {
         ESP_LOGE("RoomManager", "Got new status for entities page but failed to unpack it.");
       }
     } else if (topic_string.compare(RoomManager::_all_rooms_state_topic.get()) == 0) {
-      NSPanelRoomStatus *all_room_status = nspanel_room_status__unpack(NULL, event->data_len, (const uint8_t *)event->data);
+      NSPanelRoomStatus *all_room_status = nspanel_room_status__unpack(psram_protobuf_allocator(), event->data_len, (const uint8_t *)event->data);
       if (all_room_status != NULL) {
         if (xSemaphoreTake(RoomManager::_home_page_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
           ESP_LOGD("RoomManager", "Received new home page state update for 'All rooms' mode.");
@@ -732,7 +733,7 @@ void RoomManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
           }
         } else {
           ESP_LOGE("RoomManager", "Got new status for 'All rooms' for home page but couldn't take mutex to update it! Will free new state.");
-          nspanel_room_status__free_unpacked(all_room_status, NULL);
+          nspanel_room_status__free_unpacked(all_room_status, psram_protobuf_allocator());
         }
       } else {
         ESP_LOGE("RoomManager", "Got new status for 'All rooms' for home page but failed to unpack it.");
@@ -743,10 +744,10 @@ void RoomManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
       size_t at = topic_string.rfind(marker);
       if (at != std::string::npos && topic_string.size() > at + marker.size() && topic_string.compare(topic_string.size() - 6, 6, "/state") == 0) {
         int32_t room_id = atoi(topic_string.c_str() + at + marker.size());
-        NSPanelRoomStatus *room_status = nspanel_room_status__unpack(NULL, event->data_len, (const uint8_t *)event->data);
+        NSPanelRoomStatus *room_status = nspanel_room_status__unpack(psram_protobuf_allocator(), event->data_len, (const uint8_t *)event->data);
         if (room_status != NULL) {
           RoomManager::_note_room_name(room_id, room_status->name, false);
-          nspanel_room_status__free_unpacked(room_status, NULL);
+          nspanel_room_status__free_unpacked(room_status, psram_protobuf_allocator());
         }
       }
     }
@@ -884,9 +885,9 @@ void RoomManager::_event_handler(void *arg, esp_event_base_t event_base, int32_t
 }
 
 void RoomManager::_nspanel_room_status_shared_ptr_deleter(NSPanelRoomStatus *status) {
-  nspanel_room_status__free_unpacked(status, NULL);
+  nspanel_room_status__free_unpacked(status, psram_protobuf_allocator());
 }
 
 void RoomManager::_nspanel_room_entities_page_shared_ptr_deleter(NSPanelRoomEntitiesPage *status) {
-  nspanel_room_entities_page__free_unpacked(status, NULL);
+  nspanel_room_entities_page__free_unpacked(status, psram_protobuf_allocator());
 }
