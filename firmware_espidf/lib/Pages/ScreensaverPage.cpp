@@ -36,6 +36,9 @@ void ScreensaverPage::init() {
   // The body turned to another card (GUI task): what the QEMU test and a log reader see of the rotation.
   ScreensaverView::on_card = [](const char *card, uint32_t seconds) { ESP_LOGI("ScreensaverPage", "Screensaver card: %s (%u s)", card, (unsigned)seconds); };
 
+  // No inside temperature until the sensor (or the room's temperature sensor topic) has produced one.
+  ScreensaverPage::_current_temperature.set("--");
+
   MqttManager::register_handler<ScreensaverPage::_mqtt_event_handler, PanelMetrics::HANDLER_SCREENSAVER_PAGE>(MQTT_EVENT_ANY, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, ESP_EVENT_ANY_ID, ScreensaverPage::_nspm_config_event_handler, NULL);
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, ScreensaverPage::_new_temperature_event, NULL);
@@ -590,7 +593,7 @@ void ScreensaverPage::_lvgl_render() {
   // The weather screensaver always shows the outside temperature; the date-time one when asked.
   state.show_outside = state.weather || config->show_screensaver_outside_temperature;
   std::string inside = LvglText::utf8(ScreensaverPage::_current_temperature.get());
-  if (!inside.empty() && inside.find("\xC2\xB0") == std::string::npos) {
+  if (!inside.empty() && inside != "--" && inside.find("\xC2\xB0") == std::string::npos) {
     inside += config->use_fahrenheit ? "\xC2\xB0" "F" : "\xC2\xB0" "C"; // The HMI drew the unit as an icon.
   }
   state.inside = inside;

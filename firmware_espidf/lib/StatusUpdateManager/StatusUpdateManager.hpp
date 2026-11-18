@@ -1,5 +1,6 @@
 #pragma once
 #include <MutexWrapper.hpp>
+#include <atomic>
 #include <driver/i2c_master.h>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
@@ -20,8 +21,12 @@ public:
    */
   static void init();
 
-  // Get the currently calculated average temperature
+  // The current average temperature in the display unit (Fahrenheit or Celsius per the config), with the calibration
+  // offset applied. Only meaningful when has_valid_temperature() is true.
   static float current_temperature();
+
+  // Whether the sensor has produced a usable average yet. False from boot until the first few readings are in.
+  static bool has_valid_temperature();
 
   // Send the reboot state over MQTT and then reboot.
   static void reboot();
@@ -56,23 +61,55 @@ private:
   // Handle to timer responsible for sending status updates periodically
   static inline esp_timer_handle_t _status_update_timer;
 
-  // Should temperature be measured in fahrenheit or celsius?
-  static inline bool _measure_temperature_in_fahrenheit = false;
+  /**
+   * Convert a temperature in Celsius to the display unit and apply the calibration offset. The offset is in the
+   * display unit and is applied after the conversion. The readings themselves are always kept in Celsius without
+   * offset, so a change of unit or offset takes effect on the next output with no mixed window.
+   */
+  static double _to_display_temperature(double celsius);
 
-  // What is the current average measured temperature
+  /**
+   * Store one temperature reading in Celsius (no offset) and publish a new average when due: once
+   * _TEMPERATURE_WARMUP_READINGS readings exist, then every _TEMPERATURE_AVERAGE_READINGS readings.
+   */
+  static void _add_temperature_reading(double celsius);
+
+  // Post AVERAGE_TEMP_UPDATE with the current average in the display unit. The caller says how long it may wait for room in the event queue.
+  static void _post_average_temperature(TickType_t timeout);
+
+  // Number of readings the first average waits for.
+  static constexpr uint8_t _TEMPERATURE_WARMUP_READINGS = 5;
+
+  // Size of the reading buffer, and the number of readings between two averages once warmed up.
+  static constexpr uint8_t _TEMPERATURE_AVERAGE_READINGS = 30;
+
+  // Should temperature be reported in fahrenheit or celsius?
+  static inline std::atomic<bool> _measure_temperature_in_fahrenheit = false;
+
+  // Calibration value for the read temperature from the manager, in the display unit.
+  static inline std::atomic<float> _temperature_offset_calibration = 0;
+
+  // The current average of the readings, in Celsius with no offset.
   static inline MutexWrapped<double> _measured_average_temperature = 0;
 
-  // Records of measured temperatures from _measure_temperature function.
-  static inline float _measured_temperatures[30];
+  // Whether the unit and offset have been read from the config. The first average waits for it: the unit
+  // arrives with the retained config some seconds after boot, and an average in the wrong unit must never be published.
+  static inline std::atomic<bool> _temperature_unit_known = false;
+
+  // False until the first average exists.
+  static inline std::atomic<bool> _temperature_valid = false;
+
+  // Records of measured temperatures from _measure_temperature function, in Celsius with no offset.
+  static inline float _measured_temperatures[_TEMPERATURE_AVERAGE_READINGS];
 
   // What index is the next index to insert/replace read temperature into.
   static inline uint8_t _measured_temperature_next_index;
 
-  // How many samples has been read from the temperature sensor
+  // How many readings have been read from the temperature sensor (at most the buffer size)
   static inline uint8_t _measured_temperature_total_samples;
 
-  // Calibration value for the read temperature from the manager
-  static inline float _temperature_offset_calibration;
+  // Readings taken since the last average was published.
+  static inline uint8_t _readings_since_average;
 
 #if not defined(BOARD_CUSTOM)
 

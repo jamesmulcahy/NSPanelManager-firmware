@@ -1562,7 +1562,7 @@ const ProtobufCEnumDescriptor nspanel_status_report__nspanel_display_mode__descr
   nspanel_status_report__nspanel_display_mode__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[19] =
+static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[20] =
 {
   {
     "nspanel_state",
@@ -1792,11 +1792,24 @@ static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[1
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "has_temperature",
+    20,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelStatusReport, has_temperature),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_status_report__field_indices_by_name[] = {
   15,   /* field[15] = display_mode */
   11,   /* field[11] = has_humidity */
   13,   /* field[13] = has_pressure */
+  19,   /* field[19] = has_temperature */
   3,   /* field[3] = heap_used_pct */
   12,   /* field[12] = humidity */
   6,   /* field[6] = ip_address */
@@ -1817,7 +1830,7 @@ static const unsigned nspanel_status_report__field_indices_by_name[] = {
 static const ProtobufCIntRange nspanel_status_report__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 19 }
+  { 0, 20 }
 };
 const ProtobufCMessageDescriptor nspanel_status_report__descriptor =
 {
@@ -1827,7 +1840,7 @@ const ProtobufCMessageDescriptor nspanel_status_report__descriptor =
   "NSPanelStatusReport",
   "",
   sizeof(NSPanelStatusReport),
-  19,
+  20,
   nspanel_status_report__field_descriptors,
   nspanel_status_report__field_indices_by_name,
   1,  nspanel_status_report__number_ranges,
