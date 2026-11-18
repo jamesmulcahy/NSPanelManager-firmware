@@ -494,7 +494,10 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
     return;
   }
 
-  nlohmann::json json = nlohmann::json::parse(message.payload.data(), message.payload.data() + message.payload.size(), nullptr, false);
+  // As const char *, like every other parse() in the firmware: a uint8_t iterator would instantiate a
+  // second copy of nlohmann's parser (about 12 KB of flash).
+  const char *text = reinterpret_cast<const char *>(message.payload.data());
+  nlohmann::json json = nlohmann::json::parse(text, text + message.payload.size(), nullptr, false);
   if (json.is_discarded()) {
     ESP_LOGW("UpdateManager", "Failed to parse payload as JSON.");
     // Failed to parse as JSON
