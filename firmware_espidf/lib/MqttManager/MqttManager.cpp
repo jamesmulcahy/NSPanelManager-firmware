@@ -66,7 +66,9 @@ static void wake_dispatch() {
 
 // mqtt_dispatch's stack. Internal RAM: callbacks may write flash, and a task with a PSRAM stack
 // must never touch flash. Watch nspanel_task_stack_unused_bytes{task="mqtt_dispatch"} as consumers move to it.
-#define DISPATCH_TASK_STACK 5120
+// Measured on a panel at 5 KB: a thermostat state decode left about 2.2 KB free (protobuf-c recurses per
+// nested message), before the config moves here. nspanel_mqtt_handler_stack_peak_bytes says which handler is deepest.
+#define DISPATCH_TASK_STACK 6144
 // Below the MQTT client (10), so on_data() returns before its callbacks run, and above the page
 // tasks (6), so a delivery is not held up behind drawing.
 #define DISPATCH_TASK_PRIORITY 7
@@ -93,6 +95,10 @@ static void log_dispatch_stack_after(int id, std::string_view topic) {
   }
   UBaseType_t was = dispatch_stack_low;
   dispatch_stack_low = free_now;
+  // Also a metric: lows set during the boot burst are often dropped from the log (queue full).
+  if (id >= 0 && id < PanelMetrics::HANDLER_COUNT) [[likely]] {
+    PanelMetrics::mqtt_handler_stack_peak[id].set_max(static_cast<int32_t>(DISPATCH_TASK_STACK - free_now));
+  }
   ESP_LOGI("MqttManager", "mqtt_dispatch stack low %u B free after '%.*s' (id %d), was %u", static_cast<unsigned>(free_now),
            static_cast<int>(topic.size()), topic.data(), id, static_cast<unsigned>(was));
 }
