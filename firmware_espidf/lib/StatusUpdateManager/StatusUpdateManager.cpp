@@ -352,7 +352,13 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(1));
       }
 
-      ESP_ERROR_CHECK(bmx280_readoutFloat(StatusUpdateManager::_bme280_dev_handle, &temperature, &pressure, &humidity));
+      // ESP_ERROR_CHECK here aborted, rebooting the panel on a single I2C glitch. Count it as a bad reading instead.
+      esp_err_t readout = bmx280_readoutFloat(StatusUpdateManager::_bme280_dev_handle, &temperature, &pressure, &humidity);
+      if (readout != ESP_OK) {
+        StatusUpdateManager::_note_bad_temperature_reading(esp_err_to_name(readout));
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        continue;
+      }
 
       // Update temperature. The reading stays in Celsius; unit and offset are applied on output.
       StatusUpdateManager::_add_temperature_reading(temperature);
@@ -395,7 +401,8 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
         esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_PRESSURE_UPDATE, &current_average_pressure, sizeof(current_average_pressure), pdMS_TO_TICKS(250));
       }
     } else {
-      ESP_LOGW("StatusUpdateManager", "Skipping temperature, humidity and pressure reading as BME280 sensor was not initialized correctly.");
+      // Logged once, and fails safe like any other run of bad readings, rather than a warning every second.
+      StatusUpdateManager::_note_bad_temperature_reading("BME280 sensor was not initialized correctly");
 
       if ((esp_timer_get_time() / 1000) - StatusUpdateManager::_last_bme280_init_try >= 10000) { // More than >= 10 seconds since last init try.
         StatusUpdateManager::_initialize_bme280();
