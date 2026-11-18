@@ -93,7 +93,7 @@ jobs:
           # receiver. Only the LVGL tests (the UI, and the timers); the rest drive NSPM's Nextion pages.
           - display: terminal-us
             terminal: us
-            tests: "test_lvgl_terminal or test_timers"
+            tests: "test_lvgl_terminal or test_timers or test_screensaver_cards or test_screensaver_energy"
             marks: ""
             timeout: 60
     timeout-minutes: ${{ matrix.timeout }}
