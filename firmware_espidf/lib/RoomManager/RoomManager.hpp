@@ -1,4 +1,5 @@
 #pragma once
+#include <MqttSubscriptions.hpp>
 #include <MutexWrapper.hpp>
 #include <atomic>
 #include <esp_timer.h>
@@ -206,17 +207,15 @@ private:
   static inline std::mutex _room_names_mutex;
   // The wildcard topic while a scan runs, else empty.
   static inline MutexWrapped<std::string> _room_names_scan_topic;
+  static inline mqtt::Subscription _room_names_subscription;
   static inline esp_timer_handle_t _room_names_scan_timer = NULL;
 
-  /**
-   * @brief Handle events triggered from MQTT places.
-   */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
-
-  /**
-   * @brief Handle events triggered from MQTT when it is connected to MQTT.
-   */
-  static void _mqtt_event_handler_connected(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  // The mqtt::Subscription callbacks, on mqtt_dispatch. context is the room or entities page id the
+  // hold was taken for; a state for any other than the current one is from a hold since replaced.
+  static void _handle_room_state(const mqtt::Message &message, void *context);
+  static void _handle_all_rooms_state(const mqtt::Message &message, void *context);
+  static void _handle_entities_page_state(const mqtt::Message &message, void *context);
+  static void _handle_room_names_scan(const mqtt::Message &message, void *context);
 
   /**
    * @brief Handle events triggered from other places.
@@ -224,14 +223,14 @@ private:
   static void _event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
-   * @brief Point a stored state topic at @param new_topic, unsubscribing from whatever it
-   * held before. Does nothing if the topic is unchanged. The new topic is stored before it is
-   * subscribed to, so the MQTT handler already recognises its retained value when it arrives.
-   * @param current_topic: The stored topic to update in place.
-   * @param new_topic: The topic to subscribe to instead.
-   * @return True if the topic was moved, false if it was already correct.
+   * @brief Hold @param topic as STATE in @param subscription, releasing whatever it held before, and
+   * store the topic in @param current_topic. Taking the new hold first keeps a topic held again
+   * subscribed, and its new holder gets the cached state at once.
+   * @param only_if_moved: Do nothing if current_topic already is topic (a config reload).
+   * @return True if the hold was replaced.
    */
-  static bool _move_topic(MutexWrapped<std::string> *current_topic, std::string new_topic);
+  static bool _hold(MutexWrapped<std::string> *current_topic, mqtt::Subscription *subscription, std::string topic,
+                    mqtt::Callback callback, uint32_t id, bool only_if_moved);
 
   /**
    * Function used when shared_ptr goes out of scope. Used to delete the underlying object
@@ -246,6 +245,12 @@ private:
   static void _nspanel_room_entities_page_shared_ptr_deleter(NSPanelRoomEntitiesPage *status);
 
   // Vars:
+  // The holds on the topics below. _subscriptions_mutex serialises replacing them, from any task.
+  static inline std::mutex _subscriptions_mutex;
+  static inline mqtt::Subscription _home_page_subscription;
+  static inline mqtt::Subscription _all_rooms_subscription;
+  static inline mqtt::Subscription _entities_page_subscription;
+
   // Status of home page for currently selected room
   static inline std::shared_ptr<NSPanelRoomStatus> _home_page = nullptr;
 
