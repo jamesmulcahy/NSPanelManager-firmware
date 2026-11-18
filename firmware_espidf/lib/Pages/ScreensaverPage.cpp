@@ -6,7 +6,6 @@
 #include <LvglText.hpp>
 #include <LvglUi.hpp>
 #include <ScreensaverView.hpp>
-#include <MqttManager.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -20,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <iterator>
 #include <ctime>
 #include <esp_http_client.h>
 #include <esp_log.h>
@@ -27,20 +27,16 @@
 void ScreensaverPage::init() {
   // Only register handlers once. init() used to run on every CONFIG_LOADED,
   // re-registering every handler and re-subscribing every topic each time.
-  if (ScreensaverPage::_weather_update_data_mutex != NULL) {
+  if (ScreensaverPage::_initialised.exchange(true)) {
     return;
   }
   esp_log_level_set("ScreensaverPage", ConfigManager::log_level);
-  ScreensaverPage::_weather_update_data_mutex = xSemaphoreCreateMutex();
-  ScreensaverPage::_calendar_mutex = xSemaphoreCreateMutex();
-  ScreensaverPage::_energy_mutex = xSemaphoreCreateMutex();
   // The body turned to another card (GUI task): what the QEMU test and a log reader see of the rotation.
   ScreensaverView::on_card = [](const char *card, uint32_t seconds) { ESP_LOGI("ScreensaverPage", "Screensaver card: %s (%u s)", card, (unsigned)seconds); };
 
   // No inside temperature until the sensor (or the room's temperature sensor topic) has produced one.
   ScreensaverPage::_current_temperature.set("--");
 
-  MqttManager::register_handler<ScreensaverPage::_mqtt_event_handler, PanelMetrics::HANDLER_SCREENSAVER_PAGE>(MQTT_EVENT_ANY, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, ESP_EVENT_ANY_ID, ScreensaverPage::_nspm_config_event_handler, NULL);
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, ScreensaverPage::_new_temperature_event, NULL);
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED, ScreensaverPage::_new_temperature_event, NULL);
@@ -73,16 +69,11 @@ void ScreensaverPage::show() {
     return;
   }
 
-  if (ScreensaverPage::_weather_update_data_mutex == NULL) {
-    // Page has not been initialized, do that first.
-    ScreensaverPage::init();
-  }
+  // Page has not been initialized: do that first. init() does nothing the second time.
+  ScreensaverPage::init();
 
   InterfaceManager::begin_page(ScreensaverPage::unshow);
 
-  // A calendar update that arrived while another page was shown, or whose deferred decode was dropped.
-  ScreensaverPage::_decode_calendar_if_stale();
-  ScreensaverPage::_decode_energy_if_stale();
   ScreensaverPage::_go_to_nextion_page();
   ScreensaverPage::_update_displayed_date();
   ScreensaverPage::_update_displayed_time();
@@ -159,124 +150,99 @@ bool ScreensaverPage::showing() {
   return InterfaceManager::is_current_page(ScreensaverPage::unshow);
 }
 
-void ScreensaverPage::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  if (event_id == MQTT_EVENT_DATA) {
-    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    if (event->topic_len == 0 || event->data_len == 0) {
-      return; // Do not process empty messages
-    }
-    if (event->data_len != event->total_data_len) [[unlikely]] {
-      return; // A fragment of a message larger than the MQTT buffer, e.g. a truncated forecast. MqttManager logs the drop.
-    }
+// A hold's context is the generation it was taken for.
+static inline void *generation_context(uint32_t generation) { return reinterpret_cast<void *>(static_cast<uintptr_t>(generation)); }
+static inline bool current(void *context, const std::atomic<uint32_t> &generation) { return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(context)) == generation.load(); }
+static inline std::string payload_string(const mqtt::Message &message) { return std::string(reinterpret_cast<const char *>(message.payload.data()), message.payload.size()); }
 
-    std::string topic_string = std::string(event->topic, event->topic_len);
+void ScreensaverPage::_handle_time(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, ScreensaverPage::_status_generation)) {
+    return;
+  }
+  ScreensaverPage::_current_time.set(payload_string(message));
+  ScreensaverPage::_update_displayed_time();
+}
 
-    std::string manager_address = NSPM_ConfigManager::get_manager_address();
-    std::string mqtt_base_topic = "nspanel/mqttmanager_";
-    mqtt_base_topic.append(manager_address);
+void ScreensaverPage::_handle_date(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, ScreensaverPage::_status_generation)) {
+    return;
+  }
+  ScreensaverPage::_current_date.set(payload_string(message));
+  ScreensaverPage::_update_displayed_date();
+}
 
-    std::string time_topic = mqtt_base_topic;
-    time_topic.append("/status/time");
-    std::string date_topic = mqtt_base_topic;
-    date_topic.append("/status/date");
-    std::string ampm_topic = mqtt_base_topic;
-    ampm_topic.append("/status/ampm");
-    std::string weather_topic = mqtt_base_topic;
-    weather_topic.append("/status/weather");
+void ScreensaverPage::_handle_ampm(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, ScreensaverPage::_status_generation)) {
+    return;
+  }
+  ScreensaverPage::_am_pm_string.set(payload_string(message));
+  ScreensaverPage::_update_displayed_time();
+}
 
-    std::string calendar_topic = mqtt_base_topic;
-    calendar_topic.append("/status/calendar");
-    std::string energy_topic = mqtt_base_topic;
-    energy_topic.append("/status/energy");
+void ScreensaverPage::_handle_inside_temperature(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, ScreensaverPage::_inside_temperature_generation)) {
+    return;
+  }
+  // Up to the first NUL, as before.
+  ScreensaverPage::_current_temperature.set(payload_string(message).c_str());
+  ScreensaverPage::_update_displayed_temperature();
+}
 
-    std::string inside_temperature_sensor_state_topic = ScreensaverPage::_inside_temperature_sensor_state_topic.get();
-    if (topic_string.compare(inside_temperature_sensor_state_topic) == 0) {
-      // Got new temperature from MQTT, update display.
-      std::string new_temperature_string = std::string(event->data, event->data_len).c_str();
-      ScreensaverPage::_current_temperature.set(new_temperature_string);
-      ScreensaverPage::_update_displayed_temperature();
-    } else if (topic_string.compare(time_topic) == 0) {
-      ScreensaverPage::_current_time = std::string(event->data, event->data_len);
-      ScreensaverPage::_update_displayed_time();
-    } else if (topic_string.compare(date_topic) == 0) {
-      // We got new date, update display:
-      ScreensaverPage::_current_date = std::string(event->data, event->data_len);
-      ScreensaverPage::_update_displayed_date();
-    } else if (topic_string.compare(ampm_topic) == 0) {
-      // We got new AM/PM, update display:
-      ScreensaverPage::_am_pm_string = std::string(event->data, event->data_len);
-      ScreensaverPage::_update_displayed_time();
-    } else if (topic_string.compare(calendar_topic) == 0) {
-      // Store the newest bytes and nothing more: decoding and formatting happen on LvglUi's task.
-      if (ScreensaverPage::_calendar_mutex != NULL && xSemaphoreTake(ScreensaverPage::_calendar_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
-        ScreensaverPage::_calendar_mqtt_data.assign(event->data, event->data + event->data_len);
-        ScreensaverPage::_calendar_stale = true;
-        xSemaphoreGive(ScreensaverPage::_calendar_mutex);
-        // Only LVGL panels draw the calendar. One job at a time covers any number of updates: it decodes the newest.
-        if (LvglUi::active() && !ScreensaverPage::_calendar_job_queued.exchange(true)) {
-          LvglUi::defer([]() {
-            ScreensaverPage::_calendar_job_queued = false;
-            ScreensaverPage::_decode_calendar_if_stale();
-            if (ScreensaverPage::showing()) {
-              ScreensaverPage::_lvgl_render();
-            }
-          });
-        }
-      } else {
-        ESP_LOGW("ScreensaverPage", "Failed to take calendar mutex while processing new data from MQTT. Will wait for next update.");
-      }
-    } else if (topic_string.compare(energy_topic) == 0) {
-      // As the calendar: store the newest bytes, decode and format on LvglUi's task.
-      if (ScreensaverPage::_energy_mutex != NULL && xSemaphoreTake(ScreensaverPage::_energy_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
-        ScreensaverPage::_energy_mqtt_data.assign(event->data, event->data + event->data_len);
-        ScreensaverPage::_energy_stale = true;
-        xSemaphoreGive(ScreensaverPage::_energy_mutex);
-        if (LvglUi::active() && !ScreensaverPage::_energy_job_queued.exchange(true)) {
-          LvglUi::defer([]() {
-            ScreensaverPage::_energy_job_queued = false;
-            ScreensaverPage::_decode_energy_if_stale();
-            if (ScreensaverPage::showing()) {
-              ScreensaverPage::_lvgl_render();
-            }
-          });
-        }
-      } else {
-        ESP_LOGW("ScreensaverPage", "Failed to take energy mutex while processing new data from MQTT. Will wait for next update.");
-      }
-    } else if (topic_string.compare(weather_topic) == 0) {
-      if (ScreensaverPage::_weather_update_data_mutex != NULL) {
-        if (xSemaphoreTake(ScreensaverPage::_weather_update_data_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
-          ScreensaverPage::_weather_update_mqtt_data.clear();
-          ScreensaverPage::_weather_update_mqtt_data.insert(ScreensaverPage::_weather_update_mqtt_data.end(), event->data, event->data + event->data_len);
-          xSemaphoreGive(ScreensaverPage::_weather_update_data_mutex);
-          // New weather data loaded. Update the display only if the screensaver is shown; otherwise show() renders it.
-          if (ScreensaverPage::showing()) {
-            xTaskCreatePinnedToCore(ScreensaverPage::_task_update_displayed_weather_data, "update_weather_data", 4096, NULL, 2, NULL, 1);
-          }
-        } else {
-          ESP_LOGW("ScreensaverPage", "Failed to take weather data mutex while processing new data from MQTT. Will wait for next forecast.");
+void ScreensaverPage::_handle_weather(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, ScreensaverPage::_status_generation)) {
+    return;
+  }
+  NSPanelWeatherUpdate *update = nspanel_weather_update__unpack(psram_protobuf_allocator(), message.payload.size(), message.payload.data());
+  if (update == NULL) [[unlikely]] {
+    ESP_LOGE("ScreensaverPage", "Got new weather data but failed to decode it into protobuf object. Keeping the previous one.");
+    return;
+  }
+  ScreensaverPage::_weather_update_data.set(std::shared_ptr<NSPanelWeatherUpdate>(update, &ScreensaverPage::_shared_ptr_weather_update_cleanup));
+  // Update the display only if the screensaver is shown; otherwise show() renders it.
+  if (ScreensaverPage::showing()) {
+    xTaskCreatePinnedToCore(ScreensaverPage::_task_update_displayed_weather_data, "update_weather_data", 4096, NULL, 2, NULL, 1);
+  }
+}
 
-          // TaskHandle_t holder = xSemaphoreGetMutexHolder(ScreensaverPage::_weather_update_data_mutex);
-          // if (holder != NULL) {
-          //   TaskStatus_t status;
-          //   vTaskGetInfo(/* The handle of the task being queried. */
-          //                holder,
-          //                /* The TaskStatus_t structure to complete with information
-          //                on xTask. */
-          //                &status,
-          //                /* Include the stack high water mark value in the
-          //                TaskStatus_t structure. */
-          //                pdTRUE,
-          //                /* Include the task state in the TaskStatus_t structure. */
-          //                eInvalid);
+void ScreensaverPage::_handle_calendar(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, ScreensaverPage::_status_generation)) {
+    return;
+  }
+  NSPanelCalendarUpdate *update = nspanel_calendar_update__unpack(psram_protobuf_allocator(), message.payload.size(), message.payload.data());
+  if (update == NULL) [[unlikely]] {
+    ESP_LOGE("ScreensaverPage", "Got a calendar update but failed to decode it. Keeping the previous one.");
+    return;
+  }
+  ESP_LOGI("ScreensaverPage", "Calendar update: %zu event(s), looking %d h ahead.", update->n_events, (int)update->lookahead_hours);
+  ScreensaverPage::_calendar.set(std::shared_ptr<NSPanelCalendarUpdate>(update, [](NSPanelCalendarUpdate *data) { nspanel_calendar_update__free_unpacked(data, psram_protobuf_allocator()); }));
+  ScreensaverPage::_request_lvgl_render();
+}
 
-          //   ESP_LOGE("ScreensaverPage", "Holding task: %s", status.pcTaskName);
-          // }
-        }
-      } else {
-        ESP_LOGW("ScreensaverPage", "Weather update data mutex is NULL. Will wait for next forecast.");
-      }
-    }
+void ScreensaverPage::_handle_energy(const mqtt::Message &message, void *context) {
+  if (message.payload.empty() || !current(context, ScreensaverPage::_status_generation)) {
+    return;
+  }
+  NSPanelEnergyUpdate *update = nspanel_energy_update__unpack(psram_protobuf_allocator(), message.payload.size(), message.payload.data());
+  if (update == NULL) [[unlikely]] {
+    ESP_LOGE("ScreensaverPage", "Got an energy update but failed to decode it. Keeping the previous one.");
+    return;
+  }
+  // The cost in cents: no float formatting in the log.
+  ESP_LOGI("ScreensaverPage", "Energy update: power %d (%ld W), cost %d (%ld cents %s/day), lights %d (%ld, alert: %s).", (int)update->power, (long)update->power_watts, (int)update->cost,
+           std::lround(update->cost_per_day * 100), update->currency != NULL ? update->currency : "", (int)update->lights, (long)update->lights_on, update->lights_alert ? "yes" : "no");
+  ScreensaverPage::_energy.set(std::shared_ptr<NSPanelEnergyUpdate>(update, [](NSPanelEnergyUpdate *data) { nspanel_energy_update__free_unpacked(data, psram_protobuf_allocator()); }));
+  ScreensaverPage::_request_lvgl_render();
+}
+
+void ScreensaverPage::_request_lvgl_render() {
+  if (!LvglUi::active() || !ScreensaverPage::showing()) {
+    return; // show() renders everything held when the screensaver is shown next.
+  }
+  if (!ScreensaverPage::_lvgl_render_queued.exchange(true)) {
+    LvglUi::defer([]() {
+      ScreensaverPage::_lvgl_render_queued = false;
+      ScreensaverPage::_lvgl_render();
+    });
   }
 }
 
@@ -294,7 +260,7 @@ void ScreensaverPage::_nspm_config_event_handler(void *arg, esp_event_base_t eve
         if (signature != ScreensaverPage::_cards_signature_seen.get()) {
           ScreensaverPage::_cards_signature_seen.set(signature);
           if (ScreensaverPage::showing() && LvglUi::active()) {
-            LvglUi::defer([]() { ScreensaverPage::_lvgl_render(); });
+            ScreensaverPage::_request_lvgl_render();
           }
         }
       }
@@ -362,8 +328,8 @@ void ScreensaverPage::_shared_ptr_weather_update_cleanup(NSPanelWeatherUpdate *d
 }
 
 void ScreensaverPage::_subscribe_to_mqtt_topics() {
-  // MqttManager keeps these subscribed across reconnects, so this only needs to
-  // run when the manager address or inside temperature topic changes.
+  // The handles stay subscribed across reconnects, so they only need replacing when the manager
+  // address or the inside temperature topic changes.
   std::string manager_address = NSPM_ConfigManager::get_manager_address();
   if (manager_address.empty()) {
     ESP_LOGE("ScreensaverPage", "Failed to subscribe to relevant MQTT topics as no manager address is set.");
@@ -376,30 +342,44 @@ void ScreensaverPage::_subscribe_to_mqtt_topics() {
     inside_temperature_sensor_mqtt_topic = std::string(config->inside_temperature_sensor_mqtt_topic);
   }
 
-  std::string old_manager_address = ScreensaverPage::_subscribed_manager_address.get();
-  std::string old_inside_temperature_sensor_mqtt_topic = ScreensaverPage::_inside_temperature_sensor_state_topic.get();
-  if (manager_address != old_manager_address) {
-    for (const char *suffix : {"/status/time", "/status/date", "/status/ampm", "/status/weather", "/status/calendar", "/status/energy"}) {
-      if (!old_manager_address.empty()) {
-        MqttManager::unsubscribe("nspanel/mqttmanager_" + old_manager_address + suffix);
-      }
-      std::string topic = "nspanel/mqttmanager_" + manager_address + suffix;
-      if (MqttManager::subscribe(topic) != ESP_OK) {
+  std::lock_guard<std::mutex> lock(ScreensaverPage::_subscriptions_mutex);
+  if (manager_address != ScreensaverPage::_subscribed_manager_address.get()) {
+    static constexpr struct {
+      const char *suffix;
+      mqtt::Callback callback;
+    } STATUS_TOPICS[] = {
+        {"/status/time", &ScreensaverPage::_handle_time},
+        {"/status/date", &ScreensaverPage::_handle_date},
+        {"/status/ampm", &ScreensaverPage::_handle_ampm},
+        {"/status/weather", &ScreensaverPage::_handle_weather},
+        {"/status/calendar", &ScreensaverPage::_handle_calendar},
+        {"/status/energy", &ScreensaverPage::_handle_energy},
+    };
+    static_assert(std::size(STATUS_TOPICS) == std::size(ScreensaverPage::_status_subscriptions));
+    // Bumped first: a cached value is delivered as soon as the new hold is taken.
+    uint32_t generation = ++ScreensaverPage::_status_generation;
+    for (size_t i = 0; i < std::size(STATUS_TOPICS); i++) {
+      std::string topic = "nspanel/mqttmanager_" + manager_address + STATUS_TOPICS[i].suffix;
+      ScreensaverPage::_status_subscriptions[i] = mqtt::subscribe(topic, mqtt::Kind::STATE, STATUS_TOPICS[i].callback, generation_context(generation), PanelMetrics::HANDLER_SCREENSAVER_PAGE);
+      if (!ScreensaverPage::_status_subscriptions[i].active()) [[unlikely]] {
         ESP_LOGE("ScreensaverPage", "Failed to subscribe to %s for screensaver page.", topic.c_str());
       }
     }
     ScreensaverPage::_subscribed_manager_address.set(manager_address);
   }
 
-  // subscribe() does nothing if the topic is already subscribed, so always call it.
-  if (inside_temperature_sensor_mqtt_topic != old_inside_temperature_sensor_mqtt_topic && !old_inside_temperature_sensor_mqtt_topic.empty()) {
-    MqttManager::unsubscribe(old_inside_temperature_sensor_mqtt_topic);
-  }
-  ScreensaverPage::_inside_temperature_sensor_state_topic.set(inside_temperature_sensor_mqtt_topic);
-  if (!inside_temperature_sensor_mqtt_topic.empty()) {
-    ESP_LOGD("ScreensaverPage", "Subscribing to inside temperature sensor state topic: %s", inside_temperature_sensor_mqtt_topic.c_str());
-    if (MqttManager::subscribe(inside_temperature_sensor_mqtt_topic) != ESP_OK) {
-      ESP_LOGE("ScreensaverPage", "Failed to subscribe to inside temperature sensor state topic.");
+  if (inside_temperature_sensor_mqtt_topic != ScreensaverPage::_inside_temperature_sensor_state_topic.get() || (!inside_temperature_sensor_mqtt_topic.empty() && !ScreensaverPage::_inside_temperature_subscription.active())) {
+    uint32_t generation = ++ScreensaverPage::_inside_temperature_generation;
+    ScreensaverPage::_inside_temperature_sensor_state_topic.set(inside_temperature_sensor_mqtt_topic);
+    if (inside_temperature_sensor_mqtt_topic.empty()) {
+      ScreensaverPage::_inside_temperature_subscription.reset(); // Back to the internal NTC thermistor.
+    } else {
+      ESP_LOGD("ScreensaverPage", "Subscribing to inside temperature sensor state topic: %s", inside_temperature_sensor_mqtt_topic.c_str());
+      ScreensaverPage::_inside_temperature_subscription = mqtt::subscribe(inside_temperature_sensor_mqtt_topic, mqtt::Kind::STATE, &ScreensaverPage::_handle_inside_temperature,
+                                                                          generation_context(generation), PanelMetrics::HANDLER_SCREENSAVER_PAGE);
+      if (!ScreensaverPage::_inside_temperature_subscription.active()) [[unlikely]] {
+        ESP_LOGE("ScreensaverPage", "Failed to subscribe to inside temperature sensor state topic.");
+      }
     }
   }
 }
@@ -412,7 +392,7 @@ void ScreensaverPage::_update_displayed_time() {
   // Screensaver without weather
   Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_screensaver_minimal_current_time, ScreensaverPage::_current_time.get().c_str(), 250);
   Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_screensaver_minimal_am_pm_name, ScreensaverPage::_am_pm_string.get().c_str(), 250);
-  ScreensaverPage::_lvgl_render();
+  ScreensaverPage::_request_lvgl_render();
 }
 
 void ScreensaverPage::_update_displayed_date() {
@@ -425,7 +405,7 @@ void ScreensaverPage::_update_displayed_date() {
   } else {
     ESP_LOGE("ScreensaverPage", "Unknown screensaver mode %d while processing new date from MQTT.", (int)ScreensaverPage::_current_screensaver_mode.get());
   }
-  ScreensaverPage::_lvgl_render();
+  ScreensaverPage::_request_lvgl_render();
 }
 
 void ScreensaverPage::_update_displayed_temperature() {
@@ -438,59 +418,49 @@ void ScreensaverPage::_update_displayed_temperature() {
   } else {
     ESP_LOGE("ScreensaverPage", "Unknown screensaver mode %d while processing new date from MQTT.", (int)ScreensaverPage::_current_screensaver_mode.get());
   }
-  ScreensaverPage::_lvgl_render();
+  ScreensaverPage::_request_lvgl_render();
 }
 
 void ScreensaverPage::_task_update_displayed_weather_data(void *param) {
+  std::shared_ptr<NSPanelWeatherUpdate> weather = ScreensaverPage::_weather_update_data.get();
   if (!ScreensaverPage::showing()) {
     // Another page took over before this task ran, e.g. at boot, where the home page follows the screensaver within
     // 80 ms. The screensaver's labels are not shown, so do not write them. show() renders the weather next time.
     ESP_LOGD("ScreensaverPage", "Screensaver no longer shown, skipping weather update.");
-  } else if (_weather_update_data_mutex != NULL && xSemaphoreTake(ScreensaverPage::_weather_update_data_mutex, pdMS_TO_TICKS(1000)) == pdPASS) [[likely]] {
-    if (ScreensaverPage::_weather_update_mqtt_data.size() > 0) [[likely]] {
-      NSPanelWeatherUpdate *new_weather_data = nspanel_weather_update__unpack(psram_protobuf_allocator(), ScreensaverPage::_weather_update_mqtt_data.size(), ScreensaverPage::_weather_update_mqtt_data.data());
-      if (new_weather_data != NULL) [[likely]] {
-        ESP_LOGD("ScreensaverPage", "Updating screensaver page data.");
-        ScreensaverPage::_weather_update_data = std::shared_ptr<NSPanelWeatherUpdate>(new_weather_data, &ScreensaverPage::_shared_ptr_weather_update_cleanup);
-        NSPanelConfig__NSPanelScreensaverMode mode = ScreensaverPage::_current_screensaver_mode.get();
-        if (mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITH_BACKGROUND || mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITHOUT_BACKGROUND) {
-          // The minimal screensaver shows only the outside temperature.
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_screensaver_minimal_current_temperature_name, ScreensaverPage::_weather_update_data->current_temperature_string, 250);
-          ESP_LOGD("ScreensaverPage", "Updated outside temperature on minimal screensaver.");
-        } else {
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_weather_icon_name, ScreensaverPage::_weather_update_data->current_weather_icon, 250);
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_temperature_name, ScreensaverPage::_weather_update_data->current_temperature_string, 250);
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_wind_name, ScreensaverPage::_weather_update_data->current_wind_string, 250);
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_sunrise_name, ScreensaverPage::_weather_update_data->sunrise_string, 250);
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_sunset_name, ScreensaverPage::_weather_update_data->sunset_string, 250);
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_max_min_temperature_name, ScreensaverPage::_weather_update_data->current_maxmin_temperature, 250);
-          Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_rain_name, ScreensaverPage::_weather_update_data->current_precipitation_string, 250);
-
-          ESP_LOGD("ScreensaverPage", "Updating forecast. Forecast items: %zu, new weather forecast items: %zu", ScreensaverPage::_weather_update_data->n_forecast_items, new_weather_data->n_forecast_items);
-          for (int i = 0; i < ScreensaverPage::_weather_update_data->n_forecast_items && i < 5; i++) { // Update all available forecasts but no more than 5 as that's how many forecasts are displayed on the page
-            auto item = ScreensaverPage::_weather_update_data->forecast_items[i];
-            Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_names[i], item->display_string, 250);
-            Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_icon_names[i], item->weather_icon, 250);
-            Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_max_min_names[i], item->temperature_maxmin_string, 250);
-            Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_rain_names[i], item->precipitation_string, 250);
-            Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_wind_names[i], item->wind_string, 250);
-          }
-          ESP_LOGD("ScreensaverPage", "Forecast updated. Successfully updated screensaver page with new weather data.");
-        }
-      } else {
-        ESP_LOGE("ScreensaverPage", "Got new weather data but failed to decode it into protobuf object.");
-      }
-    } else {
-      // Expected at boot: show() runs before the retained weather message has arrived (the topic name needs the manager
-      // address from the config). The MQTT handler renders the weather as soon as it does arrive.
-      ESP_LOGD("ScreensaverPage", "No weather data received yet, skipping weather update.");
-    }
-
-    xSemaphoreGive(ScreensaverPage::_weather_update_data_mutex);
-    ScreensaverPage::_lvgl_render();
+  } else if (!weather) {
+    // Expected at boot: show() runs before the retained weather message has arrived (the topic name needs the manager
+    // address from the config). The weather callback renders it as soon as it does arrive.
+    ESP_LOGD("ScreensaverPage", "No weather data received yet, skipping weather update.");
   } else {
-    ESP_LOGE("ScreensaverPage", "Failed to get _weather_update_data_mutex when updating display.");
+    ESP_LOGD("ScreensaverPage", "Updating screensaver page data.");
+    NSPanelConfig__NSPanelScreensaverMode mode = ScreensaverPage::_current_screensaver_mode.get();
+    if (mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITH_BACKGROUND || mode == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__DATETIME_WITHOUT_BACKGROUND) {
+      // The minimal screensaver shows only the outside temperature.
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_screensaver_minimal_current_temperature_name, weather->current_temperature_string, 250);
+      ESP_LOGD("ScreensaverPage", "Updated outside temperature on minimal screensaver.");
+    } else {
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_weather_icon_name, weather->current_weather_icon, 250);
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_temperature_name, weather->current_temperature_string, 250);
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_wind_name, weather->current_wind_string, 250);
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_sunrise_name, weather->sunrise_string, 250);
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_sunset_name, weather->sunset_string, 250);
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_max_min_temperature_name, weather->current_maxmin_temperature, 250);
+      Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_current_rain_name, weather->current_precipitation_string, 250);
+
+      ESP_LOGD("ScreensaverPage", "Updating forecast. Forecast items: %zu", weather->n_forecast_items);
+      for (int i = 0; i < weather->n_forecast_items && i < 5; i++) { // Update all available forecasts but no more than 5 as that's how many forecasts are displayed on the page
+        auto item = weather->forecast_items[i];
+        Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_names[i], item->display_string, 250);
+        Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_icon_names[i], item->weather_icon, 250);
+        Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_max_min_names[i], item->temperature_maxmin_string, 250);
+        Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_rain_names[i], item->precipitation_string, 250);
+        Nextion::set_component_text(GUI_SCREENSAVER_PAGE::label_forecast_day_wind_names[i], item->wind_string, 250);
+      }
+      ESP_LOGD("ScreensaverPage", "Forecast updated. Successfully updated screensaver page with new weather data.");
+    }
   }
+  weather.reset();
+  ScreensaverPage::_lvgl_render();
 
   vTaskDelete(NULL);         // Stop this task without causing about.
   vTaskDelay(portMAX_DELAY); // Wait for task to be deleted.
@@ -608,11 +578,7 @@ void ScreensaverPage::_lvgl_render() {
   }
   state.inside = inside;
 
-  std::shared_ptr<NSPanelWeatherUpdate> weather;
-  if (ScreensaverPage::_weather_update_data_mutex != NULL && xSemaphoreTake(ScreensaverPage::_weather_update_data_mutex, pdMS_TO_TICKS(250)) == pdPASS) {
-    weather = ScreensaverPage::_weather_update_data;
-    xSemaphoreGive(ScreensaverPage::_weather_update_data_mutex);
-  }
+  std::shared_ptr<NSPanelWeatherUpdate> weather = ScreensaverPage::_weather_update_data.get();
   if (weather) {
     state.outside_icon = LvglText::weather_icon(weather->current_weather_icon);
     state.outside = LvglText::utf8(weather->current_temperature_string);
@@ -656,7 +622,7 @@ void ScreensaverPage::_lvgl_render() {
     }
   }
   if (calendar_card) {
-    // Decoded already (the MQTT handler's deferred job, or show()): this only formats a locked copy.
+    // Decoded already, on mqtt_dispatch as it arrived: this only formats a copy.
     std::shared_ptr<NSPanelCalendarUpdate> calendar = ScreensaverPage::_calendar.get();
     ScreensaverPage::_format_calendar(calendar.get(), config->clock_us_style, state);
   }
@@ -675,46 +641,6 @@ std::string ScreensaverPage::_cards_signature(const NSPanelConfig &config) {
     }
   }
   return signature;
-}
-
-void ScreensaverPage::_decode_calendar_if_stale() {
-  if (ScreensaverPage::_calendar_mutex == NULL || xSemaphoreTake(ScreensaverPage::_calendar_mutex, pdMS_TO_TICKS(1000)) != pdPASS) {
-    ESP_LOGW("ScreensaverPage", "Failed to take calendar mutex to decode an update. Will retry on the next one.");
-    return;
-  }
-  // Held through the unpack (a few ms for the <= 4 KB the MQTT buffer allows) so two decoders cannot store
-  // an older update after a newer one.
-  if (ScreensaverPage::_calendar_stale) {
-    ScreensaverPage::_calendar_stale = false;
-    NSPanelCalendarUpdate *update = nspanel_calendar_update__unpack(psram_protobuf_allocator(), ScreensaverPage::_calendar_mqtt_data.size(), ScreensaverPage::_calendar_mqtt_data.data());
-    if (update != NULL) {
-      ESP_LOGI("ScreensaverPage", "Calendar update: %zu event(s), looking %d h ahead.", update->n_events, (int)update->lookahead_hours);
-      ScreensaverPage::_calendar.set(std::shared_ptr<NSPanelCalendarUpdate>(update, [](NSPanelCalendarUpdate *data) { nspanel_calendar_update__free_unpacked(data, psram_protobuf_allocator()); }));
-    } else {
-      ESP_LOGE("ScreensaverPage", "Got a calendar update but failed to decode it. Keeping the previous one.");
-    }
-  }
-  xSemaphoreGive(ScreensaverPage::_calendar_mutex);
-}
-
-void ScreensaverPage::_decode_energy_if_stale() {
-  if (ScreensaverPage::_energy_mutex == NULL || xSemaphoreTake(ScreensaverPage::_energy_mutex, pdMS_TO_TICKS(1000)) != pdPASS) {
-    ESP_LOGW("ScreensaverPage", "Failed to take energy mutex to decode an update. Will retry on the next one.");
-    return;
-  }
-  if (ScreensaverPage::_energy_stale) {
-    ScreensaverPage::_energy_stale = false;
-    NSPanelEnergyUpdate *update = nspanel_energy_update__unpack(psram_protobuf_allocator(), ScreensaverPage::_energy_mqtt_data.size(), ScreensaverPage::_energy_mqtt_data.data());
-    if (update != NULL) {
-      // The cost in cents: no float formatting in the log.
-      ESP_LOGI("ScreensaverPage", "Energy update: power %d (%ld W), cost %d (%ld cents %s/day), lights %d (%ld, alert: %s).", (int)update->power, (long)update->power_watts, (int)update->cost,
-               std::lround(update->cost_per_day * 100), update->currency != NULL ? update->currency : "", (int)update->lights, (long)update->lights_on, update->lights_alert ? "yes" : "no");
-      ScreensaverPage::_energy.set(std::shared_ptr<NSPanelEnergyUpdate>(update, [](NSPanelEnergyUpdate *data) { nspanel_energy_update__free_unpacked(data, psram_protobuf_allocator()); }));
-    } else {
-      ESP_LOGE("ScreensaverPage", "Got an energy update but failed to decode it. Keeping the previous one.");
-    }
-  }
-  xSemaphoreGive(ScreensaverPage::_energy_mutex);
 }
 
 EnergyValues ScreensaverPage::_energy_values(const NSPanelEnergyUpdate *update) {
