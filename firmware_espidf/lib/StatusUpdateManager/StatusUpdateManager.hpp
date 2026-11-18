@@ -69,8 +69,9 @@ private:
   static double _to_display_temperature(double celsius);
 
   /**
-   * Store one temperature reading in Celsius (no offset) and publish a new average when due: once
-   * _TEMPERATURE_WARMUP_READINGS readings exist, then every _TEMPERATURE_AVERAGE_READINGS readings.
+   * Take one temperature reading in Celsius (no offset). The first average is the mean of the readings so far, once
+   * _TEMPERATURE_WARMUP_READINGS exist; after that the average is an exponential moving average. A new value is
+   * posted when it has moved by _TEMPERATURE_PUBLISH_DELTA, or after _AVERAGE_READINGS readings.
    */
   static void _add_temperature_reading(double celsius);
 
@@ -83,19 +84,43 @@ private:
   // Post AVERAGE_TEMP_UPDATE with the current average in the display unit. The caller says how long it may wait for room in the event queue.
   static void _post_average_temperature(TickType_t timeout);
 
+  // Time between two status reports.
+  static constexpr uint64_t _STATUS_UPDATE_INTERVAL_US = 30ULL * 1000 * 1000;
+
   // Number of readings the first average waits for.
   static constexpr uint8_t _TEMPERATURE_WARMUP_READINGS = 5;
 
   // Consecutive bad readings (about one a second) after which the sensor counts as failed.
   static constexpr uint8_t _TEMPERATURE_FAILURE_READINGS = 60;
 
+  // Readings (one a second) in the humidity and pressure buffers, and the longest the temperature goes
+  // between two AVERAGE_TEMP_UPDATE events.
+  static constexpr uint8_t _AVERAGE_READINGS = 30;
+
+  // Smoothing across readings: each new reading moves the average by this fraction of the difference. At one
+  // reading a second, 0.1 is a time constant of about 10 s.
+  static constexpr double _TEMPERATURE_EMA_ALPHA = 0.1;
+
+  // Post AVERAGE_TEMP_UPDATE when the average has moved by this much (in the display unit) since the last one.
+  static constexpr double _TEMPERATURE_PUBLISH_DELTA = 0.1;
+
+  // The NTC thermistor and its divider (BOARD_SONOFF): 10 kOhm at 25 C, B = 3950, on the ground side of a
+  // 10 kOhm series resistor fed from 3.3 V. Not read from the schematic; see TEMP_SENSOR.md.
+  static constexpr double _THERMISTOR_R0_OHMS = 10000.0;
+  static constexpr double _THERMISTOR_B = 3950.0;
+  static constexpr double _THERMISTOR_T0_KELVIN = 25.0 + 273.15;
+  static constexpr double _THERMISTOR_SERIES_OHMS = 10000.0;
+  static constexpr double _ADC_SUPPLY_VOLTS = 3.3;
+
   // Thermistor divider voltage, in mV, outside which a reading is taken to be the ADC at a rail (a broken or
   // disconnected thermistor) and not a temperature. About -19 C at the top, and well beyond 60 C at the bottom.
   static constexpr int _TEMPERATURE_ADC_MIN_MV = 500;
   static constexpr int _TEMPERATURE_ADC_MAX_MV = 3000;
 
-  // Size of the reading buffer, and the number of readings between two averages once warmed up.
-  static constexpr uint8_t _TEMPERATURE_AVERAGE_READINGS = 30;
+  // ADC samples taken in a burst for each reading. The highest and lowest are dropped and the rest averaged. A reading
+  // needs at least _ADC_MIN_GOOD_SAMPLES successful ones.
+  static constexpr int _ADC_SAMPLES_PER_READING = 24;
+  static constexpr int _ADC_MIN_GOOD_SAMPLES = 16;
 
   // Should temperature be reported in fahrenheit or celsius?
   static inline std::atomic<bool> _measure_temperature_in_fahrenheit = false;
@@ -103,7 +128,7 @@ private:
   // Calibration value for the read temperature from the manager, in the display unit.
   static inline std::atomic<float> _temperature_offset_calibration = 0;
 
-  // The current average of the readings, in Celsius with no offset.
+  // The current smoothed temperature, in Celsius with no offset.
   static inline MutexWrapped<double> _measured_average_temperature = 0;
 
   // Whether the unit and offset have been read from the config. The first average waits for it: the unit
@@ -113,20 +138,16 @@ private:
   // False until the first average exists.
   static inline std::atomic<bool> _temperature_valid = false;
 
-  // Records of measured temperatures from _measure_temperature function, in Celsius with no offset.
-  static inline float _measured_temperatures[_TEMPERATURE_AVERAGE_READINGS];
+  // While warming up: the readings so far, in Celsius with no offset.
+  static inline double _warmup_sum = 0;
+  static inline uint32_t _warmup_count = 0;
 
-  // What index is the next index to insert/replace read temperature into.
-  static inline uint8_t _measured_temperature_next_index;
-
-  // How many readings have been read from the temperature sensor (at most the buffer size)
-  static inline uint8_t _measured_temperature_total_samples;
+  // The average last posted in AVERAGE_TEMP_UPDATE (display unit), and the readings since.
+  static inline MutexWrapped<double> _last_posted_temperature = 0;
+  static inline uint8_t _readings_since_post = 0;
 
   // Bad readings in a row, and whether the failed state has been reported.
   static inline uint8_t _bad_temperature_readings = 0;
-
-  // Readings taken since the last average was published.
-  static inline uint8_t _readings_since_average;
 
 #if not defined(BOARD_CUSTOM)
 
@@ -146,7 +167,7 @@ private:
   static inline MutexWrapped<double> _measured_average_humidity = 0;
 
   // Records of measured humidity from _measure_temperature function.
-  static inline float _measured_humidity[30];
+  static inline float _measured_humidity[_AVERAGE_READINGS];
 
   // What index is the next index to insert/replace read humidity into.
   static inline uint8_t _measured_humidity_next_index;
@@ -158,7 +179,7 @@ private:
   static inline MutexWrapped<double> _measured_average_pressure = 0;
 
   // Records of measured pressure from _measure_temperature function.
-  static inline float _measured_pressure[30];
+  static inline float _measured_pressure[_AVERAGE_READINGS];
 
   // What index is the next index to insert/replace read pressure into.
   static inline uint8_t _measured_pressure_next_index;

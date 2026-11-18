@@ -13,6 +13,7 @@
 #include <WebManager.hpp>
 #include <WebUiEmbedded.hpp>
 #include <WiFiManager.hpp>
+#include <algorithm>
 #include <cmath>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
@@ -124,7 +125,7 @@ void StatusUpdateManager::init() {
   }
 #endif
 
-  err = esp_timer_start_periodic(StatusUpdateManager::_status_update_timer, 30000 * 1000); // Send status update every 30 seconds
+  err = esp_timer_start_periodic(StatusUpdateManager::_status_update_timer, StatusUpdateManager::_STATUS_UPDATE_INTERVAL_US); // Send status update every 30 seconds
   if (err != ESP_OK) {
     ESP_LOGE("StatusUpdateManager", "Failed to start periodic timer for sending status updates! Error: %s", esp_err_to_name(err));
   }
@@ -153,6 +154,8 @@ bool StatusUpdateManager::has_valid_temperature() {
 
 void StatusUpdateManager::_post_average_temperature(TickType_t timeout) {
   double average = StatusUpdateManager::_to_display_temperature(StatusUpdateManager::_measured_average_temperature.get());
+  StatusUpdateManager::_last_posted_temperature.set(average);
+  StatusUpdateManager::_readings_since_post = 0;
   esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, &average, sizeof(average), timeout);
 }
 
@@ -167,9 +170,9 @@ void StatusUpdateManager::_note_bad_temperature_reading(const char *reason) {
       ESP_LOGE("StatusUpdateManager", "No usable temperature reading for %d seconds (last: %s). Reporting no temperature and switching thermostat relays off.", (int)StatusUpdateManager::_TEMPERATURE_FAILURE_READINGS, reason);
       StatusUpdateManager::_temperature_valid = false;
       // Start over when the sensor comes back: a new warm-up, not an average with readings from before the outage.
-      StatusUpdateManager::_measured_temperature_next_index = 0;
-      StatusUpdateManager::_measured_temperature_total_samples = 0;
-      StatusUpdateManager::_readings_since_average = 0;
+      StatusUpdateManager::_warmup_sum = 0;
+      StatusUpdateManager::_warmup_count = 0;
+      StatusUpdateManager::_readings_since_post = 0;
       esp_event_post(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED, NULL, 0, pdMS_TO_TICKS(250));
     }
   }
@@ -180,33 +183,30 @@ void StatusUpdateManager::_add_temperature_reading(double celsius) {
     ESP_LOGI("StatusUpdateManager", "Temperature readings are usable again after %d bad ones.", (int)StatusUpdateManager::_bad_temperature_readings);
     StatusUpdateManager::_bad_temperature_readings = 0;
   }
-  StatusUpdateManager::_measured_temperatures[StatusUpdateManager::_measured_temperature_next_index++] = celsius;
-  if (StatusUpdateManager::_measured_temperature_next_index >= StatusUpdateManager::_TEMPERATURE_AVERAGE_READINGS) {
-    StatusUpdateManager::_measured_temperature_next_index = 0;
-  }
-  if (StatusUpdateManager::_measured_temperature_total_samples < StatusUpdateManager::_TEMPERATURE_AVERAGE_READINGS) {
-    StatusUpdateManager::_measured_temperature_total_samples++;
-  }
-  StatusUpdateManager::_readings_since_average++;
 
-  // The first average comes once a few readings exist, then one every _TEMPERATURE_AVERAGE_READINGS readings to skip unnecessary events.
-  bool first_average_due = !StatusUpdateManager::_temperature_valid && StatusUpdateManager::_temperature_unit_known && StatusUpdateManager::_measured_temperature_total_samples >= StatusUpdateManager::_TEMPERATURE_WARMUP_READINGS;
-  bool regular_average_due = StatusUpdateManager::_temperature_valid && StatusUpdateManager::_readings_since_average >= StatusUpdateManager::_TEMPERATURE_AVERAGE_READINGS;
-  if (!first_average_due && !regular_average_due) {
+  if (!StatusUpdateManager::_temperature_valid) {
+    // Warm-up: the first average is the mean of what is there once a few readings exist, and the unit is known.
+    StatusUpdateManager::_warmup_sum += celsius;
+    StatusUpdateManager::_warmup_count++;
+    if (StatusUpdateManager::_warmup_count < StatusUpdateManager::_TEMPERATURE_WARMUP_READINGS || !StatusUpdateManager::_temperature_unit_known) {
+      return;
+    }
+    double average = StatusUpdateManager::_warmup_sum / StatusUpdateManager::_warmup_count;
+    StatusUpdateManager::_measured_average_temperature.set(average);
+    ESP_LOGI("StatusUpdateManager", "Temperature: first average %.1f from %d readings.", StatusUpdateManager::_to_display_temperature(average), (int)StatusUpdateManager::_warmup_count);
+    StatusUpdateManager::_temperature_valid = true;
+    StatusUpdateManager::_post_average_temperature(pdMS_TO_TICKS(250));
     return;
   }
 
-  double average = 0;
-  for (int i = 0; i < StatusUpdateManager::_measured_temperature_total_samples; i++) {
-    average += StatusUpdateManager::_measured_temperatures[i] / StatusUpdateManager::_measured_temperature_total_samples;
+  double smoothed = StatusUpdateManager::_measured_average_temperature.get();
+  smoothed += StatusUpdateManager::_TEMPERATURE_EMA_ALPHA * (celsius - smoothed);
+  StatusUpdateManager::_measured_average_temperature.set(smoothed);
+  StatusUpdateManager::_readings_since_post++;
+  double moved = std::fabs(StatusUpdateManager::_to_display_temperature(smoothed) - StatusUpdateManager::_last_posted_temperature.get());
+  if (moved >= StatusUpdateManager::_TEMPERATURE_PUBLISH_DELTA || StatusUpdateManager::_readings_since_post >= StatusUpdateManager::_AVERAGE_READINGS) {
+    StatusUpdateManager::_post_average_temperature(pdMS_TO_TICKS(250));
   }
-  StatusUpdateManager::_measured_average_temperature.set(average);
-  if (first_average_due) {
-    ESP_LOGI("StatusUpdateManager", "Temperature: first average %.1f from %d readings.", StatusUpdateManager::_to_display_temperature(average), (int)StatusUpdateManager::_measured_temperature_total_samples);
-  }
-  StatusUpdateManager::_temperature_valid = true;
-  StatusUpdateManager::_readings_since_average = 0;
-  StatusUpdateManager::_post_average_temperature(pdMS_TO_TICKS(250));
 }
 
 void StatusUpdateManager::reboot() {
@@ -294,27 +294,43 @@ void StatusUpdateManager::_send_status_update(void *arg) {
 #if defined(BOARD_SONOFF)
 void StatusUpdateManager::_measure_temperature(void *arg) {
   for (;;) {
-    int read_voltage_mv;
+    // One reading is a burst of ADC samples: drop the highest and lowest and average the rest, so a spike
+    // (Wi-Fi transmit, the relays, the backlight) does not become a reading.
+    int samples_mv[StatusUpdateManager::_ADC_SAMPLES_PER_READING];
+    int good_samples = 0;
+    const char *failure = "too few good ADC samples";
+    for (int i = 0; i < StatusUpdateManager::_ADC_SAMPLES_PER_READING; i++) {
 #if defined(NSPM_QEMU)
-    // QEMU does not emulate the SAR ADC: a conversion spins forever on a
-    // conversion-done bit with the ADC spinlock held, freezing the core.
-    // Report the NTC voltage for roughly 22 C instead.
-    read_voltage_mv = 1680;
+      // QEMU does not emulate the SAR ADC: a conversion spins forever on a
+      // conversion-done bit with the ADC spinlock held, freezing the core.
+      // Report the NTC voltage for roughly 22 C instead.
+      samples_mv[good_samples++] = 1680;
 #else
-    int read_voltage_mv_raw;
-    if (adc_oneshot_read(StatusUpdateManager::_temp_adc_handle, ADC_CHANNEL_2, &read_voltage_mv_raw) != ESP_OK) {
-      StatusUpdateManager::_note_bad_temperature_reading("ADC read failed");
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      continue;
-    }
-
-    if (adc_cali_raw_to_voltage(StatusUpdateManager::_temp_calibration_data, read_voltage_mv_raw, &read_voltage_mv) != ESP_OK) {
-      // A task that returns is aborted by the OS and reboots the panel, so retry instead.
-      StatusUpdateManager::_note_bad_temperature_reading("ADC calibration conversion failed");
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      continue;
-    }
+      int raw;
+      int mv;
+      if (adc_oneshot_read(StatusUpdateManager::_temp_adc_handle, ADC_CHANNEL_2, &raw) != ESP_OK) {
+        failure = "ADC read failed";
+        continue;
+      }
+      if (adc_cali_raw_to_voltage(StatusUpdateManager::_temp_calibration_data, raw, &mv) != ESP_OK) {
+        // A task that returns is aborted by the OS and reboots the panel, so this must not return.
+        failure = "ADC calibration conversion failed";
+        continue;
+      }
+      samples_mv[good_samples++] = mv;
 #endif
+    }
+    if (good_samples < StatusUpdateManager::_ADC_MIN_GOOD_SAMPLES) {
+      StatusUpdateManager::_note_bad_temperature_reading(failure);
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      continue;
+    }
+    std::sort(samples_mv, samples_mv + good_samples);
+    long sum_mv = 0;
+    for (int i = 1; i < good_samples - 1; i++) { // Not the lowest and highest.
+      sum_mv += samples_mv[i];
+    }
+    double read_voltage_mv = (double)sum_mv / (good_samples - 2);
 
     // We now have temperature as a voltage. Convert voltage into celsius:
     if (read_voltage_mv <= StatusUpdateManager::_TEMPERATURE_ADC_MIN_MV || read_voltage_mv >= StatusUpdateManager::_TEMPERATURE_ADC_MAX_MV) {
@@ -322,18 +338,18 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }
-    double read_voltage_v = (double)read_voltage_mv / 1000.0; // Convert mV to V.
+    double read_voltage_v = read_voltage_mv / 1000.0; // Convert mV to V.
 
     // Calculate temperature from NTC using the Steinhart–Hart equation
     // See https://robertvicol.com/tech/arduino-measuring-temperature-with-ntc-steinhart-hart-formula/ for example
     // Thanks to @atirage in https://github.com/arendst/Tasmota/discussions/15737 for providing reference values.
-    double R2 = 10000.0 / ((3.3 / read_voltage_v) - 1);
-    double steinhart = R2 / 10000.0;                 // (R/Ro)
-    steinhart = log(steinhart);                      // ln(R/Ro)
-    steinhart /= 3950.0;                             // 1/B * ln(R/Ro)
-    steinhart += 1.0 / (25.0 + 273.15);              // + (1/To)
-    steinhart = 1.0 / steinhart;                     // Invert
-    double current_temperature = steinhart - 273.15; // convert Kelvin to *C
+    double thermistor_ohms = StatusUpdateManager::_THERMISTOR_SERIES_OHMS / ((StatusUpdateManager::_ADC_SUPPLY_VOLTS / read_voltage_v) - 1);
+    double steinhart = thermistor_ohms / StatusUpdateManager::_THERMISTOR_R0_OHMS; // (R/Ro)
+    steinhart = log(steinhart);                                                    // ln(R/Ro)
+    steinhart /= StatusUpdateManager::_THERMISTOR_B;                               // 1/B * ln(R/Ro)
+    steinhart += 1.0 / StatusUpdateManager::_THERMISTOR_T0_KELVIN;                 // + (1/To)
+    steinhart = 1.0 / steinhart;                                                   // Invert
+    double current_temperature = steinhart - 273.15;                               // convert Kelvin to *C
 
     StatusUpdateManager::_add_temperature_reading(current_temperature);
 
@@ -365,12 +381,12 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
 
       // Update humidity
       StatusUpdateManager::_measured_humidity[StatusUpdateManager::_measured_humidity_next_index++] = humidity;
-      // We only have space for 30 samples.
-      if (StatusUpdateManager::_measured_humidity_total_samples < 30) {
+      // We only have space for _AVERAGE_READINGS samples.
+      if (StatusUpdateManager::_measured_humidity_total_samples < StatusUpdateManager::_AVERAGE_READINGS) {
         StatusUpdateManager::_measured_humidity_total_samples++;
       }
 
-      if (StatusUpdateManager::_measured_humidity_next_index >= 30) {
+      if (StatusUpdateManager::_measured_humidity_next_index >= StatusUpdateManager::_AVERAGE_READINGS) {
         StatusUpdateManager::_measured_humidity_next_index = 0;
         // Only calculate and send event ever 30 seconds to skip unnecessary events
 
@@ -384,12 +400,12 @@ void StatusUpdateManager::_measure_temperature(void *arg) {
 
       // Update pressure
       StatusUpdateManager::_measured_pressure[StatusUpdateManager::_measured_pressure_next_index++] = pressure;
-      // We only have space for 30 samples.
-      if (StatusUpdateManager::_measured_pressure_total_samples < 30) {
+      // We only have space for _AVERAGE_READINGS samples.
+      if (StatusUpdateManager::_measured_pressure_total_samples < StatusUpdateManager::_AVERAGE_READINGS) {
         StatusUpdateManager::_measured_pressure_total_samples++;
       }
 
-      if (StatusUpdateManager::_measured_pressure_next_index >= 30) {
+      if (StatusUpdateManager::_measured_pressure_next_index >= StatusUpdateManager::_AVERAGE_READINGS) {
         StatusUpdateManager::_measured_pressure_next_index = 0;
         // Only calculate and send event ever 30 seconds to skip unnecessary events
 
@@ -579,7 +595,7 @@ void StatusUpdateManager::_update_manager_event_handler(void *arg, esp_event_bas
 
     // Restore the default 30 second status update interval
     esp_timer_stop(StatusUpdateManager::_status_update_timer);
-    esp_timer_start_periodic(StatusUpdateManager::_status_update_timer, 30000 * 1000);
+    esp_timer_start_periodic(StatusUpdateManager::_status_update_timer, StatusUpdateManager::_STATUS_UPDATE_INTERVAL_US);
     break;
   }
 
