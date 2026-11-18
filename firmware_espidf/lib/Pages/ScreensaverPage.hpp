@@ -1,8 +1,10 @@
 #pragma once
+#include <MqttSubscriptions.hpp>
 #include <MutexWrapper.hpp>
 #include <atomic>
 #include <esp_event.h>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <protobuf_nspanel.pb-c.h>
@@ -66,22 +68,17 @@ private:
 
   /**
    * With LVGL as the UI (LvglUi), and the screensaver shown: draw it, from everything this page
-   * holds. Called wherever the Nextion version updates a label; ScreensaverView redraws only what
-   * changed. Not with _weather_update_data_mutex held.
+   * holds. ScreensaverView redraws only what changed. From show()'s task or LvglUi's; anything else
+   * calls _request_lvgl_render().
    */
   static void _lvgl_render();
 
   /**
-   * Decode the newest status/calendar bytes into _calendar, if they changed since the last decode.
-   * Not on the MQTT task: from LvglUi's task (the handler defers it) or show()'s.
+   * With LVGL as the UI and the screensaver shown: _lvgl_render() on LvglUi's task. One queued job
+   * covers any number of requests, and it renders the newest state. Keeps the formatting (and its
+   * stack) off mqtt_dispatch.
    */
-  static void _decode_calendar_if_stale();
-
-  /**
-   * Decode the newest status/energy bytes into _energy, if they changed since the last decode. As
-   * _decode_calendar_if_stale(): from LvglUi's task or show()'s.
-   */
-  static void _decode_energy_if_stale();
+  static void _request_lvgl_render();
 
   /**
    * `update`'s values for EnergyFormat (NULL: none arrived yet). A currency symbol the fonts cannot
@@ -103,9 +100,19 @@ private:
   static std::string _cards_signature(const NSPanelConfig &config);
 
   /**
-   * Handle events from MQTT manager, such as new weather forecasts sent over MQTT
+   * The status topics' and the inside temperature topic's callbacks, from their mqtt::Subscription
+   * handles. They run on mqtt_dispatch. context is the generation the hold was taken for
+   * (_status_generation, or _inside_temperature_generation): a delivery from a hold replaced since is
+   * dropped, and so is an empty payload (a cleared retained value). Protobufs are decoded here, so a
+   * card always renders from the newest decoded value.
    */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _handle_time(const mqtt::Message &message, void *context);
+  static void _handle_date(const mqtt::Message &message, void *context);
+  static void _handle_ampm(const mqtt::Message &message, void *context);
+  static void _handle_weather(const mqtt::Message &message, void *context);
+  static void _handle_calendar(const mqtt::Message &message, void *context);
+  static void _handle_energy(const mqtt::Message &message, void *context);
+  static void _handle_inside_temperature(const mqtt::Message &message, void *context);
 
   /**
    * Handle events from NSPM_ConfigManager
@@ -123,34 +130,31 @@ private:
   static void _shared_ptr_weather_update_cleanup(NSPanelWeatherUpdate *data);
 
   /**
-   * Subscribe to relevant MQTT topics, moving existing subscriptions if the manager address or inside temperature topic changed.
+   * Hold the relevant MQTT topics, replacing the handles only if the manager address or inside temperature topic changed.
    */
   static void _subscribe_to_mqtt_topics();
 
   // Vars:
-  // The most current weather data for forecast and current weather
-  static inline std::shared_ptr<NSPanelWeatherUpdate> _weather_update_data = nullptr;
-  static inline std::vector<uint8_t> _weather_update_mqtt_data; // Raw data received from MQTT
+  static inline std::atomic<bool> _initialised = false;
 
-  // Newest status/calendar bytes as received (the MQTT task stores them, nothing else), and the decoded
-  // update. _calendar_mutex covers the bytes, the flag and a decode; _calendar is read by anyone, as a
-  // copy of the shared_ptr (which MutexWrapped::get() makes under its lock).
-  static inline SemaphoreHandle_t _calendar_mutex = NULL;
-  static inline std::vector<uint8_t> _calendar_mqtt_data;
-  static inline bool _calendar_stale = false;
-  static inline std::atomic<bool> _calendar_job_queued = false;
+  // The newest decoded status/weather, status/calendar and status/energy (decoded on mqtt_dispatch as
+  // they arrive). Read by anyone, as a copy of the shared_ptr (which MutexWrapped::get() makes under its lock).
+  static inline MutexWrapped<std::shared_ptr<NSPanelWeatherUpdate>> _weather_update_data;
   static inline MutexWrapped<std::shared_ptr<NSPanelCalendarUpdate>> _calendar;
-
-  // status/energy, kept as status/calendar is.
-  static inline SemaphoreHandle_t _energy_mutex = NULL;
-  static inline std::vector<uint8_t> _energy_mqtt_data;
-  static inline bool _energy_stale = false;
-  static inline std::atomic<bool> _energy_job_queued = false;
   static inline MutexWrapped<std::shared_ptr<NSPanelEnergyUpdate>> _energy;
   static inline MutexWrapped<std::string> _cards_signature_seen;
 
-  // Mutex to only allow one task at the time access to _weather_update_data
-  static inline SemaphoreHandle_t _weather_update_data_mutex = NULL;
+  // An _lvgl_render() job is queued on LvglUi's task.
+  static inline std::atomic<bool> _lvgl_render_queued = false;
+
+  // The holds on the manager's status topics (time, date, ampm, weather, calendar, energy) and on the
+  // inside temperature sensor's topic. _subscriptions_mutex serialises replacing them; each generation
+  // is bumped before its handles are replaced, so a callback can tell its hold is no longer current.
+  static inline std::mutex _subscriptions_mutex;
+  static inline mqtt::Subscription _status_subscriptions[6];
+  static inline std::atomic<uint32_t> _status_generation = 0;
+  static inline mqtt::Subscription _inside_temperature_subscription;
+  static inline std::atomic<uint32_t> _inside_temperature_generation = 0;
 
   // The current time string
   static inline MutexWrapped<std::string> _current_time;
