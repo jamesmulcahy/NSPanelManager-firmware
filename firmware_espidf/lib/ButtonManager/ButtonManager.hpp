@@ -78,6 +78,7 @@ private:
    * @brief Handle new temperature and if in thermostat mode check for any changes and set relay state accordingly.
    */
   static void _new_temperature_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _temperature_sensor_failed_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
    * @brief Handle data received over MQTT

@@ -42,6 +42,7 @@ void ScreensaverPage::init() {
   MqttManager::register_handler<ScreensaverPage::_mqtt_event_handler, PanelMetrics::HANDLER_SCREENSAVER_PAGE>(MQTT_EVENT_ANY, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, ESP_EVENT_ANY_ID, ScreensaverPage::_nspm_config_event_handler, NULL);
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, ScreensaverPage::_new_temperature_event, NULL);
+  esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED, ScreensaverPage::_new_temperature_event, NULL);
 
   ScreensaverPage::_subscribe_to_mqtt_topics();
 }
@@ -339,6 +340,14 @@ void ScreensaverPage::_new_temperature_event(void *arg, esp_event_base_t event_b
     ScreensaverPage::_current_temperature.set(temperature_str);
     ScreensaverPage::_update_displayed_temperature();
 
+    break;
+  }
+  case statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED: {
+    if (!ScreensaverPage::_inside_temperature_sensor_state_topic.get().empty()) {
+      return;
+    }
+    ScreensaverPage::_current_temperature.set("--"); // Better than a value that is no longer measured.
+    ScreensaverPage::_update_displayed_temperature();
     break;
   }
 

@@ -32,6 +32,7 @@ void ButtonManager::init() {
 
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, ButtonManager::_nspm_configmanager_event_handler, NULL);
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, ButtonManager::_new_temperature_event, NULL);
+  esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED, ButtonManager::_temperature_sensor_failed_event, NULL);
 
   ButtonManager::_relay_io_config = {};
   ButtonManager::_relay_io_config.intr_type = GPIO_INTR_DISABLE;
@@ -493,6 +494,18 @@ void ButtonManager::_nspm_configmanager_event_handler(void *arg, esp_event_base_
     ButtonManager::_current_config = config;
   } else {
     ESP_LOGE("ButtonManager", "Got new config update but ButtonManager failed to read config. Cannot update internal values.");
+  }
+}
+
+void ButtonManager::_temperature_sensor_failed_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  // Without a temperature a thermostat cannot decide anything, and a relay left on would heat or cool for good. Fail safe: off.
+  if ((ConfigManager::relay1_thermostat_heat_mode || ConfigManager::relay1_thermostat_cool_mode) && _get_relay_state(1)) {
+    ESP_LOGW("ButtonManager", "Temperature sensor failed. Switching off relay1, which is in thermostat mode.");
+    _set_relay_state(1, false, true);
+  }
+  if ((ConfigManager::relay2_thermostat_heat_mode || ConfigManager::relay2_thermostat_cool_mode) && _get_relay_state(2)) {
+    ESP_LOGW("ButtonManager", "Temperature sensor failed. Switching off relay2, which is in thermostat mode.");
+    _set_relay_state(2, false, true);
   }
 }
 
