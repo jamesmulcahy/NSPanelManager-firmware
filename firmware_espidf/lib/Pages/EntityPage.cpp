@@ -69,7 +69,8 @@ void EntityPage::unshow() {
 void EntityPage::_handle_state(const mqtt::Message &message, void *context) {
   // An empty payload is a cleared retained state. A callback from a hold released since (another
   // entity shown, or the page left) carries an older generation.
-  if (message.payload.empty() || static_cast<uint32_t>(reinterpret_cast<uintptr_t>(context)) != EntityPage::_generation.load()) {
+  const uint32_t generation = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(context));
+  if (message.payload.empty() || generation != EntityPage::_generation.load()) {
     return;
   }
   NSPanelEntityState *new_state = nspanel_entity_state__unpack(psram_protobuf_allocator(), message.payload.size(), message.payload.data());
@@ -105,7 +106,19 @@ void EntityPage::_handle_state(const mqtt::Message &message, void *context) {
         ESP_LOGE("EntityPage", "Unknown entity state case!");
       }
 
-      EntityPage::_update_display();
+      if (LvglUi::active()) {
+        // mqtt_dispatch's stack is small and rendering needs several KB (float formatting, view
+        // structs): render on the GUI task. The page is opened there too (begin_page), so only
+        // the generation can tell whether the page was left or switched in the meantime.
+        LvglUi::defer([generation]() {
+          if (generation == EntityPage::_generation.load()) {
+            EntityPage::_update_display();
+          }
+        });
+      } else {
+        // Nextion mode has no GUI task (defer would drop the work): update inline as before.
+        EntityPage::_update_display();
+      }
     } else {
       ESP_LOGE("EntityPage", "Failed to take mutex to update current state.");
       nspanel_entity_state__free_unpacked(new_state, psram_protobuf_allocator());
