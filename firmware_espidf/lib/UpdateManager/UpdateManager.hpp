@@ -3,6 +3,7 @@
 #include <esp_http_client.h>
 #include <esp_https_ota.h>
 #include <freertos/semphr.h>
+#include <MqttSubscriptions.hpp>
 #include <vector>
 
 class UpdateManager {
@@ -39,9 +40,11 @@ public:
 
 private:
   /**
-   * @brief Handle events triggered from MQTT places.
+   * @brief Handle commands on the panel's command topic. Runs on the mqtt_dispatch task.
    */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _mqtt_message_handler(const mqtt::Message &message, void *context);
+
+  static inline mqtt::Subscription _command_subscription;
 
   /**
    * Carries out the "reboot" command. It shows a page and waits for the status report to go out, so
