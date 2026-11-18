@@ -55,6 +55,32 @@ static void wake_subscriptions() {
   }
 }
 
+// Handle of the delivery task (mqtt_dispatch), notified whenever there are callbacks to run.
+static TaskHandle_t dispatch_task_handle = NULL;
+
+static void wake_dispatch() {
+  if (dispatch_task_handle != NULL) [[likely]] {
+    xTaskNotifyGive(dispatch_task_handle);
+  }
+}
+
+// mqtt_dispatch's stack. Internal RAM: callbacks may write flash, and a task with a PSRAM stack
+// must never touch flash. Watch nspanel_task_stack_unused_bytes{task="mqtt_dispatch"} as consumers move to it.
+#define DISPATCH_TASK_STACK 5120
+// Below the MQTT client (10), so on_data() returns before its callbacks run, and above the page
+// tasks (6), so a delivery is not held up behind drawing.
+#define DISPATCH_TASK_PRIORITY 7
+// How long to wait between attempts to publish the online status.
+#define ONLINE_STATUS_RETRY_MS 5000
+
+// Times each delivered callback in nspanel_mqtt_handler_duration_seconds, keyed by the metrics id
+// passed to mqtt::subscribe() (a PanelMetrics::MqttHandler). An id out of range is not recorded.
+static void record_callback_duration(int id, int64_t elapsed_us) {
+  if (id >= 0 && id < PanelMetrics::HANDLER_COUNT) [[likely]] {
+    PanelMetrics::mqtt_handler_duration[id].observe_us(elapsed_us);
+  }
+}
+
 // Payloads, the cache and the per-filter bookkeeping. PSRAM, falling back to internal RAM.
 static void *subscriptions_alloc(size_t size) {
   return heap_caps_malloc_prefer(size, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
@@ -110,10 +136,10 @@ static mqtt::Hooks subscriptions_hooks() {
   hooks.alloc = &subscriptions_alloc;
   hooks.free = &heap_caps_free;
   hooks.wake_service = &wake_subscriptions;
-  hooks.wake_delivery = nullptr; // No delivery task yet: nothing on the panel holds a filter with a callback.
+  hooks.wake_delivery = &wake_dispatch;
   hooks.log = &subscriptions_log;
   hooks.latency = &log_subscribe_latency;
-  hooks.callback_duration = [](int id, int64_t elapsed_us) { PanelMetrics::mqtt_handler_duration[id].observe_us(elapsed_us); };
+  hooks.callback_duration = &record_callback_duration;
   return hooks;
 }
 
@@ -134,14 +160,15 @@ void MqttManager::start(std::string *server, uint16_t *port, std::string *userna
   esp_log_level_set("MqttManager", ConfigManager::log_level);
   ESP_LOGI("MqttManager", "Starting MQTTManager, will connect to %s:%d", server->c_str(), *port);
   MqttManager::_connected = false;
-  if (xTaskCreatePinnedToCore(MqttManager::_task_send_online_update, "mqtt_online_upd", 3072, NULL, 2, &MqttManager::_send_online_update_task_handle, 1) != pdPASS) {
-    // Without this task the panel never announces itself as online, so the manager only ever
-    // sees the retained last will. Everything else still works.
-    ESP_LOGE("MqttManager", "Failed to create MQTT online status task!");
-    MqttManager::_send_online_update_task_handle = NULL;
+  if (xTaskCreatePinnedToCore(MqttManager::_task_dispatch, "mqtt_dispatch", DISPATCH_TASK_STACK, NULL, DISPATCH_TASK_PRIORITY, &dispatch_task_handle, 1) != pdPASS) {
+    // No mqtt::subscribe() callback will run without this task. Legacy subscribers, which read
+    // esp-mqtt's events themselves, still work.
+    ESP_LOGE("MqttManager", "Failed to create MQTT dispatch task!");
+    dispatch_task_handle = NULL;
   }
   if (xTaskCreatePinnedToCore(MqttManager::_task_manage_subscriptions, "mqtt_subs", 4096, NULL, 4, &manage_subscriptions_task_handle, 1) != pdPASS) {
-    // Nothing will send SUBSCRIBE or UNSUBSCRIBE without this task. subscribe() and
+    // Nothing will send SUBSCRIBE or UNSUBSCRIBE without this task, and the panel never announces
+    // itself as online, so the manager only ever sees the retained last will. subscribe() and
     // unsubscribe() check the handle and report the failure to their callers.
     ESP_LOGE("MqttManager", "Failed to create MQTT subscription task!");
     manage_subscriptions_task_handle = NULL;
@@ -266,17 +293,17 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
         ESP_LOGW("MqttManager", "Failed to set TCP_NODELAY on MQTT socket %d: errno %d.", sock, errno);
       }
     }
-    // Supersede any retry still running for an earlier connection, then wake the task to
-    // publish the retained "online" status for this one.
+    // Supersede any retry still running for an earlier connection. The new generation tells
+    // mqtt_subs to publish the retained "online" status for this one, before its SUBSCRIBEs.
     MqttManager::_online_update_generation++;
     ESP_LOGI("MqttManager", "Connected to MQTT server. Online status generation %lu.", MqttManager::_online_update_generation.load());
-    if (MqttManager::_send_online_update_task_handle != NULL) [[likely]] {
-      xTaskNotifyGive(MqttManager::_send_online_update_task_handle);
-    }
 
     // Sessions are clean (disable_clean_session is not set), so the broker has dropped all
-    // our subscriptions: subscribe to everything again, and there is nothing left to unsubscribe from.
+    // our subscriptions: subscribe to everything again, and there is nothing left to unsubscribe
+    // from. mqtt_subs then publishes the online status first and sends the SUBSCRIBEs after it.
     subscriptions.on_connected();
+    // on_connected() wakes mqtt_subs too, but the online status must not depend on that.
+    wake_subscriptions();
     break;
 
   case MQTT_EVENT_SUBSCRIBED:
@@ -331,31 +358,54 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
   }
 }
 
-void MqttManager::_task_send_online_update(void *param) {
-  for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    // Keep retrying for as long as this connection lasts. A disconnect and a newer connect both
-    // bump the generation, which drops us back to waiting for the next notification. The publish
-    // below can deliver MQTT_EVENT_DISCONNECTED to _mqtt_event_handler on this task before it
-    // returns, so the generation may already have moved on by the time it does.
-    uint32_t generation = MqttManager::_online_update_generation.load();
-    ESP_LOGD("MqttManager", "Online status task woke for generation %lu.", generation);
-    while (MqttManager::_online_update_generation.load() == generation && MqttManager::connected()) {
-      if (MqttManager::publish(MqttManager::_state_topic,
-                               MqttManager::_online_status_message.c_str(),
-                               MqttManager::_online_status_message.size(),
-                               true) == ESP_OK) {
-        ESP_LOGD("MqttManager", "Published online status for generation %lu.", generation);
-        break;
-      }
-      ESP_LOGE("MqttManager", "Failed to publish online status to %s. Will retry in 5s.", MqttManager::_state_topic.c_str());
-      vTaskDelay(pdMS_TO_TICKS(5000));
+void MqttManager::_send_online_update(OnlineUpdate &online) {
+  // A connect and a disconnect both bump the generation. The connect handler sets _connected
+  // before it bumps, and the disconnect handler clears it before it bumps, so a new generation
+  // seen while connected is a connect that owes an "online".
+  uint32_t generation = MqttManager::_online_update_generation.load();
+  if (generation != online.generation) {
+    if (online.pending) {
+      ESP_LOGD("MqttManager", "Online status task parked; generation %lu -> %lu, connected=%d.",
+               online.generation, generation, MqttManager::connected());
     }
-    // Reached on every exit from the loop: published, superseded by a newer generation, or
-    // disconnected. If a wake is not followed by this line, the task is still inside publish()
-    // — which is the state that used to wedge the client for good.
-    ESP_LOGD("MqttManager", "Online status task parked; generation %lu -> %lu, connected=%d.",
-             generation, MqttManager::_online_update_generation.load(), MqttManager::connected());
+    online.generation = generation;
+    online.pending = MqttManager::connected();
+    online.next_attempt_us = 0;
+    if (online.pending) {
+      ESP_LOGD("MqttManager", "Online status task woke for generation %lu.", generation);
+    }
+  }
+  if (!online.pending || esp_timer_get_time() < online.next_attempt_us) {
+    return;
+  }
+  // The publish can deliver MQTT_EVENT_DISCONNECTED to _mqtt_event_handler on this task before it
+  // returns, so the generation may already have moved on by the time it does.
+  if (MqttManager::_online_update_generation.load() == online.generation && MqttManager::connected()) {
+    if (MqttManager::publish(MqttManager::_state_topic,
+                             MqttManager::_online_status_message.c_str(),
+                             MqttManager::_online_status_message.size(),
+                             true) == ESP_OK) {
+      ESP_LOGD("MqttManager", "Published online status for generation %lu.", online.generation);
+    } else {
+      // If the connection has gone, the next pass parks without publishing.
+      ESP_LOGE("MqttManager", "Failed to publish online status to %s. Will retry in 5s.", MqttManager::_state_topic.c_str());
+      online.next_attempt_us = esp_timer_get_time() + ONLINE_STATUS_RETRY_MS * 1000LL;
+      return;
+    }
+  }
+  // Published, superseded by a newer generation, or disconnected. If a wake is not followed by this
+  // line, the task is still inside publish(), which is the state that used to wedge the client for good.
+  ESP_LOGD("MqttManager", "Online status task parked; generation %lu -> %lu, connected=%d.",
+           online.generation, MqttManager::_online_update_generation.load(), MqttManager::connected());
+  online.pending = false;
+}
+
+void MqttManager::_task_dispatch(void *param) {
+  for (;;) {
+    // Waits only for work: deliver() never waits on the network, and every callback runs without
+    // the subscriptions lock. A notification while deliver() runs brings it straight back.
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    subscriptions.deliver();
   }
 }
 
@@ -385,8 +435,19 @@ esp_err_t MqttManager::unsubscribe(std::string topic) {
 }
 
 void MqttManager::_task_manage_subscriptions(void *param) {
+  OnlineUpdate online;
   for (;;) {
-    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+    TickType_t wait = pdMS_TO_TICKS(1000);
+    if (online.pending && online.next_attempt_us > 0) {
+      // Wake for the online status retry when it is due, not up to a second later.
+      int64_t until_us = online.next_attempt_us - esp_timer_get_time();
+      TickType_t until = until_us > 0 ? pdMS_TO_TICKS((until_us + 999) / 1000) : 0;
+      wait = std::min(wait, until);
+    }
+    ulTaskNotifyTake(pdTRUE, wait);
+    // The online status first: on a connect, it goes out before this connection's SUBSCRIBEs, so
+    // the manager is not kept waiting behind them on a weak link.
+    MqttManager::_send_online_update(online);
     subscriptions.service();
   }
 }
