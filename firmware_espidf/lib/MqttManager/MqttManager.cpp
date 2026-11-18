@@ -460,6 +460,10 @@ bool MqttManager::connected() {
   return MqttManager::_connected;
 }
 
+mqtt::Stats MqttManager::subscription_stats() {
+  return subscriptions.stats();
+}
+
 esp_err_t MqttManager::subscribe(std::string topic) {
   if (manage_subscriptions_task_handle == NULL) {
     ESP_LOGE("MqttManager", "Failed to subscribe to MQTT topic '%s'. MQTT client is not started.", topic.c_str());

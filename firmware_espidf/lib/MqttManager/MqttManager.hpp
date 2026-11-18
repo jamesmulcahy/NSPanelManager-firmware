@@ -9,8 +9,15 @@
 #include <utility>
 #include <vector>
 
+namespace mqtt {
+struct Stats;
+}
+
 class MqttManager {
 public:
+  /** Size and traffic counters of the MQTT subscriptions, for the metrics. Any task. */
+  static mqtt::Stats subscription_stats();
+
   /**
    * @brief Start the MQTT client and try to connecto to @param server with given port, username and password
    * @param server: Address to MQTT server

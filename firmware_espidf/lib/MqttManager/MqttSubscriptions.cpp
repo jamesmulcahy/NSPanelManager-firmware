@@ -441,11 +441,14 @@ void Subscriptions::_expire(int64_t now) {
     if (entry->unsub.state == OpState::IN_FLIGHT && entry->unsub.msg_id >= 0 && now - entry->unsub.sent_ms > _limits.ack_timeout_ms) {
       if (entry->sub.state == OpState::NONE) {
         // Lost (an expired outbox drops it silently), so the broker may still be sending.
+        _counters.unsubscribe_timeouts++;
+        _counters.unsubscribe_retries++;
         _log(LogLevel::WARN, "No UNSUBACK for '%s' after %lldms. Sending UNSUBSCRIBE again.", entry->filter.c_str(), (long long)_limits.ack_timeout_ms);
         entry->unsub.state = OpState::PENDING;
         entry->unsub.msg_id = -1;
         entry->unsub.next_ms = 0;
       } else {
+        _counters.unsubscribe_timeouts++;
         entry->unsub = Op(); // Held again and a SUBSCRIBE follows it: the UNSUBSCRIBE no longer matters.
       }
     }
@@ -484,6 +487,10 @@ void Subscriptions::_send_unsubscribes() {
       }
       if (pick == nullptr) {
         return;
+      }
+      _counters.unsubscribes_sent++;
+      if (pick->unsub.failures > 0) {
+        _counters.unsubscribe_retries++;
       }
       pick->unsub.state = OpState::IN_FLIGHT;
       pick->unsub.msg_id = -1;
@@ -540,6 +547,8 @@ void Subscriptions::_send_subscribes() {
           continue; // Its UNSUBSCRIBE has not gone out yet (#3: only this filter waits for it).
         }
       } else if (entry->sub.state == OpState::IN_FLIGHT && entry->sub.msg_id >= 0 && now - entry->sub.sent_ms > _limits.ack_timeout_ms) {
+        _counters.subscribe_timeouts++;
+        _counters.subscribe_retries++;
         _log(LogLevel::WARN, "No SUBACK for '%s' after %lldms. Sending SUBSCRIBE again.", entry->filter.c_str(), (long long)_limits.ack_timeout_ms);
       } else {
         continue;
@@ -548,6 +557,10 @@ void Subscriptions::_send_subscribes() {
         break;
       }
       in_flight++;
+      _counters.subscribes_sent++;
+      if (entry->sub.state == OpState::PENDING && entry->sub.failures > 0) {
+        _counters.subscribe_retries++; // After a failed send or a rejection. (A timeout was counted above.)
+      }
       entry->sub.state = OpState::IN_FLIGHT;
       entry->sub.msg_id = -1;
       entry->sub.sent_ms = now;
@@ -635,6 +648,28 @@ void Subscriptions::_purge_cache() {
   }
 }
 
+Stats Subscriptions::stats() {
+  std::lock_guard<std::mutex> lock(_mutex);
+  Stats out = _counters;
+  for (const Entry *entry : _entries) {
+    if (entry->linger_until_ms != 0) {
+      out.filters_lingering++;
+    } else if (entry->sub.state != OpState::NONE) {
+      out.filters_active++;
+    }
+  }
+  out.holders = _holders.size();
+  out.cache_entries = _cache.size();
+  for (const CacheItem &item : _cache) {
+    out.cache_bytes += item.blob->topic_len + item.blob->len;
+    if (item.dirty_seq != 0) {
+      out.state_pending++;
+    }
+  }
+  out.commands_pending = _commands.size();
+  return out;
+}
+
 size_t Subscriptions::cached_topics() {
   std::lock_guard<std::mutex> lock(_mutex);
   return _cache.size();
@@ -642,6 +677,7 @@ size_t Subscriptions::cached_topics() {
 
 void Subscriptions::_drop_partial() {
   if (_partial != nullptr) {
+    _counters.dropped_fragments++;
     _unref(_partial);
     _partial = nullptr;
   }
@@ -680,7 +716,11 @@ void Subscriptions::_complete(Blob *blob, bool retained) {
         memcmp(item->blob->payload().data(), payload.data(), payload.size()) == 0) {
       // A replay of the value already delivered (after a reconnect, or a SUBSCRIBE another holder
       // caused). Nothing changed, so nothing is redrawn.
+      _counters.replays_skipped++;
     } else if (item != nullptr) {
+      if (item->dirty_seq != 0) {
+        _counters.state_coalesced++; // The older value never reached the holders.
+      }
       blob->refs.fetch_add(1, std::memory_order_relaxed);
       _unref(item->blob);
       item->blob = blob;
@@ -704,6 +744,7 @@ void Subscriptions::_complete(Blob *blob, bool retained) {
   }
   if (command) {
     if (_commands.size() >= _limits.max_queued_commands) {
+      _counters.dropped_commands++;
       _log(LogLevel::WARN, "Dropping message on '%.*s': %u commands already waiting.", (int)topic.size(), topic.data(), (unsigned)_commands.size());
     } else {
       blob->refs.fetch_add(1, std::memory_order_relaxed);
@@ -750,6 +791,7 @@ void Subscriptions::on_data(const DataEvent &event) {
     if (event.topic.empty()) {
       return;
     }
+    _counters.messages_received++;
     // A broker sets the retain flag only on the replay a new SUBSCRIBE triggers, never on live
     // updates, so a topic with no retained value reports nothing. Exact topic only, as before.
     if (event.retained && _hooks.latency != nullptr) {
@@ -762,6 +804,7 @@ void Subscriptions::on_data(const DataEvent &event) {
     }
     if (_wants_payload(event.topic)) {
       if (event.total_len > _limits.max_payload) {
+        _counters.dropped_oversize++;
         _log(LogLevel::ERROR, "Dropping %u byte message on '%.*s', larger than the %u byte limit.", (unsigned)event.total_len,
              (int)event.topic.size(), event.topic.data(), (unsigned)_limits.max_payload);
       } else if (event.len > event.total_len) [[unlikely]] {

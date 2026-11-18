@@ -17,6 +17,7 @@ static int checks = 0;
 [[maybe_unused]] static std::string show(const std::string &s) { return "\"" + s + "\""; }
 [[maybe_unused]] static std::string show(const char *s) { return show(std::string(s)); }
 [[maybe_unused]] static std::string show(bool b) { return b ? "true" : "false"; }
+[[maybe_unused]] static std::string show(unsigned v) { return std::to_string(v); }
 [[maybe_unused]] static std::string show(int v) { return std::to_string(v); }
 [[maybe_unused]] static std::string show(long v) { return std::to_string(v); }
 [[maybe_unused]] static std::string show(long long v) { return std::to_string(v); }
@@ -41,6 +42,9 @@ static int checks = 0;
   } while (0)
 
 using Strings = std::vector<std::string>;
+
+// Checks one field of a Stats snapshot.
+#define STAT(s, field, value) CHECK_EQ((s).field, (uint32_t)(value))
 
 // ---- Injected hooks: a fake clock, a counting allocator, captured logs and latency reports ----
 
@@ -195,6 +199,23 @@ static void two_holds_one_topic() {
   CHECK_EQ(a.payloads(), Strings({"v1"}));
   CHECK_EQ(a.got[0].retained, true);
   CHECK_EQ(a.got[0].cached, false);
+  {
+    mqtt::Stats s = rig.core->stats();
+    STAT(s, filters_active, 1);
+    STAT(s, filters_lingering, 0);
+    STAT(s, holders, 1);
+    STAT(s, cache_entries, 1);
+    STAT(s, cache_bytes, 3); // "t" and "v1".
+    STAT(s, state_pending, 0);
+    STAT(s, commands_pending, 0);
+    STAT(s, messages_received, 1);
+    STAT(s, subscribes_sent, 1);
+    STAT(s, unsubscribes_sent, 0);
+    STAT(s, state_coalesced, 0);
+    STAT(s, replays_skipped, 0);
+    STAT(s, subscribe_retries, 0);
+    STAT(s, subscribe_timeouts, 0);
+  }
 
   // The second holder: no traffic, the cached value at once.
   delivery_wakes = 0;
@@ -206,13 +227,22 @@ static void two_holds_one_topic() {
   CHECK_EQ(b.payloads(), Strings({"v1"}));
   CHECK_EQ(b.got[0].cached, true);
   CHECK_EQ(a.got.size(), (size_t)1); // Not given to the first holder again.
+  {
+    mqtt::Stats s = rig.core->stats();
+    STAT(s, holders, 2);
+    STAT(s, filters_active, 1);
+    STAT(s, subscribes_sent, 1); // A second holder costs no traffic.
+  }
 
   // The first release keeps delivery going to the other.
   ha.reset();
   CHECK_EQ(ha.active(), false);
   rig.run();
   rig.broker->publish("t", "v2", true);
+  STAT(rig.core->stats(), state_pending, 1);
   rig.core->deliver();
+  STAT(rig.core->stats(), state_pending, 0);
+  STAT(rig.core->stats(), holders, 1);
   CHECK_EQ(b.payloads(), Strings({"v1", "v2"}));
   CHECK_EQ(a.got.size(), (size_t)1);
   CHECK_EQ(rig.transport.log(), Strings({"SUB t"}));
@@ -220,6 +250,15 @@ static void two_holds_one_topic() {
   // The last release: UNSUBSCRIBE only after the linger.
   hb.reset();
   rig.run();
+  {
+    mqtt::Stats s = rig.core->stats();
+    STAT(s, holders, 0);
+    STAT(s, filters_active, 0);
+    STAT(s, filters_lingering, 1);
+    STAT(s, cache_entries, 1);
+    STAT(s, cache_bytes, 3);
+    STAT(s, unsubscribes_sent, 0);
+  }
   advance_ms(59000);
   rig.run();
   CHECK_EQ(rig.transport.log(), Strings({"SUB t"}));
@@ -229,6 +268,17 @@ static void two_holds_one_topic() {
   CHECK_EQ(rig.transport.log(), Strings({"SUB t", "UNSUB t"}));
   CHECK_EQ(rig.core->cached_topics(), (size_t)0);
   CHECK_EQ(rig.core->known("t"), false); // UNSUBACK received: forgotten.
+  {
+    mqtt::Stats s = rig.core->stats();
+    STAT(s, filters_active, 0);
+    STAT(s, filters_lingering, 0);
+    STAT(s, cache_entries, 0);
+    STAT(s, cache_bytes, 0);
+    STAT(s, unsubscribes_sent, 1);
+    STAT(s, unsubscribe_retries, 0);
+    STAT(s, unsubscribe_timeouts, 0);
+    STAT(s, messages_received, 2);
+  }
   CHECK_EQ(durations_recorded > 0, true);
   CHECK_EQ(done_recorded, durations_recorded);
   CHECK_EQ(done_topic.empty(), false);
@@ -321,6 +371,12 @@ static void reconnect() {
   CHECK_EQ(a.topics_and_payloads(), Strings({"t1=same", "t2=old", "t2=new"}));
   CHECK_EQ(latencies.size(), (size_t)4);
   CHECK_EQ(latencies[2].after_reconnect, true);
+  mqtt::Stats s = rig.core->stats();
+  STAT(s, replays_skipped, 1); // t1 came back identical.
+  STAT(s, messages_received, 4);
+  STAT(s, subscribes_sent, 4);
+  STAT(s, state_coalesced, 0);
+  STAT(s, filters_active, 2);
 }
 
 static void relay_group_echo_after_reconnect() {
@@ -445,7 +501,18 @@ static void coalescing_versus_command_order() {
   rig.broker->publish("cmd", "b", false);
   rig.broker->publish("state", "3", false);
   rig.broker->publish("cmd", "c", false);
+  {
+    mqtt::Stats s = rig.core->stats();
+    STAT(s, state_pending, 1);
+    STAT(s, commands_pending, 3);
+    STAT(s, state_coalesced, 2); // "1" and "2" were replaced before delivery.
+    STAT(s, messages_received, 6);
+    STAT(s, dropped_commands, 0);
+  }
   rig.core->deliver();
+  STAT(rig.core->stats(), state_pending, 0);
+  STAT(rig.core->stats(), commands_pending, 0);
+  STAT(rig.core->stats(), state_coalesced, 2); // Delivered values are not coalescing.
   CHECK_EQ(state.payloads(), Strings({"3"}));
   CHECK_EQ(commands.payloads(), Strings({"a", "b", "c"}));
 
@@ -496,7 +563,10 @@ static void coalescing_versus_command_order() {
   small.broker->publish("cmd", "1", false);
   small.broker->publish("cmd", "2", false);
   small.broker->publish("cmd", "3", false);
+  STAT(small.core->stats(), commands_pending, 2);
+  STAT(small.core->stats(), dropped_commands, 1);
   small.core->deliver();
+  STAT(small.core->stats(), commands_pending, 0);
   CHECK_EQ(c.payloads(), Strings({"1", "2"}));
   CHECK_EQ(logged("W Dropping message on 'cmd': 2 commands already waiting."), true);
 }
@@ -563,6 +633,9 @@ static void fragments() {
   rig.core->deliver();
   CHECK_EQ(a.got.size(), (size_t)1);
   CHECK_EQ(logged("E Dropping 20000 byte message on 'big', larger than the 16384 byte limit."), true);
+  STAT(rig.core->stats(), dropped_oversize, 1);
+  STAT(rig.core->stats(), dropped_fragments, 0);
+  STAT(rig.core->stats(), messages_received, 2); // Continuations are not messages.
 
   // A disconnect mid-message discards it.
   send("big", 0, 4096, 10000);
@@ -571,6 +644,9 @@ static void fragments() {
   send("", 8192, 1808, 10000);
   rig.core->deliver();
   CHECK_EQ(a.got.size(), (size_t)1);
+  STAT(rig.core->stats(), dropped_fragments, 1);
+  STAT(rig.core->stats(), dropped_oversize, 1);
+  STAT(rig.core->stats(), messages_received, 3);
 
   // A topic nobody with a callback holds is never copied.
   rig.core->on_connected();
@@ -609,6 +685,11 @@ static void failed_unsubscribe_blocks_only_its_filter() {
   // Only now, in order: UNSUBSCRIBE, then SUBSCRIBE, so the broker replays the retained value.
   CHECK_EQ(rig.transport.log(4), Strings({"UNSUB a", "SUB a"}));
   CHECK_EQ(rig.broker->subscriptions.count("a"), (size_t)1);
+  mqtt::Stats s = rig.core->stats();
+  STAT(s, unsubscribes_sent, 3); // Two failed sends and the one that went through.
+  STAT(s, unsubscribe_retries, 2);
+  STAT(s, unsubscribe_timeouts, 0);
+  STAT(s, subscribe_retries, 0);
 }
 
 static void timed_out_unsubscribe_is_retried() {
@@ -638,6 +719,12 @@ static void timed_out_unsubscribe_is_retried() {
   CHECK_EQ(rig.core->known("a"), false);
   CHECK_EQ(rig.core->known("b"), false);
   CHECK_EQ(rig.broker->subscriptions.empty(), true);
+  {
+    mqtt::Stats s = rig.core->stats();
+    STAT(s, unsubscribes_sent, 5);
+    STAT(s, unsubscribe_timeouts, 3); // a twice, b once.
+    STAT(s, unsubscribe_retries, 3);
+  }
 
   // Held again while its UNSUBSCRIBE is unanswered: the SUBSCRIBE goes straight after it (the
   // order on the wire is what matters), and the old UNSUBSCRIBE is never resent.
@@ -653,6 +740,15 @@ static void timed_out_unsubscribe_is_retried() {
   advance_ms(61000);
   again.run();
   CHECK_EQ(again.transport.log(1), Strings({"UNSUB a", "SUB a", "SUB a"}));
+  {
+    mqtt::Stats s = again.core->stats();
+    STAT(s, unsubscribes_sent, 1);
+    STAT(s, unsubscribe_timeouts, 1); // Counted, but not a retry: the SUBSCRIBE after it made it moot.
+    STAT(s, unsubscribe_retries, 0);
+    STAT(s, subscribes_sent, 3);
+    STAT(s, subscribe_timeouts, 1);
+    STAT(s, subscribe_retries, 1);
+  }
 }
 
 static void suback_failure_and_timeout() {
@@ -687,6 +783,13 @@ static void suback_failure_and_timeout() {
   rig.run();
   CHECK_EQ(rig.transport.log(4), Strings({"SUB slow", "SUB slow"}));
   CHECK_EQ(logged("W No SUBACK for 'slow' after 60000ms. Sending SUBSCRIBE again."), true);
+  {
+    mqtt::Stats s = rig.core->stats();
+    STAT(s, subscribes_sent, 6);
+    STAT(s, subscribe_retries, 3); // After a failed send, a rejection and a timeout.
+    STAT(s, subscribe_timeouts, 1);
+    STAT(s, unsubscribes_sent, 0);
+  }
 }
 
 static void in_flight_cap() {
