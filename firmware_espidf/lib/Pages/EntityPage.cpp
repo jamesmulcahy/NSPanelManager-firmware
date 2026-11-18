@@ -28,11 +28,6 @@ void EntityPage::show(std::string state_topic) {
     EntityPage::_current_state_mutex = xSemaphoreCreateMutex();
   }
 
-  MqttManager::register_handler<&EntityPage::_handle_mqtt_event, PanelMetrics::HANDLER_ENTITY_PAGE>(MQTT_EVENT_ANY, NULL);
-
-  EntityPage::_current_entity_mqtt_topic = state_topic;
-  MqttManager::subscribe(EntityPage::_current_entity_mqtt_topic);
-
   // Reset variables:
   EntityPage::_selected_thermostat_option_index = 0;
   EntityPage::_is_currently_editing = false;
@@ -45,70 +40,78 @@ void EntityPage::show(std::string state_topic) {
       LvglUi::defer([action, option]() { EntityPage::_lvgl_thermostat_action((int)action, option); });
     };
   }
+
+  // Last, once the page is ready for it: a cached state is delivered straight away, on mqtt_dispatch.
+  // Taking the new hold before the old one is released keeps a re-shown entity's topic subscribed.
+  std::lock_guard<std::mutex> lock(EntityPage::_subscription_mutex);
+  uint32_t generation = ++EntityPage::_generation;
+  EntityPage::_current_entity_mqtt_topic = state_topic;
+  EntityPage::_subscription = mqtt::subscribe(std::move(state_topic), mqtt::Kind::STATE, &EntityPage::_handle_state,
+                                              reinterpret_cast<void *>(static_cast<uintptr_t>(generation)), PanelMetrics::HANDLER_ENTITY_PAGE);
+  if (!EntityPage::_subscription.active()) [[unlikely]] {
+    ESP_LOGE("EntityPage", "Failed to subscribe to entity state topic %s.", EntityPage::_current_entity_mqtt_topic.c_str());
+  }
 }
 
 void EntityPage::unshow() {
   CoverPage::unshow();
-  MqttManager::unregister_handler<&EntityPage::_handle_mqtt_event, PanelMetrics::HANDLER_ENTITY_PAGE>(MQTT_EVENT_ANY);
   // The Nextion handler stops with the page: InterfaceManager only dispatches to the current page.
-  if (!EntityPage::_current_entity_mqtt_topic.empty()) {
-    MqttManager::unsubscribe(EntityPage::_current_entity_mqtt_topic);
+  // Releasing the hold lets the topic linger, so going back to the same entity shows its state at once.
+  {
+    std::lock_guard<std::mutex> lock(EntityPage::_subscription_mutex);
+    ++EntityPage::_generation;
+    EntityPage::_subscription.reset();
   }
   EntityPage::_currently_showing = false;
   MediaPlayerPage::unshow();
 }
 
-void EntityPage::_handle_mqtt_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  if (event_id == MQTT_EVENT_DATA) {
-    esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    // A fragment of a message larger than the MQTT buffer would unpack as a truncated state. MqttManager logs the drop.
-    if (event->topic_len == 0 || event->data_len == 0 || event->data_len != event->total_data_len) [[unlikely]] {
-      return;
-    }
-    std::string topic_string = std::string(event->topic, event->topic_len);
-    if (topic_string.compare(EntityPage::_current_entity_mqtt_topic) == 0) {
-      NSPanelEntityState *new_state = nspanel_entity_state__unpack(psram_protobuf_allocator(), event->data_len, (const uint8_t *)event->data);
-      if (new_state != NULL) [[likely]] {
-        if (xSemaphoreTake(EntityPage::_current_state_mutex, pdMS_TO_TICKS(500)) == pdPASS) [[likely]] {
-          EntityPage::_current_state = std::shared_ptr<NSPanelEntityState>(new_state, &EntityPage::_delete_nspanel_entity_state_object);
-          xSemaphoreGive(EntityPage::_current_state_mutex);
-          auto state = EntityPage::_get_current_state();
+void EntityPage::_handle_state(const mqtt::Message &message, void *context) {
+  // An empty payload is a cleared retained state. A callback from a hold released since (another
+  // entity shown, or the page left) carries an older generation.
+  if (message.payload.empty() || static_cast<uint32_t>(reinterpret_cast<uintptr_t>(context)) != EntityPage::_generation.load()) {
+    return;
+  }
+  NSPanelEntityState *new_state = nspanel_entity_state__unpack(psram_protobuf_allocator(), message.payload.size(), message.payload.data());
+  if (new_state != NULL) [[likely]] {
+    if (xSemaphoreTake(EntityPage::_current_state_mutex, pdMS_TO_TICKS(500)) == pdPASS) [[likely]] {
+      EntityPage::_current_state = std::shared_ptr<NSPanelEntityState>(new_state, &EntityPage::_delete_nspanel_entity_state_object);
+      xSemaphoreGive(EntityPage::_current_state_mutex);
+      auto state = EntityPage::_get_current_state();
 
-          // Set current display mode (RGB/Color temp) from what mode the light state is in
-          if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_LIGHT) {
-            switch (state->light->current_light_mode) {
-            case NSPANEL_ENTITY_STATE__LIGHT__LIGHT_MODE__COLOR_TEMP:
-              EntityPage::_current_mode = _entity_page_modes::LIGHT_COLOR_TEMPERATURE;
-              break;
+      // Set current display mode (RGB/Color temp) from what mode the light state is in
+      if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_LIGHT) {
+        switch (state->light->current_light_mode) {
+        case NSPANEL_ENTITY_STATE__LIGHT__LIGHT_MODE__COLOR_TEMP:
+          EntityPage::_current_mode = _entity_page_modes::LIGHT_COLOR_TEMPERATURE;
+          break;
 
-            case NSPANEL_ENTITY_STATE__LIGHT__LIGHT_MODE__RGB:
-              EntityPage::_current_mode = _entity_page_modes::LIGHT_RGB;
-              break;
+        case NSPANEL_ENTITY_STATE__LIGHT__LIGHT_MODE__RGB:
+          EntityPage::_current_mode = _entity_page_modes::LIGHT_RGB;
+          break;
 
-            default:
-              ESP_LOGW("EntityPage", "Unknown light mode!");
-              break;
-            }
-          } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT) {
-            EntityPage::_current_mode = _entity_page_modes::THERMOSTAT;
-          } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) {
-            EntityPage::_current_mode = _entity_page_modes::MEDIA_PLAYER;
-            MediaPlayerPage::handle_state(state->media_player);
-          } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_COVER) {
-            EntityPage::_current_mode = _entity_page_modes::COVER;
-          } else {
-            ESP_LOGE("EntityPage", "Unknown entity state case!");
-          }
-
-          EntityPage::_update_display();
-        } else {
-          ESP_LOGE("EntityPage", "Failed to take mutex to update current state.");
-          nspanel_entity_state__free_unpacked(new_state, psram_protobuf_allocator());
+        default:
+          ESP_LOGW("EntityPage", "Unknown light mode!");
+          break;
         }
+      } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_THERMOSTAT) {
+        EntityPage::_current_mode = _entity_page_modes::THERMOSTAT;
+      } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) {
+        EntityPage::_current_mode = _entity_page_modes::MEDIA_PLAYER;
+        MediaPlayerPage::handle_state(state->media_player);
+      } else if (state->entity_case == NSPanelEntityState__EntityCase::NSPANEL_ENTITY_STATE__ENTITY_COVER) {
+        EntityPage::_current_mode = _entity_page_modes::COVER;
       } else {
-        ESP_LOGE("EntityPage", "Received new state but failed to parse into protobuf object.");
+        ESP_LOGE("EntityPage", "Unknown entity state case!");
       }
+
+      EntityPage::_update_display();
+    } else {
+      ESP_LOGE("EntityPage", "Failed to take mutex to update current state.");
+      nspanel_entity_state__free_unpacked(new_state, psram_protobuf_allocator());
     }
+  } else {
+    ESP_LOGE("EntityPage", "Received new state but failed to parse into protobuf object.");
   }
 }
 

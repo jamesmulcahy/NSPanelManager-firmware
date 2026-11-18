@@ -5,7 +5,9 @@
 #include <esp_event.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <MqttSubscriptions.hpp>
 #include <memory>
+#include <mutex>
 #include <protobuf_nspanel_entity.pb-c.h>
 #include <string>
 
@@ -37,9 +39,10 @@ public:
 
 private:
   /**
-   * Handle events from MQTT, such as new state events:
+   * A new state of the entity shown, from its mqtt::Subscription. Runs on mqtt_dispatch: decodes
+   * the state and draws it. context is the generation the hold was taken for.
    */
-  static void _handle_mqtt_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _handle_state(const mqtt::Message &message, void *context);
 
   /**
    * Handle events from Nextion, such as touch events:
@@ -128,6 +131,13 @@ private:
   // Vars
   // The state topic of the given entity
   static inline std::string _current_entity_mqtt_topic;
+
+  // The hold on _current_entity_mqtt_topic, replaced by every show() and released by unshow(). The
+  // mutex serialises show()/unshow() from different tasks; _generation, bumped by both, tells
+  // _handle_state() whether its hold is still the current one.
+  static inline std::mutex _subscription_mutex;
+  static inline mqtt::Subscription _subscription;
+  static inline std::atomic<uint32_t> _generation = 0;
 
   // Are we currently displaying the page?
   static inline std::atomic<bool> _currently_showing = false;
