@@ -1,6 +1,6 @@
 #include <ConfigManager.hpp>
 #include <EpochParser.hpp>
-#include <MqttManager.hpp>
+#include <MqttSubscriptions.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -15,13 +15,6 @@ ESP_EVENT_DEFINE_BASE(PANEL_CLOCK_EVENT);
 void PanelClock::init() {
   esp_log_level_set("PanelClock", ConfigManager::log_level);
 
-  PanelClock::_topic_mutex = xSemaphoreCreateMutex();
-  if (PanelClock::_topic_mutex == NULL) [[unlikely]] {
-    ESP_LOGE("PanelClock", "Failed to create epoch topic mutex. The clock will not be set.");
-    return;
-  }
-
-  MqttManager::register_handler<&PanelClock::_mqtt_event_handler, PanelMetrics::HANDLER_PANEL_CLOCK>(MQTT_EVENT_DATA, NULL);
   esp_event_handler_register(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::CONFIG_LOADED, PanelClock::_config_event_handler, NULL);
 }
 
@@ -37,18 +30,14 @@ void PanelClock::_config_event_handler(void *arg, esp_event_base_t event_base, i
     new_topic.append(manager_address);
     new_topic.append("/status/epoch");
 
-    std::string old_topic;
-    xSemaphoreTake(PanelClock::_topic_mutex, portMAX_DELAY);
-    old_topic = PanelClock::_epoch_topic;
-    PanelClock::_epoch_topic = new_topic;
-    xSemaphoreGive(PanelClock::_topic_mutex);
-
-    if (new_topic != old_topic) {
-      // Empty on the first config of this boot: there is nothing subscribed yet to move away from.
-      if (!old_topic.empty()) {
-        MqttManager::unsubscribe(old_topic);
-      }
-      if (MqttManager::subscribe(new_topic) != ESP_OK) {
+    if (new_topic != PanelClock::_epoch_topic) {
+      PanelClock::_epoch_topic = new_topic;
+      // Replacing the handle releases the old topic (none on the first config of this boot). A delivery from the
+      // old hold that is still queued carries the old generation and is dropped.
+      uint32_t generation = ++PanelClock::_generation;
+      PanelClock::_subscription = mqtt::subscribe(new_topic, mqtt::Kind::STATE, &PanelClock::_mqtt_message_handler, reinterpret_cast<void *>(static_cast<uintptr_t>(generation)),
+                                                  PanelMetrics::HANDLER_PANEL_CLOCK);
+      if (!PanelClock::_subscription.active()) [[unlikely]] {
         ESP_LOGE("PanelClock", "Failed to subscribe to %s. The clock will not be set.", new_topic.c_str());
       }
     }
@@ -63,28 +52,21 @@ void PanelClock::_config_event_handler(void *arg, esp_event_base_t event_base, i
   }
 }
 
-void PanelClock::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-  if (event->topic_len <= 0) {
+void PanelClock::_mqtt_message_handler(const mqtt::Message &message, void *context) {
+  if (static_cast<uint32_t>(reinterpret_cast<uintptr_t>(context)) != PanelClock::_generation.load() || message.payload.empty()) {
+    return; // A hold replaced since, or a cleared retained value.
+  }
+
+  // The manager never retains the time. A retained one was left by something else and could be any age. Neither
+  // is one replayed from the cache.
+  if (message.retained || message.cached) {
+    ESP_LOGW("PanelClock", "Ignoring retained time on %.*s.", (int)message.topic.size(), message.topic.data());
     return;
   }
 
-  xSemaphoreTake(PanelClock::_topic_mutex, portMAX_DELAY);
-  bool is_epoch_topic = !PanelClock::_epoch_topic.empty() && PanelClock::_epoch_topic.compare(0, std::string::npos, event->topic, event->topic_len) == 0;
-  xSemaphoreGive(PanelClock::_topic_mutex);
-  if (!is_epoch_topic) {
-    return;
-  }
-
-  // The manager never retains the time. A retained one was left by something else and could be any age.
-  if (event->retain) {
-    ESP_LOGW("PanelClock", "Ignoring retained time on %.*s.", event->topic_len, event->topic);
-    return;
-  }
-
-  std::optional<int64_t> epoch_ms = EpochParser::parse_ms(event->data, event->total_data_len == event->data_len ? event->data_len : 0);
+  std::optional<int64_t> epoch_ms = EpochParser::parse_ms(reinterpret_cast<const char *>(message.payload.data()), message.payload.size());
   if (!epoch_ms.has_value()) {
-    ESP_LOGW("PanelClock", "Ignoring invalid time from manager: '%.*s'.", event->data_len, event->data);
+    ESP_LOGW("PanelClock", "Ignoring invalid time from manager: '%.*s'.", (int)message.payload.size(), reinterpret_cast<const char *>(message.payload.data()));
     return;
   }
 
@@ -105,7 +87,7 @@ void PanelClock::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int
   if (!PanelClock::_clock_set.exchange(true)) {
     ESP_LOGI("PanelClock", "Clock set from manager to %lld ms since the Unix epoch.", epoch_ms.value());
     PanelClock::_log_local_time();
-    // Timeout 0: this runs on the MQTT task, which must not wait on the default loop's queue (see CLAUDE.md).
+    // Timeout 0: this runs on the mqtt_dispatch task, which must not wait on the default loop's queue (see CLAUDE.md).
     if (esp_event_post(PANEL_CLOCK_EVENT, panel_clock_event::CLOCK_SET, NULL, 0, 0) != ESP_OK) {
       ESP_LOGW("PanelClock", "Failed to post CLOCK_SET; things waiting for the clock will not be told.");
     }
