@@ -4,7 +4,7 @@ The manager publishes NSPanelEnergyUpdate retained on status/energy; the panel d
 task and logs "Energy update: ...", and the card takes its turn in the rotation ("Screensaver card:
 energy (4 s)"). The pixels are checked on the host (test/host/lvgl_sim, test/host/energy_format).
 
-Needs NSPM_QEMU_TERMINAL=us|eu-on-us (the LVGL UI), and a schema that has NSPanelEnergyUpdate:
+Needs the LVGL UI (NSPM_QEMU_TERMINAL=us|eu-on-us; us is the default), and a schema that has NSPanelEnergyUpdate:
 until qemu/nspanelmanager.ref is bumped past the manager's energy card, point NSPM_PROTO_DIR at a
 manager checkout's docker/protobuf.
 """
@@ -19,8 +19,8 @@ from nspm_qemu.proto import nspanel as pb
 from test_screensaver_cards import configure, turns, wait_for_turns
 
 pytestmark = [
-    pytest.mark.skipif(TERMINAL is None, reason="needs NSPM_QEMU_TERMINAL=us|eu-on-us"),
-    pytest.mark.skipif(not hasattr(pb, "NSPanelEnergyUpdate"), reason="the pinned schema has no NSPanelEnergyUpdate"),
+    pytest.mark.skipif(TERMINAL is None, reason="needs the LVGL UI: NSPM_QEMU_TERMINAL=us|eu-on-us (the default)"),
+    pytest.mark.skipif(not hasattr(pb, "NSPanelEnergyUpdate"), reason="the schema has no NSPanelEnergyUpdate (see protobuf.ref, NSPM_PROTO_DIR)"),
 ]
 
 ENERGY_LOG = r"ScreensaverPage: Energy update: "

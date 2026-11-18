@@ -14,6 +14,20 @@ firmware_espidf/qemu/run_tests.sh            # build, install QEMU if needed, ru
 firmware_espidf/qemu/run_tests.sh -k touch   # extra args go to pytest
 ```
 
+That is the whole local command: nothing else needs setting. The display defaults to the LVGL UI
+(`NSPM_QEMU_TERMINAL=us`), which is what the fleet runs, and the .proto files come from the pin in
+`protobuf.ref`. The legacy Nextion TFT, which CI still covers, is a different leg:
+
+```
+NSPM_QEMU_TERMINAL=nextion firmware_espidf/qemu/run_tests.sh -k boot
+```
+
+Tests that need an environment the default local run should have (the LVGL UI, a schema with the
+messages they use) abort the session at collection, listing the tests, before any panel boots;
+`NSPM_QEMU_ALLOW_SKIPS=1` runs anyway and skips them. Skips that are expected locally (the
+Nextion-only tests, the dev-stack tests without `NSPM_STACK_MQTT`) print a one-line summary at
+collection. Tests that need a `-DNSPM_HEAP_DIAG` build skip at run time.
+
 CI runs the same script (`.github/workflows/qemu-tests.yml`). The suite takes about 75 minutes,
 because every test boots a fresh panel: about 15 for the core tests and 40 for the GUI update
 tests (`-k "not gui_update"` skips them).
@@ -184,19 +198,23 @@ page prints `0x92` and the panel goes to its screensaver, as a real one would.
 
 ## The LVGL UI (terminal TFT)
 
+This is the default display.
+
 ```
-NSPM_QEMU_TERMINAL=us firmware_espidf/qemu/run_tests.sh -k lvgl
+firmware_espidf/qemu/run_tests.sh -k lvgl
 firmware_espidf/qemu/web_panel.sh --terminal us
 ```
 
-With `NSPM_QEMU_TERMINAL=us` (or `eu-on-us`) the fake display runs
+With `NSPM_QEMU_TERMINAL=us` (the default; or `eu-on-us`) the fake display runs
 [nspanel-terminal](https://github.com/ptaru/nspanel-terminal)'s TFT instead of NSPM's: no HMI, no
 `NSPM` banner, and nextion-tools' protocol-8 receiver behind it. The firmware's LvglUi then draws
 every page and streams the pixels, and `FakeManager` says `is_us_panel` to match. Screenshots are
 the receiver's framebuffer, turned upright; `nextion.tap_screen(x, y)` touches a point of the
-screen as a screenshot shows it. `tests/test_lvgl_terminal.py` and `tests/test_timers.py` run only in this mode (and skips
-otherwise); its touch coordinates are for the US layout. Without the variable, the rest of the
-suite runs against NSPM's TFT as before; with it, the Nextion-page tests do not apply.
+screen as a screenshot shows it. `tests/test_lvgl_terminal.py`, `tests/test_timers.py` and the
+screensaver card tests run only in this mode; their touch coordinates are for the US layout.
+With `NSPM_QEMU_TERMINAL=nextion` the display is NSPM's Nextion TFT, the Nextion-page tests run
+and the LVGL ones skip (expected there, so they do not abort the session).
+Nextion support is going away, so only CI runs that leg regularly.
 
 The receiver comes from nextion-tools 0.2.0 or later (pinned in `requirements.txt`).
 
@@ -362,12 +380,14 @@ Consequences:
 
 Both belong to NSPanelManager, which builds the TFTs and owns the schema; the firmware repo
 carries neither (only protobuf-c output, in `lib/ProtoBuf`). The harness downloads
-`docker/HMI_files/tft_automation/<region>/gui.HMI` (`nspm_qemu/hmi.py`) and
-`docker/protobuf/*.proto` (`nspm_qemu/proto.py`, compiled with grpcio-tools) from the one commit
-in **`nspanelmanager.ref`**, and caches them under `build/hmi/` and `build/proto/`. Bump that
-line to move both; the file says what currently holds it back.
+`docker/HMI_files/tft_automation/<region>/gui.HMI` (`nspm_qemu/hmi.py`) from the upstream commit
+in **`nspanelmanager.ref`**, and `docker/protobuf/*.proto` (`nspm_qemu/proto.py`, compiled with
+grpcio-tools) from the `jamesmulcahy/NSPanelManager` commit in **`protobuf.ref`**, which has the
+fork's schema additions. They are cached under `build/hmi/` and `build/proto/`; the files say what
+holds each pin back, and bumping `protobuf.ref` takes a fork commit.
 
-- `NSPM_NSPANELMANAGER_REF=<commit or branch>` uses another revision for one run.
+- `NSPM_NSPANELMANAGER_REF=<commit or branch>` uses another HMI revision for one run;
+  `NSPM_PROTO_REF` does the same for the .proto files.
 - `NSPM_HMI=<path>` uses a local HMI, e.g. one not pushed yet. `NSPM_HMI_REGION=eu` tests the EU
   layout (default: US).
 - `NSPM_PROTO_DIR=~/nspanel/NSPanelManager/docker/protobuf` uses a local checkout, to test a

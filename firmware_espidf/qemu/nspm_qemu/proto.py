@@ -4,7 +4,8 @@ to build the config and state they publish and to decode what the panel sends.
 The firmware repo carries only protobuf-c output (lib/ProtoBuf), so the .proto sources come
 from NSPanelManager, which owns the schema, and are compiled here with grpcio-tools:
 
-- by default, at the commit in qemu/nspanelmanager.ref (see upstream.py), cached under build/proto/,
+- by default, from jamesmulcahy/NSPanelManager at the commit in qemu/protobuf.ref (see upstream.py),
+  cached under build/proto/ (NSPM_PROTO_REF=<commit or branch> uses another revision),
 - NSPM_PROTO_DIR=<dir> uses a local checkout's docker/protobuf instead,
   e.g. to test a schema change before it is pushed.
 
@@ -28,9 +29,11 @@ def _proto_dir() -> str:
     local = os.environ.get("NSPM_PROTO_DIR")
     if local:
         return os.path.abspath(local)
-    cache = os.path.join(_BUILD, "proto", upstream.ref())
+    revision = upstream.proto_ref()
+    cache = os.path.join(_BUILD, "proto", revision)
     for name in PROTOS:
-        upstream.fetch("docker/protobuf/" + name, cache, timeout=30)
+        upstream.fetch("docker/protobuf/" + name, cache, timeout=30, repo=upstream.PROTO_REPO,
+                       revision=revision, pinned=upstream._read_pin(upstream.PROTO_REF_FILE))
     return cache
 
 

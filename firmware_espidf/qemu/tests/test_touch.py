@@ -6,6 +6,10 @@ firmware, and when, is whatever the HMI's sendkey settings and scripts decide.
 
 from nspm_qemu import gui
 from nspm_qemu.proto import nspanel as pb
+import pytest
+from nspm_qemu.fake_nextion import TERMINAL
+
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 Cmd = pb.NSPanelMQTTManagerCommand
 

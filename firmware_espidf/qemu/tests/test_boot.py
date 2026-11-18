@@ -22,6 +22,7 @@ def test_registers_with_manager(rig):
     assert request["address"] == "10.0.2.15"  # QEMU user-mode DHCP lease, via the Ethernet path
 
 
+@pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 def test_receives_config_and_shows_screensaver(booted):
     booted.panel.wait_for_log(r"Received new config data from MQTT, will trigger event")
     booted.broker.wait_for_subscription(booted.panel.client_id, booted.manager.config_topic())
@@ -56,7 +57,7 @@ def test_web_ui_is_served(booted):
     assert data.get("wifi_status")  # esp_wifi_get_mode() must not crash a panel that never initialised Wi-Fi
 
 
-@pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only; test_lvgl_terminal.py covers the LVGL UI")
+@pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion); test_lvgl_terminal.py covers the LVGL UI")
 def test_screenshot_is_409_on_nspm_tft(booted):
     # The Nextion draws NSPM's pages itself: there is nothing on the ESP32 to capture.
     with pytest.raises(urllib.error.HTTPError) as e:

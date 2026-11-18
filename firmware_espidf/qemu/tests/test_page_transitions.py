@@ -8,6 +8,9 @@ from nspm_qemu import gui
 from nspm_qemu.fake_nextion import WAKE
 from nspm_qemu.proto import nspanel as pb
 from nspm_qemu.rig import BOOT_TIMEOUT
+from nspm_qemu.fake_nextion import TERMINAL
+
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 
 def test_tapping_screensaver_during_first_load_does_not_deadlock(rig):

@@ -4,6 +4,10 @@ import re
 import time
 
 from nspm_qemu import gui
+import pytest
+from nspm_qemu.fake_nextion import TERMINAL
+
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 # NSPM_ConfigManager::_task_send_register_request re-sends until accepted, this often.
 REGISTER_REQUEST_PERIOD = 5

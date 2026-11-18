@@ -7,7 +7,7 @@ So the "NSPM" banner, the 0x92 sleep frame and the 0x93 wake frame all come from
 as on a real panel: the banner from page0's load, sleep from each page's sleep_display timer, and
 wake from the screensaver's touch capture. What is left here is how a test asks for them.
 
-With NSPM_QEMU_TERMINAL=us (or eu-on-us) the display runs nspanel-terminal's TFT instead: no
+By default (NSPM_QEMU_TERMINAL unset, or us, or eu-on-us) the display runs nspanel-terminal's TFT: no
 pages and no NSPM banner, a `connect` reply with native version 94, so the firmware's LvglUi
 starts a NextionTerminal session and streams LVGL's pixels (nextion-tools' terminal receiver,
 protocol 8). The screen is then the receiver's framebuffer, shown turned as the firmware turns it
@@ -32,9 +32,13 @@ STRING_DATA = 0x99
 
 SCREENSAVER_PAGES = ("screensaver", "screensaver2")
 
-# The terminal receiver the display runs, if any: "us" (320x480, which the firmware draws turned
-# 180 degrees) or "eu-on-us" (454x320 on a US panel: turned 90, touch offset 26).
-TERMINAL = os.environ.get("NSPM_QEMU_TERMINAL") or None
+# The terminal receiver the display runs: "us" (320x480, which the firmware draws turned 180
+# degrees; the default) or "eu-on-us" (454x320 on a US panel: turned 90, touch offset 26).
+# NSPM_QEMU_TERMINAL=nextion runs NSPM's own Nextion TFT instead, and TERMINAL is then None.
+_TERMINAL_ENV = os.environ.get("NSPM_QEMU_TERMINAL", "us")
+if _TERMINAL_ENV not in ("us", "eu-on-us", "nextion"):
+    raise ValueError("NSPM_QEMU_TERMINAL must be us, eu-on-us or nextion, not %r" % _TERMINAL_ENV)
+TERMINAL = None if _TERMINAL_ENV == "nextion" else _TERMINAL_ENV
 # How the firmware turns the screen onto each receiver (NextionTerminal::options_for()), so that
 # snapshots and the viewer show the screen upright.
 TERMINAL_ROTATION = {"us": 180, "eu-on-us": 90, "eu": 0}

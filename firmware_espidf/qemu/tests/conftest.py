@@ -22,6 +22,45 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "display_errors_ok: the test expects the display to reject instructions")
 
 
+# Skips the default local configuration (LVGL UI, the pinned schema) is expected to satisfy.
+# A selected test that would skip for one of these reasons aborts the session before any panel
+# boots, unless NSPM_QEMU_ALLOW_SKIPS=1 (CI's Nextion legs, which skip the LVGL tests by design).
+_MUST_RUN_REASONS = ("needs the LVGL UI", "the schema has no")
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    """Reports skipif skips up front: the ones local runs should not have abort the session."""
+    must, expected = {}, {}
+    for item in items:
+        for mark in item.iter_markers("skipif"):
+            # Marker args are conditions already evaluated at import; read them, do not redo them.
+            if not mark.args or not mark.args[0]:
+                continue
+            reason = mark.kwargs.get("reason", "")
+            # Asking for the Nextion TFT is asking not to run the LVGL tests.
+            asked_for_nextion = os.environ.get("NSPM_QEMU_TERMINAL") == "nextion"
+            bucket = must if reason.startswith(_MUST_RUN_REASONS) and not (
+                asked_for_nextion and reason.startswith("needs the LVGL UI")) else expected
+            bucket.setdefault(reason, []).append(item.nodeid)
+        if item.get_closest_marker("stack") and not os.environ.get("NSPM_STACK_MQTT"):
+            expected.setdefault("no dev stack; set NSPM_STACK_MQTT=host:port", []).append(item.nodeid)
+    for reason, ids in expected.items():
+        sys.stderr.write("will skip %d test(s): %s\n" % (len(ids), reason))
+    if not must or os.environ.get("NSPM_QEMU_ALLOW_SKIPS") == "1":
+        for reason, ids in must.items():
+            sys.stderr.write("will skip %d test(s): %s\n" % (len(ids), reason))
+        return
+    lines = ["%d selected test(s) would be skipped for an environment reason, so nothing was booted:" %
+             sum(len(v) for v in must.values())]
+    for reason, ids in must.items():
+        lines.append("  %s:" % reason)
+        lines += ["    " + i for i in ids[:10]] + (["    ... and %d more" % (len(ids) - 10)] if len(ids) > 10 else [])
+    lines.append("Fix the environment (NSPM_QEMU_TERMINAL=us, a schema with the messages: NSPM_PROTO_DIR), "
+                 "deselect the tests with -k, or set NSPM_QEMU_ALLOW_SKIPS=1 to run anyway.")
+    pytest.exit("\n".join(lines), 2)
+
+
 def _require_firmware():
     # Checked when a test needs a panel, so tests that need none (test_gui_data) run without.
     build_dir = os.environ.get("NSPM_QEMU_BUILD_DIR", DEFAULT_BUILD_DIR)

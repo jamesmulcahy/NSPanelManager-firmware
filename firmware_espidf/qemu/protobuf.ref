@@ -1,0 +1,7 @@
+# The jamesmulcahy/NSPanelManager commit the tests take the .proto files from (the schema, which
+# the fork extends: calendar and energy screensaver cards, ...). Separate from nspanelmanager.ref,
+# which pins the upstream commit the HMI comes from. Bump it to pick up a schema change.
+#
+# NSPM_PROTO_REF=<commit or branch> uses another revision for one run; NSPM_PROTO_DIR=<dir> a
+# local checkout's docker/protobuf.
+10b95e11cec84a7d15a90ee220516bcc382e2e4b

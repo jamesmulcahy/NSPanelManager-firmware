@@ -5,6 +5,9 @@ import random
 import pytest
 
 from nspm_qemu.gui_update import check_invariants, run_gui_update
+from nspm_qemu.fake_nextion import TERMINAL
+
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 # Not a multiple of 4096, so the last chunk is a short one.
 TFT_SIZE = 200003

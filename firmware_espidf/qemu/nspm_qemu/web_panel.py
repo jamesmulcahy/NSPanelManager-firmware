@@ -32,8 +32,8 @@ def main(argv=None) -> int:
                         help="the viewer's address (default 127.0.0.1; anyone who can reach it can touch the panel)")
     parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270),
                         help="turn the screen this many degrees clockwise (default: upright)")
-    parser.add_argument("--terminal", choices=("us", "eu-on-us"),
-                        help="the display runs nspanel-terminal's TFT for this receiver: the LVGL UI")
+    parser.add_argument("--terminal", choices=("us", "eu-on-us", "nextion"),
+                        help="the display for this receiver: the LVGL UI (default us), or NSPM's Nextion TFT")
     parser.add_argument("--weather", action="store_true", help="the weather screensaver, with a forecast")
     parser.add_argument("--workdir", default=os.path.join(QEMU_DIR, "build", "web_panel"))
     args = parser.parse_args(argv)
@@ -41,7 +41,7 @@ def main(argv=None) -> int:
     if args.terminal:
         os.environ["NSPM_QEMU_TERMINAL"] = args.terminal
         from . import fake_nextion, panel
-        fake_nextion.TERMINAL = panel.TERMINAL = args.terminal
+        fake_nextion.TERMINAL = panel.TERMINAL = None if args.terminal == "nextion" else args.terminal
     rig = Rig(args.workdir)
     if args.rotation is not None:
         rig.nextion.rotation = args.rotation

@@ -68,9 +68,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # NSPM's own TFT: the suite (the LVGL tests skip themselves), less the update tests.
+          # NSPM's own TFT (terminal: nextion; unset would mean the LVGL UI): the suite (the LVGL tests skip themselves), less the update tests.
           - display: nextion
-            terminal: ""
+            terminal: nextion
             tests: "not test_gui_update_faults"
             marks: ""
             timeout: 60
@@ -78,14 +78,14 @@ jobs:
           # than once, so they take most of the time and are split two ways to run side by side.
           # GUI updates under faults that the firmware handles.
           - display: gui-updates
-            terminal: ""
+            terminal: nextion
             tests: "test_gui_update_faults"
             marks: "not xfail"
             timeout: 45
           # GUI update faults the firmware does not handle yet (strict xfail). Most run until the
           # harness's stall timeouts, so they are the slowest; an XPASS fails this job.
           - display: gui-updates-known-bugs
-            terminal: ""
+            terminal: nextion
             tests: "test_gui_update_faults"
             marks: "xfail"
             timeout: 45
@@ -123,7 +123,7 @@ jobs:
           path: |
             firmware_espidf/qemu/build/hmi
             firmware_espidf/qemu/build/proto
-          key: nspm-upstream-${{ hashFiles('firmware_espidf/qemu/nspanelmanager.ref') }}
+          key: nspm-upstream-${{ hashFiles('firmware_espidf/qemu/nspanelmanager.ref', 'firmware_espidf/qemu/protobuf.ref') }}
 
       - name: Cache PlatformIO toolchains and QEMU
         uses: actions/cache@v6
