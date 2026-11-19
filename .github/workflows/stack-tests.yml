@@ -128,6 +128,8 @@ jobs:
         working-directory: firmware_espidf
         env:
           NSPM_QEMU_SKIP_BUILD: "1"
+          # The stack tests wait on NSPM's TFT page names, so they run on the Nextion display.
+          NSPM_QEMU_TERMINAL: nextion
           NSPM_STACK_MQTT: 127.0.0.1:${{ env.NSPM_DEV_MQTT_PORT }}
           NSPM_STACK_WEB: http://127.0.0.1:${{ env.NSPM_DEV_PORT }}
         run: qemu/run_tests.sh -m stack
