@@ -1,6 +1,6 @@
 #include <BuzzerManager.hpp>
 #include <ConfigManager.hpp>
-#include <MqttManager.hpp>
+#include <MqttSubscriptions.hpp>
 #include <PanelMetrics.hpp>
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
@@ -77,8 +77,7 @@ void BuzzerManager::init_mqtt() {
   }
 
   BuzzerManager::_raw_command_topic = std::string("nspanel/") + WiFiManager::mac_string() + "/buzzer_raw_command";
-  MqttManager::register_handler<&BuzzerManager::_mqtt_event_handler, PanelMetrics::HANDLER_BUZZER_MANAGER>(MQTT_EVENT_DATA, NULL);
-  MqttManager::subscribe(BuzzerManager::_raw_command_topic);
+  BuzzerManager::_raw_command_subscription = mqtt::subscribe(BuzzerManager::_raw_command_topic, mqtt::Kind::COMMAND, &BuzzerManager::_mqtt_message_handler, NULL, PanelMetrics::HANDLER_BUZZER_MANAGER);
 }
 
 void BuzzerManager::play(std::shared_ptr<const std::vector<buzzer_tone_step_t>> steps) {
@@ -270,30 +269,20 @@ void BuzzerManager::_config_event_handler(void *arg, esp_event_base_t event_base
   }
 }
 
-void BuzzerManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-  esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-  if (event->topic_len <= 0 || BuzzerManager::_raw_command_topic.compare(0, std::string::npos, event->topic, event->topic_len) != 0) {
-    return;
-  }
-
-  if (event->retain) {
+void BuzzerManager::_mqtt_message_handler(const mqtt::Message &message, void *context) {
+  if (message.retained) {
     ESP_LOGW("BuzzerManager", "Ignoring retained message on %s. Publish sounds without the retain flag.", BuzzerManager::_raw_command_topic.c_str());
     return;
   }
 
-  if (event->total_data_len != event->data_len) {
-    ESP_LOGE("BuzzerManager", "RTTTL string of %d bytes is too long to receive in one MQTT message, ignoring it.", event->total_data_len);
-    return;
-  }
-
-  if (event->data_len == 0) {
+  if (message.payload.empty()) {
     ESP_LOGD("BuzzerManager", "Got empty raw buzzer command, stopping playback.");
     BuzzerManager::stop();
     return;
   }
 
-  // Parsing is quick and play() does not block on playback, so this is safe in the MQTT event handler
-  std::string rtttl(event->data, event->data_len);
+  // Parsing is quick and play() does not block on playback, so this is safe on the mqtt_dispatch task
+  std::string rtttl(reinterpret_cast<const char *>(message.payload.data()), message.payload.size());
   auto steps = std::make_shared<std::vector<buzzer_tone_step_t>>();
   esp_err_t result = RtttlParser::parse(rtttl, steps.get());
   if (result == ESP_OK) {

@@ -1,6 +1,7 @@
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
+#include <iterator>
 #include <EspMqttTransport.hpp>
 #include <MqttSubscriptions.hpp>
 #include <PanelMetrics.hpp>
@@ -254,7 +255,7 @@ void MqttManager::start(std::string *server, uint16_t *port, std::string *userna
   mqtt::set_default(&subscriptions);
 
   // Register event handler for MQTT events
-  esp_err_t result = MqttManager::register_handler<MqttManager::_mqtt_event_handler, PanelMetrics::HANDLER_MQTT_MANAGER>(esp_mqtt_event_id_t::MQTT_EVENT_ANY, NULL);
+  esp_err_t result = esp_mqtt_client_register_event(MqttManager::_mqtt_client, esp_mqtt_event_id_t::MQTT_EVENT_ANY, &MqttManager::_mqtt_event_handler, NULL);
   switch (result) {
   case ESP_ERR_NO_MEM:
     ESP_LOGE("MqttManager", "Failed to allocate MQTT event handler!");
@@ -294,6 +295,14 @@ void MqttManager::start(std::string *server, uint16_t *port, std::string *userna
 }
 
 void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  // The only handler on esp-mqtt's event loop. Timed as nspanel_mqtt_handler_duration_seconds{handler="mqtt_manager"}:
+  // how long each event holds the MQTT client task, including the connection listeners it calls.
+  int64_t start_us = esp_timer_get_time();
+  MqttManager::_handle_event(event_id, event_data);
+  MqttManager::_record_handler_duration(PanelMetrics::HANDLER_MQTT_MANAGER, esp_timer_get_time() - start_us);
+}
+
+void MqttManager::_handle_event(int32_t event_id, void *event_data) {
   esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
   // esp_mqtt_client_handle_t client = event->client;
 
@@ -327,6 +336,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
     subscriptions.on_connected();
     // on_connected() wakes mqtt_subs too, but the online status must not depend on that.
     wake_subscriptions();
+    MqttManager::_notify_connection_listeners(true);
     break;
 
   case MQTT_EVENT_SUBSCRIBED:
@@ -346,8 +356,8 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
       ESP_LOGE("MqttManager", "Dropping %d byte message on %.*s, larger than the %d byte MQTT buffer.",
                event->total_data_len, event->topic_len, event->topic, MqttManager::_mqtt_config.buffer.size);
     }
-    // The subscription core logs subscribe latency here. Handlers registered with register_handler()
-    // still receive every event as before.
+    // The subscription core queues it for the callbacks of mqtt::Subscription holders, and logs
+    // subscribe latency.
     subscriptions.on_data(EspMqttTransport::data_event(event));
     break;
 
@@ -360,6 +370,7 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
     MqttManager::_online_update_generation++;
     ESP_LOGW("MqttManager", "Lost connection to MQTT server. Online status generation %lu.", MqttManager::_online_update_generation.load());
     subscriptions.on_disconnected();
+    MqttManager::_notify_connection_listeners(false);
     break;
 
   case MQTT_EVENT_ERROR:
@@ -378,6 +389,25 @@ void MqttManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, in
 
   default:
     break;
+  }
+}
+
+bool MqttManager::add_connection_listener(void (*listener)(bool connected), int metrics_id) {
+  size_t count = MqttManager::_connection_listener_count.load();
+  if (count >= std::size(MqttManager::_connection_listeners)) {
+    return false;
+  }
+  MqttManager::_connection_listeners[count] = {listener, metrics_id};
+  MqttManager::_connection_listener_count.store(count + 1);
+  return true;
+}
+
+void MqttManager::_notify_connection_listeners(bool connected) {
+  size_t count = MqttManager::_connection_listener_count.load();
+  for (size_t i = 0; i < count; i++) {
+    int64_t start_us = esp_timer_get_time();
+    MqttManager::_connection_listeners[i].listener(connected);
+    MqttManager::_record_handler_duration(MqttManager::_connection_listeners[i].metrics_id, esp_timer_get_time() - start_us);
   }
 }
 
@@ -438,25 +468,8 @@ bool MqttManager::connected() {
   return MqttManager::_connected;
 }
 
-esp_err_t MqttManager::subscribe(std::string topic) {
-  if (manage_subscriptions_task_handle == NULL) {
-    ESP_LOGE("MqttManager", "Failed to subscribe to MQTT topic '%s'. MQTT client is not started.", topic.c_str());
-    return ESP_ERR_INVALID_STATE;
-  }
-  // One hold per topic, however many callers: subscribing again does nothing.
-  return subscriptions.legacy_hold(topic) ? ESP_OK : ESP_ERR_NO_MEM;
-}
-
-esp_err_t MqttManager::unsubscribe(std::string topic) {
-  if (manage_subscriptions_task_handle == NULL) {
-    ESP_LOGE("MqttManager", "Failed to unsubscribe from MQTT topic '%s'. MQTT client is not started.", topic.c_str());
-    return ESP_ERR_INVALID_STATE;
-  }
-  // Releases the topic for every caller (FIXES_PENDING #5 is fixed only for mqtt::Subscription
-  // handles). With nothing else holding it, UNSUBSCRIBE goes out at once, before any later SUBSCRIBE
-  // for the same topic, so unsubscribe-then-subscribe still makes the broker replay its retained value.
-  subscriptions.legacy_release(topic);
-  return ESP_OK;
+mqtt::Stats MqttManager::subscription_stats() {
+  return subscriptions.stats();
 }
 
 void MqttManager::_task_manage_subscriptions(void *param) {

@@ -1,4 +1,5 @@
 #pragma once
+#include <MqttSubscriptions.hpp>
 #include <MutexWrapper.hpp>
 #include <PageHandlers.hpp>
 #include <atomic>
@@ -115,9 +116,10 @@ private:
   static void _room_manager_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
-   * @brief Handle data received over MQTT and apply new interface manager settings if applicable.
+   * @brief Handle a command received over MQTT and apply new interface manager settings if applicable.
+   * Runs on the mqtt_dispatch task.
    */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _mqtt_message_handler(const mqtt::Message &message, void *context);
 
   /*
    * @brief Subscribe to relevant MQTT topics for InterfaceManager
@@ -208,4 +210,6 @@ private:
   static inline std::string _screensaver_mode_command_topic;
   static inline std::string _screensaver_mode_state_topic;
   static inline std::string _screen_raw_commands;
+  // One COMMAND hold per topic above, in that order (screen_cmd, brightness, screensaver brightness, mode, raw).
+  static inline mqtt::Subscription _command_subscriptions[5];
 };

@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -62,6 +63,34 @@ def test_task_stacks_and_heap_window(booted):
     assert boot_min2 <= window2
     # The second window cannot be lower than the since-boot minimum, and is well above zero.
     assert window2 >= boot_min2 > 0
+
+
+def test_mqtt_subscription_metrics(booted):
+    """The subscriptions core's stats are on /metrics, and plausible after boot."""
+    _, v = scrape(booted)
+    assert value(v, "nspanel_mqtt_subscriptions", '{state="active"}') > 0
+    assert value(v, "nspanel_mqtt_subscriptions", '{state="lingering"}') >= 0
+    assert value(v, "nspanel_mqtt_subscription_holders") > 0
+    assert value(v, "nspanel_mqtt_cache_entries") > 0
+    assert value(v, "nspanel_mqtt_cache_bytes") > 0
+    assert value(v, "nspanel_mqtt_messages_received_total") > 0
+    # "active" includes filters still waiting for a slot among the SUBSCRIBEs in flight, so right
+    # after boot it can briefly run ahead of the SUBSCRIBEs sent. Once the queue drains it cannot.
+    deadline = time.monotonic() + 10
+    while (value(v, "nspanel_mqtt_subscribe_requests_total", '{op="subscribe"}') <
+           value(v, "nspanel_mqtt_subscriptions", '{state="active"}')) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        _, v = scrape(booted)
+    assert value(v, "nspanel_mqtt_subscribe_requests_total", '{op="subscribe"}') >= value(v, "nspanel_mqtt_subscriptions", '{state="active"}')
+    for name in ("nspanel_mqtt_deliveries_pending", ):
+        assert value(v, name, '{kind="state"}') >= 0 and value(v, name, '{kind="command"}') >= 0
+    for reason in ("oversize", "fragment", "command_queue_full"):
+        assert value(v, "nspanel_mqtt_messages_dropped_total", '{reason="%s"}' % reason) == 0
+    for name in ("subscribe_retries", "subscribe_timeouts"):
+        assert value(v, "nspanel_mqtt_%s_total" % name, '{op="subscribe"}') == 0
+        assert value(v, "nspanel_mqtt_%s_total" % name, '{op="unsubscribe"}') == 0
+    assert value(v, "nspanel_mqtt_state_coalesced_total") >= 0
+    assert value(v, "nspanel_mqtt_replays_skipped_total") >= 0
 
 
 def diag_scrape(booted):

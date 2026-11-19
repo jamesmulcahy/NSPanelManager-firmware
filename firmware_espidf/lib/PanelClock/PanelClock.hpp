@@ -1,8 +1,8 @@
 #pragma once
 #include <atomic>
 #include <esp_event.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
+#include <MqttSubscriptions.hpp>
+#include <cstdint>
 #include <string>
 
 ESP_EVENT_DECLARE_BASE(PANEL_CLOCK_EVENT);
@@ -40,7 +40,7 @@ private:
   /**
    * @brief Set the clock from a message on the epoch topic.
    */
-  static void _mqtt_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
+  static void _mqtt_message_handler(const mqtt::Message &message, void *context);
 
   /**
    * @brief Set the TZ environment variable to tz_posix and call tzset(), unless it is already set to that.
@@ -56,8 +56,10 @@ private:
 
   static inline std::atomic<bool> _clock_set = false;
 
-  // Written from the default event loop task, read from the MQTT task. Only accessed while holding _topic_mutex.
-  static inline SemaphoreHandle_t _topic_mutex = NULL;
+  // The epoch topic's STATE hold, replaced (and _generation bumped, which its deliveries carry as context) when the
+  // manager address changes. _epoch_topic is only accessed from the default event loop task.
+  static inline mqtt::Subscription _subscription;
+  static inline std::atomic<uint32_t> _generation = 0;
   static inline std::string _epoch_topic;
 
   // Only accessed from the default event loop task.

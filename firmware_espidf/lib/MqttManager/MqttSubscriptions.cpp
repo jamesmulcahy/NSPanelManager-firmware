@@ -133,20 +133,14 @@ void Subscriptions::_start_subscribe(Entry *entry, int64_t now) {
   entry->retained_seen = false;
 }
 
-bool Subscriptions::_hold(Entry *entry, Kind kind, bool legacy) {
+bool Subscriptions::_hold(Entry *entry, Kind kind) {
   bool was_held = entry->sub.state != OpState::NONE;
   bool was_caching = _caches(entry);
-  // Whether this holder needs the broker to replay the retained value: a legacy holder reads
-  // esp-mqtt's events itself, and a STATE holder gets the cache, which is empty unless something
-  // was caching the filter already. A COMMAND holder never wants a replay.
+  // Whether this holder needs the broker to replay the retained value: a STATE holder gets the
+  // cache, which is empty unless something was caching the filter already. A COMMAND holder never
+  // wants a replay.
   bool wants_replay;
-  if (legacy) {
-    if (entry->legacy) {
-      return false; // Already held: subscribe() is idempotent per topic.
-    }
-    entry->legacy = true;
-    wants_replay = true;
-  } else if (kind == Kind::STATE) {
+  if (kind == Kind::STATE) {
     entry->state_holds++;
     entry->linger_until_ms = 0; // Held again: it is caching anyway, the linger is over.
     wants_replay = !was_caching;
@@ -169,7 +163,7 @@ bool Subscriptions::_hold(Entry *entry, Kind kind, bool legacy) {
 }
 
 void Subscriptions::_after_release(Entry *entry, bool state_release) {
-  if (entry->legacy || entry->state_holds > 0 || entry->command_holds > 0) {
+  if (entry->state_holds > 0 || entry->command_holds > 0) {
     if (!_caches(entry)) {
       _purge_cache();
     }
@@ -236,7 +230,7 @@ Subscription Subscriptions::subscribe(std::string filter, Kind kind, Callback ca
       _log(LogLevel::ERROR, "Out of memory subscribing to '%s'.", filter.c_str());
       return Subscription();
     }
-    _hold(entry, kind, false);
+    _hold(entry, kind);
     id = _next_holder_id++;
     _holders.push_back(Holder{id, entry, kind, kind == Kind::STATE, callback, context, metrics_id});
     if (kind == Kind::STATE) {
@@ -255,41 +249,6 @@ Subscription Subscriptions::subscribe(std::string filter, Kind kind, Callback ca
     _hooks.wake_delivery();
   }
   return Subscription(this, id);
-}
-
-bool Subscriptions::legacy_hold(const std::string &filter) {
-  bool changed;
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    Entry *entry = _find_or_add(filter);
-    if (entry == nullptr) [[unlikely]] {
-      _log(LogLevel::ERROR, "Out of memory subscribing to '%s'.", filter.c_str());
-      return false;
-    }
-    if (!entry->legacy) {
-      _log(LogLevel::DEBUG, "Subscribing to '%s'", filter.c_str());
-    }
-    changed = _hold(entry, Kind::COMMAND, true);
-  }
-  if (changed && _hooks.wake_service != nullptr) {
-    _hooks.wake_service();
-  }
-  return true;
-}
-
-void Subscriptions::legacy_release(const std::string &filter) {
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-    Entry *entry = _find(filter);
-    if (entry == nullptr || !entry->legacy) {
-      return;
-    }
-    entry->legacy = false;
-    _after_release(entry, false);
-  }
-  if (_hooks.wake_service != nullptr) {
-    _hooks.wake_service();
-  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -431,7 +390,7 @@ void Subscriptions::_expire(int64_t now) {
     Entry *entry = _entries[i];
     if (entry->linger_until_ms != 0 && now >= entry->linger_until_ms) {
       entry->linger_until_ms = 0;
-      if (entry->legacy || entry->state_holds > 0 || entry->command_holds > 0) {
+      if (entry->state_holds > 0 || entry->command_holds > 0) {
         _purge_cache();
       } else {
         _drop(entry); // May erase the entry.
@@ -441,11 +400,14 @@ void Subscriptions::_expire(int64_t now) {
     if (entry->unsub.state == OpState::IN_FLIGHT && entry->unsub.msg_id >= 0 && now - entry->unsub.sent_ms > _limits.ack_timeout_ms) {
       if (entry->sub.state == OpState::NONE) {
         // Lost (an expired outbox drops it silently), so the broker may still be sending.
+        _counters.unsubscribe_timeouts++;
+        _counters.unsubscribe_retries++;
         _log(LogLevel::WARN, "No UNSUBACK for '%s' after %lldms. Sending UNSUBSCRIBE again.", entry->filter.c_str(), (long long)_limits.ack_timeout_ms);
         entry->unsub.state = OpState::PENDING;
         entry->unsub.msg_id = -1;
         entry->unsub.next_ms = 0;
       } else {
+        _counters.unsubscribe_timeouts++;
         entry->unsub = Op(); // Held again and a SUBSCRIBE follows it: the UNSUBSCRIBE no longer matters.
       }
     }
@@ -484,6 +446,10 @@ void Subscriptions::_send_unsubscribes() {
       }
       if (pick == nullptr) {
         return;
+      }
+      _counters.unsubscribes_sent++;
+      if (pick->unsub.failures > 0) {
+        _counters.unsubscribe_retries++;
       }
       pick->unsub.state = OpState::IN_FLIGHT;
       pick->unsub.msg_id = -1;
@@ -540,6 +506,8 @@ void Subscriptions::_send_subscribes() {
           continue; // Its UNSUBSCRIBE has not gone out yet (#3: only this filter waits for it).
         }
       } else if (entry->sub.state == OpState::IN_FLIGHT && entry->sub.msg_id >= 0 && now - entry->sub.sent_ms > _limits.ack_timeout_ms) {
+        _counters.subscribe_timeouts++;
+        _counters.subscribe_retries++;
         _log(LogLevel::WARN, "No SUBACK for '%s' after %lldms. Sending SUBSCRIBE again.", entry->filter.c_str(), (long long)_limits.ack_timeout_ms);
       } else {
         continue;
@@ -548,6 +516,10 @@ void Subscriptions::_send_subscribes() {
         break;
       }
       in_flight++;
+      _counters.subscribes_sent++;
+      if (entry->sub.state == OpState::PENDING && entry->sub.failures > 0) {
+        _counters.subscribe_retries++; // After a failed send or a rejection. (A timeout was counted above.)
+      }
       entry->sub.state = OpState::IN_FLIGHT;
       entry->sub.msg_id = -1;
       entry->sub.sent_ms = now;
@@ -635,6 +607,28 @@ void Subscriptions::_purge_cache() {
   }
 }
 
+Stats Subscriptions::stats() {
+  std::lock_guard<std::mutex> lock(_mutex);
+  Stats out = _counters;
+  for (const Entry *entry : _entries) {
+    if (entry->linger_until_ms != 0) {
+      out.filters_lingering++;
+    } else if (entry->sub.state != OpState::NONE) {
+      out.filters_active++;
+    }
+  }
+  out.holders = _holders.size();
+  out.cache_entries = _cache.size();
+  for (const CacheItem &item : _cache) {
+    out.cache_bytes += item.blob->topic_len + item.blob->len;
+    if (item.dirty_seq != 0) {
+      out.state_pending++;
+    }
+  }
+  out.commands_pending = _commands.size();
+  return out;
+}
+
 size_t Subscriptions::cached_topics() {
   std::lock_guard<std::mutex> lock(_mutex);
   return _cache.size();
@@ -642,6 +636,7 @@ size_t Subscriptions::cached_topics() {
 
 void Subscriptions::_drop_partial() {
   if (_partial != nullptr) {
+    _counters.dropped_fragments++;
     _unref(_partial);
     _partial = nullptr;
   }
@@ -680,7 +675,11 @@ void Subscriptions::_complete(Blob *blob, bool retained) {
         memcmp(item->blob->payload().data(), payload.data(), payload.size()) == 0) {
       // A replay of the value already delivered (after a reconnect, or a SUBSCRIBE another holder
       // caused). Nothing changed, so nothing is redrawn.
+      _counters.replays_skipped++;
     } else if (item != nullptr) {
+      if (item->dirty_seq != 0) {
+        _counters.state_coalesced++; // The older value never reached the holders.
+      }
       blob->refs.fetch_add(1, std::memory_order_relaxed);
       _unref(item->blob);
       item->blob = blob;
@@ -704,6 +703,7 @@ void Subscriptions::_complete(Blob *blob, bool retained) {
   }
   if (command) {
     if (_commands.size() >= _limits.max_queued_commands) {
+      _counters.dropped_commands++;
       _log(LogLevel::WARN, "Dropping message on '%.*s': %u commands already waiting.", (int)topic.size(), topic.data(), (unsigned)_commands.size());
     } else {
       blob->refs.fetch_add(1, std::memory_order_relaxed);
@@ -750,6 +750,7 @@ void Subscriptions::on_data(const DataEvent &event) {
     if (event.topic.empty()) {
       return;
     }
+    _counters.messages_received++;
     // A broker sets the retain flag only on the replay a new SUBSCRIBE triggers, never on live
     // updates, so a topic with no retained value reports nothing. Exact topic only, as before.
     if (event.retained && _hooks.latency != nullptr) {
@@ -762,6 +763,7 @@ void Subscriptions::on_data(const DataEvent &event) {
     }
     if (_wants_payload(event.topic)) {
       if (event.total_len > _limits.max_payload) {
+        _counters.dropped_oversize++;
         _log(LogLevel::ERROR, "Dropping %u byte message on '%.*s', larger than the %u byte limit.", (unsigned)event.total_len,
              (int)event.topic.size(), event.topic.data(), (unsigned)_limits.max_payload);
       } else if (event.len > event.total_len) [[unlikely]] {
@@ -939,7 +941,7 @@ size_t Subscriptions::holds(const std::string &filter) {
   if (entry == nullptr) {
     return 0;
   }
-  return (entry->legacy ? 1 : 0) + entry->state_holds + entry->command_holds;
+  return entry->state_holds + entry->command_holds;
 }
 
 bool Subscriptions::known(const std::string &filter) {

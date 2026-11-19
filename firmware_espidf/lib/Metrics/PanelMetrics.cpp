@@ -1,4 +1,6 @@
 #include <HeapMetrics.hpp>
+#include <MqttManager.hpp>
+#include <MqttSubscriptions.hpp>
 #include <NextionWindow.hpp>
 #include <PanelMetrics.hpp>
 #include <esp_err.h>
@@ -130,6 +132,16 @@ bool sample_nextion_window_inflight(int64_t *value) {
   return true;
 }
 
+// The MQTT subscriptions' stats, taken once per scrape in write() so every series in it is from the
+// same moment. Only touched under scrape_mutex.
+mqtt::Stats mqtt_stats;
+
+template <uint32_t mqtt::Stats::*Field>
+bool sample_mqtt_stat(int64_t *value) {
+  *value = mqtt_stats.*Field;
+  return true;
+}
+
 bool sample_uptime(int64_t *value) {
   *value = esp_timer_get_time() / 1000000;
   return true;
@@ -205,6 +217,36 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_wifi_power_save_set_failures_total", power_save_set_failures),
     metric("nspanel_mqtt_connects_total", mqtt_connects),
     metric("nspanel_mqtt_disconnects_total", mqtt_disconnects),
+    // The subscriptions core (MqttSubscriptions): filters it keeps subscribed at the broker, and the
+    // released STATE filters it keeps for 60 s in case they are wanted again.
+    metric("nspanel_mqtt_subscriptions", sample_mqtt_stat<&mqtt::Stats::filters_active>, {"state", "active"}),
+    metric("nspanel_mqtt_subscriptions", sample_mqtt_stat<&mqtt::Stats::filters_lingering>, {"state", "lingering"}),
+    // Handles held by the managers (one filter can have several).
+    metric("nspanel_mqtt_subscription_holders", sample_mqtt_stat<&mqtt::Stats::holders>),
+    // The last value of every STATE topic that something holds (or held in the last 60 s).
+    metric("nspanel_mqtt_cache_entries", sample_mqtt_stat<&mqtt::Stats::cache_entries>),
+    metric("nspanel_mqtt_cache_bytes", sample_mqtt_stat<&mqtt::Stats::cache_bytes>),
+    // Messages received and not yet handed to their holders: a growing value means mqtt_dispatch is behind.
+    metric("nspanel_mqtt_deliveries_pending", sample_mqtt_stat<&mqtt::Stats::state_pending>, {"kind", "state"}),
+    metric("nspanel_mqtt_deliveries_pending", sample_mqtt_stat<&mqtt::Stats::commands_pending>, {"kind", "command"}),
+    sampled_counter("nspanel_mqtt_messages_received_total", sample_mqtt_stat<&mqtt::Stats::messages_received>),
+    // STATE values replaced by a newer one before mqtt_dispatch delivered them (only the newest is delivered).
+    sampled_counter("nspanel_mqtt_state_coalesced_total", sample_mqtt_stat<&mqtt::Stats::state_coalesced>),
+    // Retained values the broker replayed after a reconnect that were identical to what was cached.
+    sampled_counter("nspanel_mqtt_replays_skipped_total", sample_mqtt_stat<&mqtt::Stats::replays_skipped>),
+    // Messages we could not deliver: too large, cut short by a disconnect, or no room in the command queue.
+    sampled_counter("nspanel_mqtt_messages_dropped_total", sample_mqtt_stat<&mqtt::Stats::dropped_oversize>, {"reason", "oversize"}),
+    sampled_counter("nspanel_mqtt_messages_dropped_total", sample_mqtt_stat<&mqtt::Stats::dropped_fragments>, {"reason", "fragment"}),
+    sampled_counter("nspanel_mqtt_messages_dropped_total", sample_mqtt_stat<&mqtt::Stats::dropped_commands>, {"reason", "command_queue_full"}),
+    // SUBSCRIBE and UNSUBSCRIBE packets sent (including the retries and those that failed to send).
+    sampled_counter("nspanel_mqtt_subscribe_requests_total", sample_mqtt_stat<&mqtt::Stats::subscribes_sent>, {"op", "subscribe"}),
+    sampled_counter("nspanel_mqtt_subscribe_requests_total", sample_mqtt_stat<&mqtt::Stats::unsubscribes_sent>, {"op", "unsubscribe"}),
+    // Sent again after a failed send, a rejection or no ack in 60 s.
+    sampled_counter("nspanel_mqtt_subscribe_retries_total", sample_mqtt_stat<&mqtt::Stats::subscribe_retries>, {"op", "subscribe"}),
+    sampled_counter("nspanel_mqtt_subscribe_retries_total", sample_mqtt_stat<&mqtt::Stats::unsubscribe_retries>, {"op", "unsubscribe"}),
+    // No SUBACK/UNSUBACK within 60 s of the packet going out.
+    sampled_counter("nspanel_mqtt_subscribe_timeouts_total", sample_mqtt_stat<&mqtt::Stats::subscribe_timeouts>, {"op", "subscribe"}),
+    sampled_counter("nspanel_mqtt_subscribe_timeouts_total", sample_mqtt_stat<&mqtt::Stats::unsubscribe_timeouts>, {"op", "unsubscribe"}),
     // Time spent in esp_mqtt_client_publish(), which waits for esp-mqtt's lock and the socket.
     metric("nspanel_mqtt_publish_duration_seconds", publish_duration),
     metric("nspanel_mqtt_publish_failures_total", publish_failures_error, {"reason", "error"}),
@@ -253,6 +295,7 @@ esp_err_t write(Metrics::Sink sink, void *ctx) {
   }
   // First: the heap low-point window must close before this scrape allocates anything.
   HeapMetrics::scrape_begin();
+  mqtt_stats = MqttManager::subscription_stats();
   bool ok = Metrics::write_text(registry, sizeof(registry) / sizeof(registry[0]), totals, sink, ctx);
   if (ok) {
     Metrics::TextWriter extra(sink, ctx);

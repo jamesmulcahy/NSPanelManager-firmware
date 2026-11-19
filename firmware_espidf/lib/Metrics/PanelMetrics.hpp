@@ -43,8 +43,10 @@ enum EspTimerCallback { TIMER_STATUS_UPDATE,
                         TIMER_COUNT };
 extern FastHistogram esp_timer_callback_duration[TIMER_COUNT];
 
-// nspanel_mqtt_handler_duration_seconds{handler}: time each MQTT event handler holds the MQTT
-// client task, per call, for every event it is called with (see MqttManager::register_handler()).
+// nspanel_mqtt_handler_duration_seconds{handler}: how long each consumer holds a task per call.
+// handler="mqtt_manager" is MqttManager's own event handler (the only one on esp-mqtt's loop), timed
+// per event on the MQTT client task, as are connection listeners (MqttManager::add_connection_listener()).
+// Every other handler is a mqtt::subscribe() callback id, timed per delivered message on mqtt_dispatch.
 enum MqttHandler { HANDLER_MQTT_MANAGER,
                    HANDLER_NSPM_CONFIG_MANAGER,
                    HANDLER_ROOM_MANAGER,

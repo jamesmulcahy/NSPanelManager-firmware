@@ -9,7 +9,7 @@
 //     can also run on any task whose publish fails). They only take the bookkeeping lock briefly.
 //   - service(): the subscription task (mqtt_subs), and nowhere else. It is the only caller of the
 //     Transport, and never holds the lock across a Transport call.
-//   - subscribe()/Subscription::reset()/legacy_hold()/legacy_release(): any task. Never block on the network.
+//   - subscribe()/Subscription::reset(): any task. Never block on the network.
 //   - deliver(): runs the holders' callbacks on the calling task: mqtt_dispatch on the panel, woken
 //     through Hooks::wake_delivery. The host tests call it directly.
 #include "MqttTopic.hpp"
@@ -86,6 +86,34 @@ struct Limits {
   size_t max_queued_commands = 32;     // COMMAND messages waiting for deliver(); newer ones are dropped.
 };
 
+/**
+ * A snapshot of the subscriptions' size and traffic, for the metrics. Gauges are current values;
+ * counters count since construction (boot) and wrap at 2^32.
+ */
+struct Stats {
+  // Gauges.
+  uint32_t filters_active;       // Subscribed or subscribing (held, not lingering).
+  uint32_t filters_lingering;    // Released STATE filters waiting out the linger.
+  uint32_t holders;              // Handles from subscribe().
+  uint32_t cache_entries;        // Cached STATE topics.
+  uint32_t cache_bytes;          // Their topics and payloads.
+  uint32_t state_pending;        // STATE topics changed and not delivered yet.
+  uint32_t commands_pending;     // COMMAND messages queued for deliver().
+  // Counters.
+  uint32_t messages_received;    // Messages from the broker (first fragment counts), wanted or not.
+  uint32_t state_coalesced;      // STATE values replaced before they were delivered.
+  uint32_t replays_skipped;      // Retained replays identical to the cached value.
+  uint32_t dropped_oversize;     // Messages over Limits::max_payload.
+  uint32_t dropped_fragments;    // Partly reassembled messages abandoned (disconnect, new message, bad offset).
+  uint32_t dropped_commands;     // COMMAND messages dropped because the queue was full.
+  uint32_t subscribes_sent;      // Transport::subscribe() calls, including ones that failed.
+  uint32_t unsubscribes_sent;    // Transport::unsubscribe() calls, including ones that failed.
+  uint32_t subscribe_retries;    // SUBSCRIBEs sent again after an ack timeout, a send failure or a SUBACK rejection.
+  uint32_t unsubscribe_retries;  // Likewise for UNSUBSCRIBE (an UNSUBSCRIBE made moot by a new hold is not a retry).
+  uint32_t subscribe_timeouts;   // SUBSCRIBEs not acknowledged within Limits::ack_timeout_ms.
+  uint32_t unsubscribe_timeouts; // Likewise for UNSUBSCRIBE.
+};
+
 class Subscriptions;
 
 /**
@@ -134,19 +162,6 @@ public:
   /** Run every pending callback on the calling task, then return. Not reentrant. */
   void deliver();
 
-  // ---- The old MqttManager::subscribe()/unsubscribe() ----
-
-  /**
-   * One hold per filter, however many times it is called: today's MqttManager::subscribe(). No
-   * callback (the caller reads esp-mqtt's events itself), no cached delivery, no linger. Holding a
-   * filter that was released (UNSUBSCRIBE not sent yet) sends UNSUBSCRIBE, then SUBSCRIBE, in that
-   * order, so the broker replays its retained value; RoomManager::go_to_room() relies on that.
-   * @return false only if memory ran out.
-   */
-  bool legacy_hold(const std::string &filter);
-  /** Releases the legacy hold, if any. With nothing else holding the filter, UNSUBSCRIBE at once. */
-  void legacy_release(const std::string &filter);
-
   // ---- Events from the MQTT client ----
 
   void on_connected();
@@ -161,11 +176,13 @@ public:
   // ---- For tests and diagnostics ----
 
   bool connected();
-  /** Holds on a filter: legacy (0 or 1) plus handles. */
+  /** Holds (handles) on a filter. */
   size_t holds(const std::string &filter);
   /** Whether the filter is still known (held, lingering, or waiting for its UNSUBSCRIBE to finish). */
   bool known(const std::string &filter);
   size_t cached_topics();
+  /** A consistent snapshot under the bookkeeping lock. Cheap: walks the entries and the cache (dozens). Any task. */
+  Stats stats();
 
 private:
   friend class Subscription;
@@ -191,7 +208,6 @@ private:
     std::string filter;
     Op sub;   // NONE exactly when nothing holds the filter (not even a linger).
     Op unsub; // An UNSUBSCRIBE owed to the broker.
-    bool legacy = false;
     uint16_t state_holds = 0;
     uint16_t command_holds = 0;
     int64_t linger_until_ms = 0; // Non-zero while lingering after the last STATE hold was released.
@@ -255,7 +271,7 @@ private:
   void _erase(Entry *entry);
   bool _caches(const Entry *entry) const { return entry->state_holds > 0 || entry->linger_until_ms != 0; }
   void _start_subscribe(Entry *entry, int64_t now);
-  bool _hold(Entry *entry, Kind kind, bool legacy);
+  bool _hold(Entry *entry, Kind kind);
   void _after_release(Entry *entry, bool state_release);
   void _drop(Entry *entry);
   void _release(uint32_t holder_id);
@@ -289,6 +305,7 @@ private:
   uint32_t _next_holder_id = 1;
   uint32_t _next_cache_id = 1;
   uint32_t _next_seq = 1;
+  Stats _counters = {}; // Only the counter fields are kept here; stats() fills in the gauges.
 
   // Reassembly of a fragmented message (only for topics a holder with a callback wants).
   Blob *_partial = nullptr;
