@@ -1,7 +1,9 @@
 #pragma once
 #include "EnergyFormat.hpp"
+#include <atomic>
 #include <cstdint>
 #include <lvgl.h>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -16,6 +18,12 @@
 //   mode       header                       body cards
 //   WEATHER_*  clock, date, room            weather (base_seconds), then `cards`
 //   DATETIME_* clock, date, outside, room   `cards` only; with none, the centred clock as before
+//
+// A card is built whenever it is configured, but takes its turn only while it has something to show:
+// the now-playing card joins the rotation while its player plays (ScreensaverState::now_playing_eligible).
+// That changes the rotation and nothing else, so playback starting or stopping never rebuilds the page.
+// The one exception is a DATETIME_* mode whose only card is now-playing: with nothing playing it is the
+// centred clock, and the header and card are built when playback starts.
 
 struct ForecastDay {
   std::string day;         // "Sat"
@@ -30,6 +38,7 @@ struct ForecastDay {
 enum class ScreensaverCardType : uint8_t {
   CALENDAR = 1,
   ENERGY = 2,
+  NOW_PLAYING = 3,
 };
 
 // One event: the time column and the title. `now`: under way (drawn in the accent colour).
@@ -43,6 +52,18 @@ struct CalendarRow {
 struct CalendarDay {
   std::string heading; // "Today", "Tomorrow", "Wed 18"
   std::vector<CalendarRow> rows;
+};
+
+// The now-playing card: the player's album art over its title and artist. Only filled in while the
+// player is eligible.
+struct NowPlayingState {
+  std::string title;
+  std::string artist;
+  std::string player;               // "Lounge"
+  const lv_image_dsc_t *art = NULL; // RGB565, ScreensaverView::art_size() square; NULL: placeholder
+  // Keeps art's pixels valid (an LvglArt::Handle on the panel). The view holds it for as long as it
+  // draws art: until a show() with other art, or until the view is deleted.
+  std::shared_ptr<const void> art_hold;
 };
 
 struct ScreensaverState {
@@ -74,6 +95,10 @@ struct ScreensaverState {
   std::vector<CalendarDay> calendar; // Sorted; empty: the calendar card shows empty_text
   std::string empty_text;            // "No events in the next 48 hours"
   EnergyState energy;
+  // The now-playing card (a Card of type NOW_PLAYING says it is configured): in the rotation only while
+  // eligible, that is while its player is playing and not muted.
+  bool now_playing_eligible = false;
+  NowPlayingState now_playing;
 };
 
 class ScreensaverView {
@@ -84,6 +109,14 @@ public:
   // The body turned to a card (also when it first shows one): `weather`, `calendar` or `energy`, and how long
   // it stays, in seconds. On the GUI task. For the page's log; the simulator leaves it unset.
   static inline void (*on_card)(const char *card, uint32_t seconds) = nullptr;
+
+  // The now-playing card's art is a square this many pixels a side: the largest that leaves room for
+  // its text, a multiple of 8 and at most MAX_ART_SIZE. Worked out from the layout when the card is
+  // built (0 until then), and the size to ask the manager for. on_art_size runs on the GUI task each
+  // time the card is built.
+  static constexpr int32_t MAX_ART_SIZE = 256;
+  static inline void (*on_art_size)(uint16_t size) = nullptr;
+  static uint16_t art_size() { return ScreensaverView::_art_size.load(); }
 
   static void build(lv_obj_t *parent, bool landscape);
   static void show(const ScreensaverState &state);
@@ -99,7 +132,7 @@ private:
     lv_obj_t *day, *icon, *max_min, *rain, *wind;
   };
   // The body's cards, each built once and shown in turn.
-  enum Body : uint8_t { WEATHER, CALENDAR, ENERGY, BODY_COUNT };
+  enum Body : uint8_t { WEATHER, CALENDAR, ENERGY, NOW_PLAYING, BODY_COUNT };
   struct Step {
     Body body;
     uint32_t ms;
@@ -115,9 +148,11 @@ private:
   static lv_obj_t *_build_weather(bool landscape);
   static lv_obj_t *_build_calendar(bool landscape);
   static lv_obj_t *_build_energy(bool landscape);
+  static lv_obj_t *_build_now_playing(bool landscape);
   static void _build_clock();
   static void _show_calendar(const ScreensaverState &state);
   static void _show_energy(const EnergyState &energy);
+  static void _show_now_playing(const NowPlayingState &now_playing);
   static void _set_sequence(const std::vector<Step> &sequence);
   static void _show_current();
   static void _rotate(lv_timer_t *timer);
@@ -172,4 +207,13 @@ private:
   static inline lv_obj_t *_lights_number = NULL;
   static inline lv_obj_t *_lights_text = NULL;
   static inline lv_obj_t *_lights_alert = NULL;
+  // Now-playing card: the art over the title and artist (and the player's name, if it fits).
+  static inline std::atomic<uint16_t> _art_size = 0;
+  static inline lv_obj_t *_np_art = NULL;
+  static inline lv_obj_t *_np_placeholder = NULL;
+  static inline std::shared_ptr<const void> _np_art_hold; // Whatever keeps _np_art's source valid (GUI task)
+  static inline lv_obj_t *_np_title = NULL;
+  static inline lv_obj_t *_np_artist = NULL;
+  static inline lv_obj_t *_np_player_row = NULL;
+  static inline lv_obj_t *_np_player = NULL;
 };

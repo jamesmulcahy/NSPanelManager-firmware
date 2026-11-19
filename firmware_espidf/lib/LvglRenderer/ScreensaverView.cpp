@@ -3,6 +3,7 @@
 #include "Theme.hpp"
 #include "Ui.hpp"
 
+#include <algorithm>
 #include <cstdio>
 
 static void touched(lv_event_t *) {
@@ -53,6 +54,8 @@ void ScreensaverView::_forget(lv_event_t *) {
   ScreensaverView::_power_line = ScreensaverView::_power_line_icon = ScreensaverView::_power_line_text = NULL;
   ScreensaverView::_lights_panel = ScreensaverView::_lights_icon = ScreensaverView::_lights_number = NULL;
   ScreensaverView::_lights_text = ScreensaverView::_lights_alert = NULL;
+  ScreensaverView::_np_art = ScreensaverView::_np_placeholder = NULL;
+  ScreensaverView::_np_title = ScreensaverView::_np_artist = ScreensaverView::_np_player_row = ScreensaverView::_np_player = NULL;
 }
 
 // A card, or with no background just the layout: text straight on black, as screensaver2 does.
@@ -364,6 +367,105 @@ lv_obj_t *ScreensaverView::_build_energy(bool landscape) {
   return energy;
 }
 
+// The art is never smaller than this while the card has text; below it the text goes, not the art
+// (decision 3 of NOW_PLAYING_CARD_PLAN.md), and the art takes the whole card.
+static constexpr int32_t ART_MIN = 112;
+// The text column of a landscape card needs this much width to be worth drawing.
+static constexpr int32_t TEXT_MIN_WIDTH = 120;
+
+static int32_t round_down_8(int32_t value) { return value / 8 * 8; }
+
+// One line, cut with "...": LONG_DOT needs the label's height fixed.
+static lv_obj_t *one_line(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, bool centred) {
+  lv_obj_t *line = Theme::label(parent, "", font, color);
+  lv_label_set_long_mode(line, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(line, lv_pct(100));
+  lv_obj_set_height(line, lv_font_get_line_height(font));
+  lv_obj_set_style_text_align(line, centred ? LV_TEXT_ALIGN_CENTER : LV_TEXT_ALIGN_LEFT, 0);
+  return line;
+}
+
+// The now-playing card: the art, with the title and the artist under it on a portrait screen and beside
+// it on a landscape one. The art is the largest square (a multiple of 8, at most MAX_ART_SIZE) that
+// leaves room for the two text lines; the player's name is added only if that costs the art nothing. If
+// the two lines can't fit beside a reasonable art size, they are dropped and the art fills the card. The
+// size is worked out from the card as laid out here, and is what the panel asks the manager for.
+lv_obj_t *ScreensaverView::_build_now_playing(bool landscape) {
+  lv_obj_t *now = body(ScreensaverView::_parent);
+  lv_obj_t *card = panel(now, ScreensaverView::_background);
+  lv_obj_set_width(card, lv_pct(100));
+  lv_obj_set_flex_grow(card, 1);
+  lv_obj_set_flex_flow(card, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_gap(card, Theme::SPACE_M, 0);
+
+  // The art's box, drawn behind the image (and, until there is art, the placeholder). Art covers the
+  // box and stays square: clipping its corners (clip_corner) would mask every pixel of it.
+  lv_obj_t *box = lv_obj_create(card);
+  lv_obj_remove_style_all(box);
+  lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_remove_flag(box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(box, Theme::track(), 0);
+  lv_obj_set_style_radius(box, Theme::RADIUS_CARD, 0);
+  ScreensaverView::_np_art = lv_image_create(box);
+  lv_obj_center(ScreensaverView::_np_art);
+  // Nothing draws the art once the image is gone, so its pixels may go too.
+  ScreensaverView::_np_art_hold.reset();
+  lv_obj_add_event_cb(ScreensaverView::_np_art, [](lv_event_t *) { ScreensaverView::_np_art_hold.reset(); }, LV_EVENT_DELETE, NULL);
+  ScreensaverView::_np_placeholder = Ui::icon(box, NSPM_ICON_MUSIC, 64, Theme::muted());
+  lv_obj_center(ScreensaverView::_np_placeholder);
+
+  lv_obj_t *text = Theme::group(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_gap(text, Theme::SPACE_XS, 0);
+  ScreensaverView::_np_title = one_line(text, Theme::title_font(), Theme::text(), !landscape);
+  ScreensaverView::_np_artist = one_line(text, Theme::body_font(), Theme::muted(), !landscape);
+  ScreensaverView::_np_player_row = reading(text, NSPM_ICON_SPEAKER, NULL, &ScreensaverView::_np_player, Theme::body_font());
+  lv_obj_set_style_text_color(ScreensaverView::_np_player, Theme::muted(), 0);
+  lv_obj_set_flex_align(ScreensaverView::_np_player_row, landscape ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_width(ScreensaverView::_np_player_row, lv_pct(100));
+  // Measure with the placeholder's own sizes: the art box has none yet.
+  lv_obj_set_size(box, 8, 8);
+  lv_obj_update_layout(ScreensaverView::_parent);
+
+  const int32_t width = lv_obj_get_content_width(card);
+  const int32_t height = lv_obj_get_content_height(card);
+  const int32_t gap = Theme::SPACE_M;
+  const int32_t title_h = lv_font_get_line_height(Theme::title_font());
+  const int32_t artist_h = lv_font_get_line_height(Theme::body_font());
+  const int32_t player_h = lv_obj_get_height(ScreensaverView::_np_player_row);
+  const int32_t lines_h = title_h + Theme::SPACE_XS + artist_h;
+  int32_t size;
+  bool show_text = true;
+  bool show_player = false;
+  if (landscape) {
+    size = std::min(round_down_8(std::min(height, MAX_ART_SIZE)), round_down_8(width));
+    show_text = width - size - gap >= TEXT_MIN_WIDTH && size >= ART_MIN;
+    show_player = show_text && lines_h + Theme::SPACE_XS + player_h <= height;
+    if (show_text) {
+      lv_obj_set_width(text, width - size - gap);
+    }
+  } else {
+    size = round_down_8(std::min({width, height - gap - lines_h, MAX_ART_SIZE}));
+    show_text = size >= ART_MIN;
+    if (!show_text) {
+      size = round_down_8(std::min({width, height, MAX_ART_SIZE})); // The art takes the card
+    } else {
+      show_player = round_down_8(std::min({width, height - gap - lines_h - Theme::SPACE_XS - player_h, MAX_ART_SIZE})) == size;
+      lv_obj_set_width(text, lv_pct(100));
+    }
+  }
+  size = std::max<int32_t>(size, 8);
+  lv_obj_set_size(box, size, size);
+  Ui::set_visible(text, show_text);
+  Ui::set_visible(ScreensaverView::_np_player_row, show_player);
+  ScreensaverView::_art_size = (uint16_t)size;
+  if (ScreensaverView::on_art_size != nullptr) {
+    ScreensaverView::on_art_size((uint16_t)size);
+  }
+  return now;
+}
+
 void ScreensaverView::_build_clock() {
   lv_obj_t *parent = ScreensaverView::_parent;
   // Outside temperature top left, the room's top right, the clock in the middle (screensaver2).
@@ -511,12 +613,30 @@ void ScreensaverView::_show_energy(const EnergyState &energy) {
   }
 }
 
+void ScreensaverView::_show_now_playing(const NowPlayingState &now_playing) {
+  if (ScreensaverView::_np_art == NULL) {
+    return;
+  }
+  if (lv_image_get_src(ScreensaverView::_np_art) != now_playing.art) {
+    lv_image_set_src(ScreensaverView::_np_art, now_playing.art);
+  }
+  // Only now that the image draws from the new art can the old art's pixels be let go.
+  ScreensaverView::_np_art_hold = now_playing.art_hold;
+  Ui::set_visible(ScreensaverView::_np_art, now_playing.art != NULL);
+  Ui::set_visible(ScreensaverView::_np_placeholder, now_playing.art == NULL);
+  Ui::set_text(ScreensaverView::_np_title, now_playing.title);
+  Ui::set_text(ScreensaverView::_np_artist, now_playing.artist);
+  Ui::set_text(ScreensaverView::_np_player, now_playing.player);
+}
+
 static const char *body_name(int body) {
   switch (body) {
   case 1:
     return "calendar";
   case 2:
     return "energy";
+  case 3:
+    return "now_playing";
   default:
     return "weather";
   }
@@ -592,22 +712,31 @@ void ScreensaverView::_set_sequence(const std::vector<Step> &sequence) {
 static uint32_t card_ms(uint16_t seconds) { return (seconds == 0 ? 10 : seconds) * 1000u; }
 
 void ScreensaverView::show(const ScreensaverState &state) {
-  // The body cards, in turn.
+  // The body cards, in turn. A card is built whenever it is configured (`built`) but only takes its turn
+  // while it has something to show: the now-playing card, while its player plays.
   std::vector<Step> sequence;
+  int built = 0;
   if (state.weather) {
     sequence.push_back({WEATHER, card_ms(state.base_seconds)});
+    built |= 1 << WEATHER;
   }
   for (const ScreensaverState::Card &card : state.cards) {
     if (card.type == ScreensaverCardType::CALENDAR) {
       sequence.push_back({CALENDAR, card_ms(card.seconds)});
+      built |= 1 << CALENDAR;
     } else if (card.type == ScreensaverCardType::ENERGY) {
       sequence.push_back({ENERGY, card_ms(card.seconds)});
+      built |= 1 << ENERGY;
+    } else if (card.type == ScreensaverCardType::NOW_PLAYING) {
+      if (state.now_playing_eligible) {
+        sequence.push_back({NOW_PLAYING, card_ms(card.seconds)});
+      }
+      built |= 1 << NOW_PLAYING;
     }
   }
-  int bodies = 0;
-  for (const Step &step : sequence) {
-    bodies |= 1 << step.body;
-  }
+  // The date-time screensaver with nothing to rotate (no cards, or only a now-playing card with nothing
+  // playing): the centred clock. That is the one case where playback starting or stopping builds the page.
+  int bodies = !state.weather && sequence.empty() ? 0 : built;
 
   int layout = (state.weather ? 1 : 0) | (state.background ? 2 : 0) | bodies << 2;
   if (layout != ScreensaverView::_layout) {
@@ -636,6 +765,11 @@ void ScreensaverView::show(const ScreensaverState &state) {
         ScreensaverView::_bodies[ENERGY] = ScreensaverView::_build_energy(landscape);
         lv_obj_add_flag(ScreensaverView::_bodies[ENERGY], LV_OBJ_FLAG_HIDDEN);
       }
+      if (bodies & (1 << NOW_PLAYING)) {
+        // Built while the only body shown, to measure the space its art has; hidden for the others.
+        ScreensaverView::_bodies[NOW_PLAYING] = ScreensaverView::_build_now_playing(landscape);
+        lv_obj_add_flag(ScreensaverView::_bodies[NOW_PLAYING], LV_OBJ_FLAG_HIDDEN);
+      }
       if (bodies & (1 << CALENDAR)) {
         // Built while the only body shown: it sizes its lines to the space it has.
         ScreensaverView::_bodies[CALENDAR] = ScreensaverView::_build_calendar(landscape);
@@ -660,6 +794,7 @@ void ScreensaverView::show(const ScreensaverState &state) {
   Ui::set_text(ScreensaverView::_inside, state.inside);
   ScreensaverView::_show_calendar(state);
   ScreensaverView::_show_energy(state.energy);
+  ScreensaverView::_show_now_playing(state.now_playing);
   if (ScreensaverView::_bodies[WEATHER] == NULL) {
     return;
   }

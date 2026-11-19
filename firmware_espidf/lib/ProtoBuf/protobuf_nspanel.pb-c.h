@@ -116,7 +116,11 @@ typedef enum _NSPanelConfig__NSPanelScreensaverCardType {
   /*
    * Power draw as cost per day and lights on, from NSPanelEnergyUpdate on nspanel/mqttmanager_<address>/status/energy
    */
-  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_ENERGY = 2
+  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_ENERGY = 2,
+  /*
+   * The room's first media player, from its NSPanelEntityState on
+   */
+  NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_NOW_PLAYING = 3
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE)
 } NSPanelConfig__NSPanelScreensaverCardType;
 typedef enum _NSPanelStatusReport__State {
@@ -342,10 +346,15 @@ struct  NSPanelConfig
    * How long the weather shows in WEATHER_* modes. 0: the panel's default (10 s)
    */
   int32_t screensaver_base_card_seconds;
+  /*
+   * State topic of the media player the now-playing card follows: the first media player in the panel's room.
+   * Empty when the card isn't configured or the room has no media player (the panel then skips the card).
+   */
+  char *screensaver_media_player_topic;
 };
 #define NSPANEL_CONFIG__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_config__descriptor) \
-    , (char *)protobuf_c_empty_string, 0, NSPANEL_CONFIG__NSPANEL_DEFAULT_PAGE__HOME, 0, 0, 0, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND, 0, 0, 0, 0, 0, 0,NULL, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, 0,NULL, 0, 0, 0, 0,NULL, 0,NULL, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0,NULL, 0 }
+    , (char *)protobuf_c_empty_string, 0, NSPANEL_CONFIG__NSPANEL_DEFAULT_PAGE__HOME, 0, 0, 0, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__WEATHER_WITH_BACKGROUND, 0, 0, 0, 0, 0, 0,NULL, 0, 0, 0, 0, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, NSPANEL_CONFIG__NSPANEL_BUTTON_MODE__DIRECT, 0,NULL, 0, 0, 0, 0,NULL, 0,NULL, 0, 0, (char *)protobuf_c_empty_string, 0, 0, 0, 0, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0,NULL, 0, (char *)protobuf_c_empty_string }
 
 
 struct  NSPanelWarning

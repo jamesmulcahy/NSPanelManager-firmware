@@ -4,4 +4,4 @@
 #
 # NSPM_PROTO_REF=<commit or branch> uses another revision for one run; NSPM_PROTO_DIR=<dir> a
 # local checkout's docker/protobuf.
-10b95e11cec84a7d15a90ee220516bcc382e2e4b
+12f896080f0a0431c99061cb51eec25b7fa65a38
