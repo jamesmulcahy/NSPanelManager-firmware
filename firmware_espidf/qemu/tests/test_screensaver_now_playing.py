@@ -264,5 +264,7 @@ def test_media_page_for_the_same_player_opens_from_the_cache_and_the_card_follow
     rig.panel.wait_for_log(FETCHED, timeout=120, since=mark)
     wait_for_now_playing_turns(rig, 2, since=mark)
     assert fetched(rig, since=mark)[0] == (card_size, card_size)
-    assert len(rig.art_server.requested("a")) == 1, "the first track's art was fetched again"
+    # The first track was fetched once per size: the card's, then the media page's. Neither was fetched again.
+    sizes = sorted((int(r["w"]), int(r["h"])) for r in rig.art_server.requested("a"))
+    assert sizes == sorted([(card_size, card_size), (180, 180)]), "the first track's art was fetched again: %s" % sizes
     assert not rig.nextion.terminal.faults
