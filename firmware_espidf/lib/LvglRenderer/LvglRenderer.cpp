@@ -383,6 +383,9 @@ void LvglRenderer::_read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
     // Read again at once if more edges are waiting, so none is merged into the next.
     data->continue_reading = uxQueueMessagesWaiting(LvglRenderer::_touches) > 0;
   }
+  if (LvglRenderer::cancel_press.exchange(false) && LvglRenderer::_pressed) {
+    lv_indev_wait_release(indev); // PRESS_LOST to the widget; no CLICKED or RELEASED for it
+  }
   data->point = LvglRenderer::_point;
   data->state = LvglRenderer::_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }

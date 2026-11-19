@@ -31,6 +31,7 @@ void ScreensaverView::_forget(lv_event_t *) {
   }
   ScreensaverView::_layout = -1;
   ScreensaverView::_sequence.clear();
+  ScreensaverView::_card_count = 0;
   ScreensaverView::_announced = -1;
   ScreensaverView::_current = 0;
   for (lv_obj_t *&body : ScreensaverView::_bodies) {
@@ -674,6 +675,18 @@ void ScreensaverView::next_card() {
   }
 }
 
+void ScreensaverView::turn(int step) {
+  const size_t count = ScreensaverView::_sequence.size();
+  if (count < 2 || ScreensaverView::_timer == NULL) {
+    return;
+  }
+  ScreensaverView::_current = (ScreensaverView::_current + count + step % (int)count) % count;
+  ScreensaverView::_show_current();
+  // _rotate() puts the card's own time back when this one is up.
+  lv_timer_set_period(ScreensaverView::_timer, 2 * ScreensaverView::_sequence[ScreensaverView::_current].ms);
+  lv_timer_reset(ScreensaverView::_timer);
+}
+
 // A new list of body cards. The same list changes nothing (show() runs every minute for the
 // clock); a different one keeps the card shown if it is still in it, else starts from the first.
 void ScreensaverView::_set_sequence(const std::vector<Step> &sequence) {
@@ -691,6 +704,7 @@ void ScreensaverView::_set_sequence(const std::vector<Step> &sequence) {
     }
   }
   ScreensaverView::_sequence = sequence;
+  ScreensaverView::_card_count = sequence.size();
   ScreensaverView::_current = current;
   ScreensaverView::_show_current();
   if (sequence.size() < 2) {

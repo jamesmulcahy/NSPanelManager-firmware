@@ -569,6 +569,17 @@ IRAM_ATTR bool NextionTerminal::_stream_session(uint16_t session) {
         // A "move" with nothing pressed means nothing: the receiver sends one at 0,0 every ~20 s on
         // Office, which would count as a touch (and hold off the screensaver).
         const bool meaningful = down || was_down;
+        // A release must arrive even when its coordinates are nonsense, or LVGL and LvglUi stay
+        // pressed until the next touch: send it at the last point that mapped.
+        static uint16_t last_x = 0, last_y = 0;
+        if (mapped) {
+          last_x = x;
+          last_y = y;
+        } else if (!down && was_down) {
+          mapped = true;
+          x = last_x;
+          y = last_y;
+        }
         was_down = down;
         if (mapped && meaningful && NextionTerminal::on_touch != nullptr) {
           NextionTerminal::on_touch(down, x, y);

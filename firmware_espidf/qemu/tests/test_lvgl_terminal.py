@@ -326,7 +326,7 @@ US_LOOKS = {"ocean": (82, 127), "dusk": (238, 127), "aurora": (82, 267), "peaks"
 
 
 def swipe_down(rig) -> None:
-    """A swipe down the middle of the screen, through the firmware's own touch path (lvgl_tap)."""
+    """A swipe down from the top edge, through the firmware's own touch path (lvgl_tap)."""
     rig.broker.publish("nspanel/%s/command" % rig.mac,
                        json.dumps({"command": "lvgl_tap", "x": 160, "y": 60, "x2": 160, "y2": 300, "hold_ms": 300}))
 

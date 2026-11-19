@@ -22,7 +22,8 @@
  *
  * Also moves into the firmware what NSPM's HMI did by itself: the screensaver timeout (a SLEEP_EVENT
  * after the manager's screensaver_activation_timeout without a touch), waking on a touch (a
- * WAKE_EVENT; that touch reaches nothing else), and the backlight (Nextion::set_brightness_level()
+ * WAKE_EVENT; that touch reaches nothing else; with cards to turn between, on the release, so a swipe
+ * sideways can turn them instead), and the backlight (Nextion::set_brightness_level()
  * goes to the receiver).
  */
 class LvglUi {
@@ -103,6 +104,7 @@ private:
   static void _task(void *param);
   static void _tick();
   static bool _touch(bool down, uint16_t x, uint16_t y);
+  static bool _screensaver_touch(bool down, uint16_t x, uint16_t y);
   static void _start_terminal();
   static void _rebuild(); // GUI task: build the last view again and apply its last state
 
@@ -121,6 +123,8 @@ private:
   static inline int _press_x = 0, _press_y = 0;
   static inline int64_t _press_us = 0;
   static inline std::atomic<bool> _swiping = false;
+  // A press on the screensaver that may still become a swipe between its cards (terminal task only).
+  static inline bool _screensaver_press = false;
   static inline bool _was_screensaver = false; // _tick() only
   static inline int64_t _last_start_us = 0;    // _tick() only
   static inline View _last_view = View::NONE;  // GUI task only

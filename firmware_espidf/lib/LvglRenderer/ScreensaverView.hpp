@@ -123,9 +123,20 @@ public:
 
   /**
    * Show the next body card now, as the rotation timer does when a card's time is up. For the
-   * simulator; nothing on the panel needs it.
+   * simulator.
    */
   static void next_card();
+
+  /**
+   * GUI task: a swipe turned the body by `step` cards (1 the next, -1 the one before), wrapping round.
+   * The card turned to stays twice its time, so it doesn't move on while it is being read.
+   */
+  static void turn(int step);
+
+  /**
+   * Any task: how many cards the body turns between (0 or 1: it doesn't turn).
+   */
+  static size_t card_count() { return ScreensaverView::_card_count.load(); }
 
 private:
   struct Day {
@@ -170,6 +181,7 @@ private:
   static inline size_t _current = 0;
   static inline int _announced = -1; // The Body on_card last told of
   static inline lv_timer_t *_timer = NULL;
+  static inline std::atomic<size_t> _card_count = 0; // _sequence.size(), for other tasks
   static inline lv_obj_t *_bodies[BODY_COUNT] = {};
   // Header (all modes)
   static inline lv_obj_t *_time = NULL;

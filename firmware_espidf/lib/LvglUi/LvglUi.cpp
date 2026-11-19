@@ -29,6 +29,11 @@ static constexpr int64_t RESTART_INTERVAL_US = 10 * 1000 * 1000;
 // A swipe: at least this far, within this long.
 static constexpr int SWIPE_PX = 80;
 static constexpr int64_t SWIPE_MAX_US = 1000 * 1000;
+// A swipe-down that starts this near the top (the header bar is 8..52) opens the menu, from any page,
+// after EDGE_SWIPE_PX. Only from there: elsewhere a drag may be meant for what is under the finger
+// (a vertical slider on a landscape panel, a list).
+static constexpr int EDGE_ZONE_PX = 72;
+static constexpr int EDGE_SWIPE_PX = 48;
 
 // The display's identity, up to the reply's 0xFF terminator.
 static std::string printable_identity() {
@@ -204,18 +209,18 @@ bool LvglUi::_touch(bool down, uint16_t x, uint16_t y) {
     }
     return true;
   }
-  if (down && ScreensaverPage::showing()) {
-    // As the HMI's screensaver did: the touch wakes the panel and goes no further.
-    LvglUi::_swallowing = true;
-    esp_event_post(NEXTION_EVENT, nextion_event_t::WAKE_EVENT, NULL, 0, 0);
-    return true;
+  if (LvglUi::_screensaver_press || (down && ScreensaverPage::showing())) {
+    return LvglUi::_screensaver_touch(down, x, y);
   }
   static bool was_down = false;
   // The press began over an open pop-up (the room list): a drag scrolls it, it is not a swipe.
   static bool in_popup = false;
+  // The press has become a swipe-down: LVGL was told to drop it, the menu opens on the release.
+  static bool swipe_down = false;
   const int64_t now = esp_timer_get_time();
   if (down && !was_down) {
     in_popup = Ui::popup_open;
+    swipe_down = false;
     LvglUi::_press_x = x;
     LvglUi::_press_y = y;
     LvglUi::_press_us = now;
@@ -230,11 +235,63 @@ bool LvglUi::_touch(bool down, uint16_t x, uint16_t y) {
   if (was_down && (abs(dy) >= SWIPE_PX || abs(dx) >= SWIPE_PX)) {
     LvglUi::_swiping = true;
   }
-  if (!down && was_down && !in_popup && dy >= SWIPE_PX && abs(dx) * 2 <= dy && now - LvglUi::_press_us < SWIPE_MAX_US) {
+  // Decided while the finger is still down, from the moves (not the release's coordinates, which a
+  // receiver may report as nonsense: 255,255 on Kitchen), so LVGL can drop the press before the
+  // release clicks the header button the swipe started on.
+  if (down && was_down && !swipe_down && !in_popup && now - LvglUi::_press_us < SWIPE_MAX_US && abs(dx) * 2 <= dy) {
+    if (LvglUi::_press_y < EDGE_ZONE_PX && dy >= EDGE_SWIPE_PX) {
+      swipe_down = true;
+      LvglUi::_swiping = true; // A light tile the swipe started on cancels (HomeView::is_swipe).
+      LvglRenderer::cancel_press = true;
+    }
+  }
+  if (!down && was_down && swipe_down) {
+    swipe_down = false;
     LvglUi::defer([]() { MenuPage::swipe_down(); });
   }
   was_down = down;
   return false;
+}
+
+bool LvglUi::_screensaver_touch(bool down, uint16_t x, uint16_t y) {
+  // The terminal's task. With fewer than two cards (or the backlight off) a press wakes the panel at
+  // once, and the rest of the touch goes nowhere, as the HMI's screensaver did. With cards to turn
+  // between, the release decides: a swipe sideways turns the card and the panel sleeps on; anything
+  // else wakes it. Nothing reaches LVGL either way.
+  const int64_t now = esp_timer_get_time();
+  if (!LvglUi::_screensaver_press) {
+    if (!ScreensaverPage::can_turn_cards()) {
+      LvglUi::_swallowing = true;
+      esp_event_post(NEXTION_EVENT, nextion_event_t::WAKE_EVENT, NULL, 0, 0);
+      return true;
+    }
+    LvglUi::_screensaver_press = true;
+    LvglUi::_press_x = x;
+    LvglUi::_press_y = y;
+    LvglUi::_press_us = now;
+    return true;
+  }
+  if (down) {
+    if (!ScreensaverPage::showing()) {
+      // The screensaver went under the finger (screen_on over MQTT): the rest of the touch is not a tap.
+      LvglUi::_screensaver_press = false;
+      LvglUi::_swallowing = true;
+    }
+    return true;
+  }
+  LvglUi::_screensaver_press = false;
+  if (!ScreensaverPage::showing()) {
+    return true; // Gone while the finger was down: nothing to wake or turn.
+  }
+  // The release comes at the last point that mapped (NextionTerminal), so this is the finger's travel.
+  const int dx = (int)x - LvglUi::_press_x, dy = (int)y - LvglUi::_press_y;
+  if (abs(dx) >= SWIPE_PX && abs(dy) * 2 <= abs(dx) && now - LvglUi::_press_us < SWIPE_MAX_US) {
+    // Left brings in the next card, right the one before, as the finger pushes them.
+    ScreensaverPage::turn_card(dx < 0 ? 1 : -1);
+  } else {
+    esp_event_post(NEXTION_EVENT, nextion_event_t::WAKE_EVENT, NULL, 0, 0);
+  }
+  return true;
 }
 
 void LvglUi::_tick() {

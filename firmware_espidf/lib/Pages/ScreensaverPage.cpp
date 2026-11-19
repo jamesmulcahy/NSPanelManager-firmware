@@ -4,6 +4,7 @@
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
 #include <LvglArt.hpp>
+#include <LvglRenderer.hpp>
 #include <LvglText.hpp>
 #include <LvglUi.hpp>
 #include <ScreensaverView.hpp>
@@ -158,6 +159,15 @@ void ScreensaverPage::unshow() {
 
 bool ScreensaverPage::showing() {
   return InterfaceManager::is_current_page(ScreensaverPage::unshow);
+}
+
+bool ScreensaverPage::can_turn_cards() {
+  return LvglUi::active() && ScreensaverView::card_count() >= 2;
+}
+
+void ScreensaverPage::turn_card(int step) {
+  ESP_LOGD("ScreensaverPage", "Swiped to the %s card.", step > 0 ? "next" : "previous");
+  LvglRenderer::post([step]() { ScreensaverView::turn(step); });
 }
 
 // A hold's context is the generation it was taken for.
