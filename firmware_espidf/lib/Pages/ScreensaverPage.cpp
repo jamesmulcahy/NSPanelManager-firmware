@@ -3,6 +3,7 @@
 #include <GUI_data.hpp>
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
+#include <LvglArt.hpp>
 #include <LvglText.hpp>
 #include <LvglUi.hpp>
 #include <ScreensaverView.hpp>
@@ -13,6 +14,7 @@
 #include <RoomManager.hpp>
 #include <PanelClock.hpp>
 #include <ScreensaverPage.hpp>
+#include <protobuf_nspanel_entity.pb-c.h>
 #include <StatusUpdateManager_events.hpp>
 // #include <cJSON.h>
 #include <algorithm>
@@ -34,6 +36,13 @@ void ScreensaverPage::init() {
   // The body turned to another card (GUI task): what the QEMU test and a log reader see of the rotation.
   ScreensaverView::on_card = [](const char *card, uint32_t seconds) { ESP_LOGI("ScreensaverPage", "Screensaver card: %s (%u s)", card, (unsigned)seconds); };
 
+  // The art's size comes with the card's layout, which is built when the screensaver first shows: fetch then.
+  ScreensaverView::on_art_size = [](uint16_t) {
+    if (ScreensaverPage::_update_art()) {
+      ScreensaverPage::_request_lvgl_render();
+    }
+  };
+
   // No inside temperature until the sensor (or the room's temperature sensor topic) has produced one.
   ScreensaverPage::_current_temperature.set("--");
 
@@ -42,6 +51,7 @@ void ScreensaverPage::init() {
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED, ScreensaverPage::_new_temperature_event, NULL);
 
   ScreensaverPage::_subscribe_to_mqtt_topics();
+  ScreensaverPage::_subscribe_media_player();
 }
 
 std::vector<uint8_t> _download_data_store;
@@ -234,6 +244,132 @@ void ScreensaverPage::_handle_energy(const mqtt::Message &message, void *context
   ScreensaverPage::_request_lvgl_render();
 }
 
+static bool plays(NSPanelEntityState__MediaPlayer__PlaybackState state) {
+  // BUFFERING counts, so the card doesn't drop out between tracks.
+  return state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING || state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__BUFFERING;
+}
+
+void ScreensaverPage::_handle_media_player(const mqtt::Message &message, void *context) {
+  if (!current(context, ScreensaverPage::_media_generation)) {
+    return;
+  }
+  // An empty payload is a cleared retained state: nothing plays. Anything but a media player's state is
+  // not a player either.
+  _NowPlaying next;
+  if (!message.payload.empty()) {
+    NSPanelEntityState *state = nspanel_entity_state__unpack(psram_protobuf_allocator(), message.payload.size(), message.payload.data());
+    if (state == NULL) [[unlikely]] {
+      ESP_LOGE("ScreensaverPage", "Got a media player state but failed to decode it. Keeping the previous one.");
+      return;
+    }
+    if (state->entity_case == NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER && state->media_player != NULL) {
+      const NSPanelEntityState__MediaPlayer *player = state->media_player;
+      next.eligible = plays(player->state) && !player->is_muted; // Volume 0 still counts: only the player's mute does not
+      next.player = LvglText::utf8(player->name != NULL ? player->name : "");
+      next.title = LvglText::utf8(player->media_title != NULL ? player->media_title : "");
+      next.artist = LvglText::utf8(player->media_artist != NULL ? player->media_artist : "");
+      next.art_url = player->album_art_url != NULL ? player->album_art_url : "";
+    }
+    nspanel_entity_state__free_unpacked(state, psram_protobuf_allocator());
+  }
+  // Only what is drawn is kept while nothing plays, so a stopped player's art is not held.
+  if (!next.eligible) {
+    next.title.clear();
+    next.artist.clear();
+    next.art_url.clear();
+  }
+  bool eligibility_changed;
+  {
+    std::lock_guard<std::mutex> lock(ScreensaverPage::_media_mutex);
+    if (next == ScreensaverPage::_now_playing) {
+      return; // The same card (a volume or position update): nothing to do
+    }
+    eligibility_changed = next.eligible != ScreensaverPage::_now_playing.eligible;
+    ScreensaverPage::_now_playing = next;
+  }
+  if (eligibility_changed || next.eligible) {
+    ESP_LOGI("ScreensaverPage", "Now playing: %s ('%s' by '%s' on '%s').", next.eligible ? "eligible" : "not eligible", next.title.c_str(), next.artist.c_str(), next.player.c_str());
+  }
+  ScreensaverPage::_update_art(); // A new URL is fetched now, whichever card is showing
+  ScreensaverPage::_request_lvgl_render();
+}
+
+void ScreensaverPage::_subscribe_media_player() {
+  std::string topic;
+  std::shared_ptr<NSPanelConfig> config;
+  if (NSPM_ConfigManager::get_config(&config) == ESP_OK && config && config->screensaver_media_player_topic != NULL) {
+    for (size_t i = 0; i < config->n_screensaver_cards; i++) {
+      if (config->screensaver_cards[i] != NULL && config->screensaver_cards[i]->type == NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_NOW_PLAYING) {
+        topic = config->screensaver_media_player_topic; // Empty: the room has no player, and the manager drops the card
+        break;
+      }
+    }
+  }
+  std::lock_guard<std::mutex> lock(ScreensaverPage::_subscriptions_mutex);
+  if (topic == ScreensaverPage::_media_topic.get() && (topic.empty() || ScreensaverPage::_media_subscription.active())) {
+    return;
+  }
+  // Bumped first: the cached state is delivered as soon as the hold is taken.
+  uint32_t generation = ++ScreensaverPage::_media_generation;
+  ScreensaverPage::_media_topic.set(topic);
+  {
+    std::lock_guard<std::mutex> media_lock(ScreensaverPage::_media_mutex);
+    ScreensaverPage::_now_playing = _NowPlaying();
+  }
+  if (topic.empty()) {
+    ScreensaverPage::_media_subscription.reset();
+    ScreensaverPage::_update_art(); // Lets go of the art
+    return;
+  }
+  ESP_LOGI("ScreensaverPage", "Following the media player on %s for the now-playing card.", topic.c_str());
+  ScreensaverPage::_media_subscription = mqtt::subscribe(topic, mqtt::Kind::STATE, &ScreensaverPage::_handle_media_player, generation_context(generation), PanelMetrics::HANDLER_SCREENSAVER_PAGE);
+  if (!ScreensaverPage::_media_subscription.active()) [[unlikely]] {
+    ESP_LOGE("ScreensaverPage", "Failed to subscribe to the media player state topic %s.", topic.c_str());
+  }
+}
+
+bool ScreensaverPage::_update_art() {
+  std::string url;
+  {
+    std::lock_guard<std::mutex> lock(ScreensaverPage::_media_mutex);
+    url = ScreensaverPage::_now_playing.eligible ? ScreensaverPage::_now_playing.art_url : "";
+  }
+  const uint16_t size = ScreensaverView::art_size();
+  std::lock_guard<std::mutex> lock(ScreensaverPage::_art_mutex);
+  bool changed = false;
+  if (url != ScreensaverPage::_art_url || size != ScreensaverPage::_art_size) {
+    ScreensaverPage::_art_url = url;
+    ScreensaverPage::_art_size = size;
+    changed = ScreensaverPage::_art != nullptr;
+    ScreensaverPage::_art.reset();
+  }
+  if (ScreensaverPage::_art == nullptr && !url.empty() && size > 0) {
+    LvglArt::Handle art = LvglArt::lookup(url, size);
+    if (art) {
+      ScreensaverPage::_art = std::make_shared<const LvglArt::Handle>(std::move(art));
+      changed = true;
+    } else {
+      LvglArt::fetch(url, size, &ScreensaverPage::_art_done); // Joins one already on its way
+    }
+  }
+  return changed;
+}
+
+void ScreensaverPage::_art_done(LvglArt::Handle image, const std::string &url) {
+  if (!image) {
+    return; // No art for this track, or it could not be had: the card keeps its placeholder. The next state tries again.
+  }
+  {
+    std::lock_guard<std::mutex> lock(ScreensaverPage::_art_mutex);
+    // The callback doesn't say which size this is: the card's size has changed since if the image isn't square at it.
+    if (url != ScreensaverPage::_art_url || image.image() == NULL || image.image()->header.w != ScreensaverPage::_art_size) {
+      return; // The track changed meanwhile; the cache keeps the art for later.
+    }
+    ScreensaverPage::_art = std::make_shared<const LvglArt::Handle>(std::move(image));
+  }
+  ScreensaverPage::_request_lvgl_render();
+}
+
 void ScreensaverPage::_request_lvgl_render() {
   if (!LvglUi::active() || !ScreensaverPage::showing()) {
     return; // show() renders everything held when the screensaver is shown next.
@@ -251,6 +387,7 @@ void ScreensaverPage::_nspm_config_event_handler(void *arg, esp_event_base_t eve
   case nspm_configmanager_event::CONFIG_LOADED: { // New config loaded while showing screensaver. Update screen
     // Only touches MQTT if the manager address or inside temperature topic changed.
     ScreensaverPage::_subscribe_to_mqtt_topics();
+    ScreensaverPage::_subscribe_media_player();
     {
       // The rotation's cards or times changed: draw the screensaver again, on LvglUi's task. Cheap (a string
       // compare) and kept up to date while another page is shown, so the next load does not draw for nothing.
@@ -601,6 +738,7 @@ void ScreensaverPage::_lvgl_render() {
   state.base_seconds = config->screensaver_base_card_seconds > 0 ? config->screensaver_base_card_seconds : 10;
   bool calendar_card = false;
   bool energy_card = false;
+  bool now_playing_card = false;
   // "No screensaver" shows no cards: the backlight is off and nothing rotates.
   for (size_t i = 0; mode != NSPANEL_CONFIG__NSPANEL_SCREENSAVER_MODE__NO_SCREENSAVER && i < config->n_screensaver_cards; i++) {
     const NSPanelConfig__ScreensaverCard *card = config->screensaver_cards[i];
@@ -617,8 +755,29 @@ void ScreensaverPage::_lvgl_render() {
       state.cards.push_back({ScreensaverCardType::ENERGY, seconds});
       energy_card = true;
       break;
+    case NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_NOW_PLAYING:
+      // Without a player to follow the manager drops the card, so a card here is one the panel can fill.
+      state.cards.push_back({ScreensaverCardType::NOW_PLAYING, seconds});
+      now_playing_card = true;
+      break;
     default:
       break;
+    }
+  }
+  if (now_playing_card) {
+    // In the rotation only while eligible; the view builds the card either way.
+    std::lock_guard<std::mutex> lock(ScreensaverPage::_media_mutex);
+    const _NowPlaying &playing = ScreensaverPage::_now_playing;
+    state.now_playing_eligible = playing.eligible;
+    if (playing.eligible) {
+      state.now_playing.title = playing.title;
+      state.now_playing.artist = playing.artist;
+      state.now_playing.player = playing.player;
+      std::lock_guard<std::mutex> art_lock(ScreensaverPage::_art_mutex);
+      if (ScreensaverPage::_art != nullptr) {
+        state.now_playing.art = ScreensaverPage::_art->image();
+        state.now_playing.art_hold = ScreensaverPage::_art;
+      }
     }
   }
   if (calendar_card) {

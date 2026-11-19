@@ -9,6 +9,7 @@ import urllib.request
 from typing import Optional
 
 from . import fake_nextion
+from .art_server import ArtServer
 from .broker import Broker
 from .fake_manager import QEMU_HOST_ADDRESS, FakeManager
 from .panel import QemuPanel
@@ -41,6 +42,8 @@ class Rig:
             self.broker = Broker(log_path=os.path.join(workdir, "mosquitto.log"))
             # The manager's HTTP side (update downloads), on the port register_accept advertises.
             self.update_server = UpdateServer()
+            # Album art, as the manager's image server answers the panel (tests/test_screensaver_now_playing.py).
+            self.art_server = ArtServer()
             self.manager = FakeManager(self.broker, port=self.update_server.port)
             if fake_nextion.TERMINAL is not None:
                 # LvglRenderer lays out for the region the manager's config names, whatever
@@ -160,4 +163,6 @@ class Rig:
                 self.manager.close()
         if self.update_server is not None:
             self.update_server.close()
+        if self.art_server is not None:
+            self.art_server.close()
         self.broker.close()

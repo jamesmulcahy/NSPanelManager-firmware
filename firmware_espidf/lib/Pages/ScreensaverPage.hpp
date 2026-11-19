@@ -7,10 +7,22 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <LvglArt.hpp>
 #include <protobuf_nspanel.pb-c.h>
 
 struct ScreensaverState;
 struct EnergyValues;
+
+// The now-playing card's player as last decoded from its state topic. Eligible: playing or buffering, and not muted.
+struct ScreensaverNowPlaying {
+  bool eligible = false;
+  std::string player;
+  std::string title;
+  std::string artist;
+  std::string art_url;
+  bool operator==(const ScreensaverNowPlaying &other) const = default;
+};
+
 
 class ScreensaverPage {
 public:
@@ -115,6 +127,32 @@ private:
   static void _handle_inside_temperature(const mqtt::Message &message, void *context);
 
   /**
+   * The now-playing card's player: the state topic's callback, from its mqtt::Subscription handle (on
+   * mqtt_dispatch, so the decode is kept lean: the NSPanelEntityState is unpacked, the few fields the
+   * card needs copied out and the rest freed at once). Same generation rule as the status topics.
+   */
+  static void _handle_media_player(const mqtt::Message &message, void *context);
+
+  /**
+   * Hold the player's state topic for as long as the card is configured (replacing the hold when the
+   * config names another topic, dropping it when the card is gone), as the config carries it.
+   */
+  static void _subscribe_media_player();
+
+  /**
+   * Bring the card's art up to date with the player: the art for the current URL at the card's size
+   * (ScreensaverView::art_size()), from LvglArt's cache or, if it isn't there, fetched at once, whichever
+   * card is showing. Dropped while the player isn't eligible. Any task. True if what the card draws
+   * changed, which the caller renders.
+   */
+  static bool _update_art();
+
+  /**
+   * LvglArt's fetch is done (on its task): keep the art if it is still the one the card wants.
+   */
+  static void _art_done(LvglArt::Handle image, const std::string &url);
+
+  /**
    * Handle events from NSPM_ConfigManager
    */
   static void _nspm_config_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
@@ -155,6 +193,24 @@ private:
   static inline std::atomic<uint32_t> _status_generation = 0;
   static inline mqtt::Subscription _inside_temperature_subscription;
   static inline std::atomic<uint32_t> _inside_temperature_generation = 0;
+
+  // The now-playing card's player, as last decoded from its state topic. Eligible: playing or buffering, and
+  // not muted. _media_mutex guards the struct; the hold and its generation are replaced under
+  // _subscriptions_mutex.
+  using _NowPlaying = ScreensaverNowPlaying;
+  static inline std::mutex _media_mutex;
+  static inline _NowPlaying _now_playing;
+  static inline mqtt::Subscription _media_subscription;
+  static inline std::atomic<uint32_t> _media_generation = 0;
+  static inline MutexWrapped<std::string> _media_topic;
+
+  // The art the card wants: for _art_url (empty while nothing is eligible) at _art_size, held in _art once
+  // it is in LvglArt's cache. The hold keeps the pixels from being evicted for as long as the card may
+  // draw them. _art_mutex guards all three.
+  static inline std::mutex _art_mutex;
+  static inline std::string _art_url;
+  static inline uint16_t _art_size = 0;
+  static inline std::shared_ptr<const LvglArt::Handle> _art;
 
   // The current time string
   static inline MutexWrapped<std::string> _current_time;

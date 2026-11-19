@@ -812,19 +812,21 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_sound_event__descriptor =
   nspanel_config__nspanel_sound_event__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCEnumValue nspanel_config__nspanel_screensaver_card_type__enum_values_by_number[3] =
+static const ProtobufCEnumValue nspanel_config__nspanel_screensaver_card_type__enum_values_by_number[4] =
 {
   { "SCREENSAVER_CARD_UNSPECIFIED", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_UNSPECIFIED", 0 },
   { "SCREENSAVER_CARD_CALENDAR", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_CALENDAR", 1 },
   { "SCREENSAVER_CARD_ENERGY", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_ENERGY", 2 },
+  { "SCREENSAVER_CARD_NOW_PLAYING", "NSPANEL_CONFIG__NSPANEL_SCREENSAVER_CARD_TYPE__SCREENSAVER_CARD_NOW_PLAYING", 3 },
 };
 static const ProtobufCIntRange nspanel_config__nspanel_screensaver_card_type__value_ranges[] = {
-{0, 0},{0, 3}
+{0, 0},{0, 4}
 };
-static const ProtobufCEnumValueIndex nspanel_config__nspanel_screensaver_card_type__enum_values_by_name[3] =
+static const ProtobufCEnumValueIndex nspanel_config__nspanel_screensaver_card_type__enum_values_by_name[4] =
 {
   { "SCREENSAVER_CARD_CALENDAR", 1 },
   { "SCREENSAVER_CARD_ENERGY", 2 },
+  { "SCREENSAVER_CARD_NOW_PLAYING", 3 },
   { "SCREENSAVER_CARD_UNSPECIFIED", 0 },
 };
 const ProtobufCEnumDescriptor nspanel_config__nspanel_screensaver_card_type__descriptor =
@@ -834,15 +836,15 @@ const ProtobufCEnumDescriptor nspanel_config__nspanel_screensaver_card_type__des
   "NSPanelScreensaverCardType",
   "NSPanelConfig__NSPanelScreensaverCardType",
   "",
-  3,
+  4,
   nspanel_config__nspanel_screensaver_card_type__enum_values_by_number,
-  3,
+  4,
   nspanel_config__nspanel_screensaver_card_type__enum_values_by_name,
   1,
   nspanel_config__nspanel_screensaver_card_type__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[44] =
+static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[45] =
 {
   {
     "name",
@@ -1372,6 +1374,18 @@ static const ProtobufCFieldDescriptor nspanel_config__field_descriptors[44] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "screensaver_media_player_topic",
+    53,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelConfig, screensaver_media_player_topic),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_config__field_indices_by_name[] = {
   38,   /* field[38] = button1_entity_page_topic */
@@ -1409,6 +1423,7 @@ static const unsigned nspanel_config__field_indices_by_name[] = {
   43,   /* field[43] = screensaver_base_card_seconds */
   42,   /* field[42] = screensaver_cards */
   9,   /* field[9] = screensaver_dim_level */
+  44,   /* field[44] = screensaver_media_player_topic */
   10,   /* field[10] = screensaver_mode */
   11,   /* field[11] = show_screensaver_inside_temperature */
   12,   /* field[12] = show_screensaver_outside_temperature */
@@ -1426,7 +1441,7 @@ static const ProtobufCIntRange nspanel_config__number_ranges[5 + 1] =
   { 30, 23 },
   { 35, 27 },
   { 37, 28 },
-  { 0, 44 }
+  { 0, 45 }
 };
 const ProtobufCMessageDescriptor nspanel_config__descriptor =
 {
@@ -1436,7 +1451,7 @@ const ProtobufCMessageDescriptor nspanel_config__descriptor =
   "NSPanelConfig",
   "",
   sizeof(NSPanelConfig),
-  44,
+  45,
   nspanel_config__field_descriptors,
   nspanel_config__field_indices_by_name,
   5,  nspanel_config__number_ranges,
