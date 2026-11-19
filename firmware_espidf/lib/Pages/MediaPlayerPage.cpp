@@ -45,6 +45,12 @@ void MediaPlayerPage::unshow() {
   // A full render takes seconds and outlives this page, so stop it rather than let it paint
   // over whatever comes next.
   AlbumArt::cancel();
+  {
+    // LVGL: let the cache evict the art if it needs to (the view keeps its own hold while it draws it).
+    // Opening the page again finds it in the cache, or fetches it.
+    std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
+    MediaPlayerPage::_lvgl_art.reset();
+  }
 }
 
 bool MediaPlayerPage::_on_screen() {
@@ -188,15 +194,17 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
     std::string album_art_url = media_player->album_art_url != NULL ? media_player->album_art_url : "";
     std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
     if (LvglUi::active()) {
-      // Whole, in the background (LvglArt); the page shows the placeholder meanwhile.
-      MediaPlayerPage::_album_art_url = album_art_url;
-      if (album_art_url != MediaPlayerPage::_lvgl_art_url) {
-        MediaPlayerPage::_lvgl_art = nullptr;
-        MediaPlayerPage::_lvgl_art_url.clear();
-        if (!album_art_url.empty()) {
-          LvglArt::fetch(album_art_url, MediaPlayerPage::_lvgl_art_done);
+      // From LvglArt's cache, else fetched whole in the background; the page shows the placeholder meanwhile.
+      if (album_art_url != MediaPlayerPage::_album_art_url) {
+        MediaPlayerPage::_album_art_url = album_art_url;
+        MediaPlayerPage::_lvgl_art.reset();
+      }
+      if (MediaPlayerPage::_lvgl_art == nullptr && !album_art_url.empty()) {
+        LvglArt::Handle art = LvglArt::lookup(album_art_url, MediaPlayerView::ART_SIZE);
+        if (art) {
+          MediaPlayerPage::_lvgl_art = std::make_shared<const LvglArt::Handle>(std::move(art));
         } else {
-          LvglArt::cancel();
+          LvglArt::fetch(album_art_url, MediaPlayerView::ART_SIZE, MediaPlayerPage::_lvgl_art_done); // Joins one on its way
         }
       }
     } else if (page_just_opened || album_art_url != MediaPlayerPage::_album_art_url) {
@@ -622,7 +630,10 @@ void MediaPlayerPage::_lvgl_render(const NSPanelEntityState__MediaPlayer *media_
   state.artist = LvglText::utf8(media_player->media_artist);
   {
     std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
-    state.art = MediaPlayerPage::_lvgl_art;
+    if (MediaPlayerPage::_lvgl_art != nullptr) {
+      state.art = MediaPlayerPage::_lvgl_art->image();
+      state.art_hold = MediaPlayerPage::_lvgl_art;
+    }
   }
   state.playing = media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING ||
                   media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__BUFFERING;
@@ -643,14 +654,18 @@ void MediaPlayerPage::_lvgl_render(const NSPanelEntityState__MediaPlayer *media_
   LvglUi::show(LvglUi::View::MEDIA_PLAYER, MediaPlayerView::build, [state]() { MediaPlayerView::show(state); });
 }
 
-void MediaPlayerPage::_lvgl_art_done(const lv_image_dsc_t *image, const std::string &url) {
+void MediaPlayerPage::_lvgl_art_done(LvglArt::Handle image, const std::string &url) {
+  if (!image) {
+    // No art for this track (or it could not be had): keep the placeholder. The next state tries again;
+    // redrawing now would only ask for it again at once.
+    return;
+  }
   {
     std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
-    if (url != MediaPlayerPage::_album_art_url) {
-      return; // The track changed meanwhile; its own fetch is on the way.
+    if (url != MediaPlayerPage::_album_art_url || !MediaPlayerPage::_showing) {
+      return; // The track changed or the page closed meanwhile; the cache keeps the art for later.
     }
-    MediaPlayerPage::_lvgl_art = image;
-    MediaPlayerPage::_lvgl_art_url = image != NULL ? url : "";
+    MediaPlayerPage::_lvgl_art = std::make_shared<const LvglArt::Handle>(std::move(image));
   }
   MediaPlayerPage::_redraw();
 }

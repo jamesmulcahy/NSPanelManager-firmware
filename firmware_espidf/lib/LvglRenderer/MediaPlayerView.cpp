@@ -61,6 +61,9 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   MediaPlayerView::_art_box = art;
   MediaPlayerView::_art = lv_image_create(art);
   lv_obj_center(MediaPlayerView::_art);
+  // Nothing draws the art once the image is gone, so its pixels may go too.
+  MediaPlayerView::_art_hold.reset();
+  lv_obj_add_event_cb(MediaPlayerView::_art, [](lv_event_t *) { MediaPlayerView::_art_hold.reset(); }, LV_EVENT_DELETE, NULL);
   MediaPlayerView::_art_placeholder = Ui::icon(art, NSPM_ICON_MUSIC, 64, Theme::muted());
   lv_obj_center(MediaPlayerView::_art_placeholder);
 
@@ -136,6 +139,8 @@ void MediaPlayerView::show(const MediaPlayerState &state) {
   if (lv_image_get_src(MediaPlayerView::_art) != state.art) {
     lv_image_set_src(MediaPlayerView::_art, state.art);
   }
+  // Only now that the image draws from the new art can the old art's pixels be let go.
+  MediaPlayerView::_art_hold = state.art_hold;
   Ui::set_visible(MediaPlayerView::_art, state.art != NULL);
   Ui::set_visible(MediaPlayerView::_art_placeholder, state.art == NULL);
 

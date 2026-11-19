@@ -2,6 +2,7 @@
 #include <lvgl.h>
 
 #include <GUI_data.hpp>
+#include <LvglArt.hpp>
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -156,7 +157,7 @@ private:
   /**
    * LvglArt's result for `url`, on its task: keep it if it is still this page's art, and redraw.
    */
-  static void _lvgl_art_done(const lv_image_dsc_t *image, const std::string &url);
+  static void _lvgl_art_done(LvglArt::Handle image, const std::string &url);
 
   // Whether the entity page last opened as this media player: set when it opens and cleared by
   // unshow(). unshow() runs late on the unshow task, and not at all while that is held up, so this
@@ -243,9 +244,10 @@ private:
   // task and from the Nextion handler.
   static inline std::string _album_art_url;
   static inline std::mutex _album_art_url_mutex;
-  // LVGL: the art shown (NULL: placeholder) and the URL it came from. Guarded by _album_art_url_mutex.
-  static inline const lv_image_dsc_t *_lvgl_art = nullptr;
-  static inline std::string _lvgl_art_url;
+  // LVGL: a hold on the art for _album_art_url, from LvglArt's cache; empty while it is on its way, or
+  // if there is none (placeholder). Shared with the states handed to MediaPlayerView, which keep it
+  // until the view draws other art. Guarded by _album_art_url_mutex.
+  static inline std::shared_ptr<const LvglArt::Handle> _lvgl_art;
 
   static inline portMUX_TYPE _spinlock = portMUX_INITIALIZER_UNLOCKED;
 };

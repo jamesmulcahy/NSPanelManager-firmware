@@ -189,8 +189,9 @@ internal RAM (no gain). Not tried: PSRAM and flash at 80 MHz. It needs a panel w
 OTA rollback, as a wrong clock fails at boot.
 
 Album art is fetched after the page is drawn (180x180 RGB565 from the manager) and costs ~0.2 s on
-the wire. The backgrounds are designed for the link: colour changes only down the screen or at a few
-edges per row, so they cost 3-13% more bytes than a plain screen (a photo costs 3-5 times as much).
+the wire. `LvglArt` keeps the last few images in PSRAM (4 slots, 512 KB), keyed by URL and size, so
+opening the page again for the same track draws the art at once. The backgrounds are designed for
+the link: colour changes only down the screen or at a few edges per row, so they cost 3-13% more bytes than a plain screen (a photo costs 3-5 times as much).
 
 ## Flash
 
