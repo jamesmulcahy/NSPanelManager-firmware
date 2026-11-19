@@ -280,7 +280,9 @@ bool LvglArt::_fetch_into(const std::string &base_url, uint16_t size, int slot) 
   ImageHeaders headers;
   esp_http_client_config_t config = {};
   config.url = url.c_str();
-  config.timeout_ms = 5000;
+  // The manager answers only once it has the art from Home Assistant, which it allows 10 s
+  // (HomeAssistantMediaPlayer::album_art_download_timeout_seconds). Wait longer, so it always answers first.
+  config.timeout_ms = 12000;
   config.event_handler = on_http_event;
   config.user_data = &headers;
   esp_http_client_handle_t client = esp_http_client_init(&config);
