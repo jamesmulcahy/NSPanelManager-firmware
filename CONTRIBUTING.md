@@ -1,6 +1,6 @@
 # Contributing
 
-The firmware for NSPanels run by [NSPanel Manager](https://nspanelmanager.com). It is an
+This is a fork of the firmware for NSPanels run by [NSPanel Manager](https://nspanelmanager.com). It is an
 ESP-IDF project built with PlatformIO, in `firmware_espidf/`.
 
 Open pull requests against `devel`.
