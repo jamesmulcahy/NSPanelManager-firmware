@@ -4,6 +4,15 @@ name: Build firmware
 # artifact on the run: firmware.bin for an OTA update through the manager (the
 # setup web UI is part of it), plus the bootloader, partition table and OTA
 # data for a full serial flash, and firmware.elf for decoding backtraces.
+#
+# A push to fork also publishes the build as a GitHub Release, so the NSPanel
+# manager can download it anonymously (artifact zips need authentication, release
+# assets do not). Tag: build-<8-char sha>, marked latest; the newest 20 build-*
+# releases are kept. Assets: firmware-original_sonoff.bin and firmware-custom_pcb.bin
+# (the OTA app images), build.json (schema 1: commit, branch, run, built_at and the
+# size/md5/sha256 of each image) and firmware-<board>.elf for backtraces. A manual
+# dispatch with publish_test=true publishes a prerelease test-<8-char sha> instead
+# (never latest, never pruned; delete it by hand). Pull requests never publish.
 
 on:
   push:
@@ -19,6 +28,11 @@ on:
       - "firmware_espidf/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
+    inputs:
+      publish_test:
+        description: "Publish the build as a test-<sha> prerelease"
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -87,3 +101,94 @@ jobs:
           name: firmware-${{ matrix.environment }}-${{ steps.collect.outputs.short_sha }}
           path: dist/
           if-no-files-found: error
+
+  release:
+    needs: build
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/fork') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Prepare names
+        run: |
+          short=${GITHUB_SHA::8}
+          echo "SHORT=$short" >> "$GITHUB_ENV"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "TAG=build-$short" >> "$GITHUB_ENV"
+            echo "IS_TEST=false" >> "$GITHUB_ENV"
+          else
+            echo "TAG=test-$short" >> "$GITHUB_ENV"
+            echo "IS_TEST=true" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: firmware-*-${{ env.SHORT }}
+          path: artifacts
+
+      - name: Assemble release assets
+        run: |
+          mkdir -p assets
+          for board in original_sonoff custom_pcb; do
+            d=artifacts/firmware-$board-$SHORT
+            cp "$d/firmware.bin" "assets/firmware-$board.bin"
+            cp "$d/firmware.elf" "assets/firmware-$board.elf"
+          done
+          python3 - <<'PY'
+          import hashlib, json, os, datetime
+          def digest(path, algo):
+              h = hashlib.new(algo)
+              with open(path, "rb") as f:
+                  h.update(f.read())
+              return h.hexdigest()
+          images = {}
+          for board in ("original_sonoff", "custom_pcb"):
+              asset = f"firmware-{board}.bin"
+              path = f"assets/{asset}"
+              images[board] = {"asset": asset, "size": os.path.getsize(path),
+                               "md5": digest(path, "md5"), "sha256": digest(path, "sha256")}
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          record = {"schema": 1, "commit": os.environ["GITHUB_SHA"], "branch": os.environ["GITHUB_REF_NAME"],
+                    "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_url": run_url,
+                    "built_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "images": images}
+          with open("assets/build.json", "w") as f:
+              json.dump(record, f, indent=2)
+              f.write("\n")
+          with open("notes.md", "w") as f:
+              f.write(f"Built from [`{os.environ['SHORT']}`]({os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/commit/{os.environ['GITHUB_SHA']}) by [run {os.environ['GITHUB_RUN_ID']}]({run_url}).\n\n")
+              f.write("| Board | Image | Size | MD5 |\n|---|---|---:|---|\n")
+              for board, i in images.items():
+                  f.write(f"| {board} | `{i['asset']}` | {i['size']} | `{i['md5']}` |\n")
+          PY
+          cat assets/build.json
+
+      - name: Publish release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+            gh release edit "$TAG" --notes-file notes.md
+          elif [ "$IS_TEST" = "true" ]; then
+            gh release create "$TAG" assets/* --target "$GITHUB_SHA" --title "$TAG" \
+              --notes-file notes.md --prerelease --latest=false
+          else
+            gh release create "$TAG" assets/* --target "$GITHUB_SHA" --title "$TAG" \
+              --notes-file notes.md --latest
+          fi
+
+      - name: Prune old builds
+        if: env.IS_TEST == 'false'
+        run: |
+          # Keep the newest 20 build-* releases; other releases and tags are never touched.
+          gh release list --limit 1000 --json tagName,createdAt \
+            --jq 'map(select(.tagName | startswith("build-"))) | sort_by(.createdAt) | reverse | .[20:][].tagName' |
+          while read -r tag; do
+            echo "Deleting $tag"
+            gh release delete "$tag" --cleanup-tag --yes
+          done
