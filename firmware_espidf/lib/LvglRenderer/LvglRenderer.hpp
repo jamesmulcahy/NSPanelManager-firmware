@@ -143,6 +143,10 @@ private:
   static void _show_status();
   static uint32_t _tick();
 
+  // Touches waiting for the GUI task. Moves may use all but the last TOUCH_EDGE_RESERVE slots, which are
+  // kept for presses and releases (inject_touch()).
+  static constexpr UBaseType_t TOUCH_QUEUE_LENGTH = 16;
+  static constexpr UBaseType_t TOUCH_EDGE_RESERVE = 4;
   struct Touch {
     uint16_t x, y;
     bool pressed;
