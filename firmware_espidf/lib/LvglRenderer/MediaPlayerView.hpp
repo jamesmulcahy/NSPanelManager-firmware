@@ -1,5 +1,6 @@
 #pragma once
 #include <lvgl.h>
+#include <memory>
 #include <string>
 
 // LVGL replacement for the Nextion `mediaplayer` page (lib/Pages/MediaPlayerPage, NSPanelManager
@@ -12,6 +13,9 @@ struct MediaPlayerState {
   std::string artist;
   std::string album;                   // Not on the Nextion page; shown if the manager sends it
   const lv_image_dsc_t *art = NULL;    // RGB565, ART_SIZE square (the manager scales it); NULL: placeholder
+  // Keeps art's pixels valid (an LvglArt::Handle on the panel). The view holds it for as long as it
+  // draws art: until a show() with other art, or until the view is deleted.
+  std::shared_ptr<const void> art_hold;
   bool playing = false;
   bool muted = false;
   int volume = 0;                      // 0-100, of this player or (controlling_source) the source
@@ -38,6 +42,7 @@ private:
   static inline lv_obj_t *_art_box = NULL;
   static inline lv_obj_t *_art = NULL;
   static inline lv_obj_t *_art_placeholder = NULL;
+  static inline std::shared_ptr<const void> _art_hold; // Whatever keeps _art's source valid (GUI task)
   static inline lv_obj_t *_song = NULL;
   static inline lv_obj_t *_artist = NULL;
   static inline lv_obj_t *_album = NULL;
