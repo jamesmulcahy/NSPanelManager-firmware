@@ -50,8 +50,9 @@ class Rig:
                 # config.json said at boot: US for the US receiver, EU for the EU one.
                 self.manager.config.is_us_panel = fake_nextion.TERMINAL == "us"
         else:
-            # The stack's own manager serves updates.
+            # The stack's own manager serves updates and album art.
             self.update_server = None
+            self.art_server = None
             self.broker = Broker(external=stack.mqtt)
             self.manager = StackManager(self.broker, stack, mac)
         self.stack = stack
