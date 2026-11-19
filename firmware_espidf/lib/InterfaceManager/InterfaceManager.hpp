@@ -51,6 +51,14 @@ public:
   static void show_default_page();
 
   /**
+   * @brief Keep the loading page up until the panel restarts. Call before LoadingPage::show()
+   * when about to reboot, so that a page request arriving meanwhile (the first status at boot,
+   * a manager coming back online) cannot cover "Rebooting" or write to a page without t_loading.
+   * Never released: the restart ends it.
+   */
+  static void hold_screen_for_reboot();
+
+  /**
    * @brief Show the home page from the page-transition task.
    * Use this instead of HomePage::show() from a handler on the RoomManager
    * event loop; see _task_page_transitions for why.
@@ -184,6 +192,7 @@ private:
   // take the screen until UPDATE_ENDED_WITHOUT_REBOOT (or FIRMWARE_UPDATE_FAILED) gives it back.
   // Without this, an update that starts while the panel first leaves the loading page at boot
   // ends up behind the default page, with its progress written to a page that has no t_ip.
+  // A reboot sets it too (hold_screen_for_reboot()), and nothing clears it then.
   static inline std::atomic<bool> _update_holds_screen = false;
 
   // Has the config been loaded from NSPanel Manager container yet?

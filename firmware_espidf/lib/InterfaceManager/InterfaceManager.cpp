@@ -212,6 +212,10 @@ void InterfaceManager::_finish_unshow(ShownPage *page) {
   delete page;
 }
 
+void InterfaceManager::hold_screen_for_reboot() {
+  InterfaceManager::_update_holds_screen = true;
+}
+
 void InterfaceManager::show_default_page() {
   ESP_LOGD("InterfaceManager", "show_default_page called.");
   if (InterfaceManager::_update_holds_screen) {

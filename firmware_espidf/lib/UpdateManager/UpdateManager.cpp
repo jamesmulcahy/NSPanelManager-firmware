@@ -607,6 +607,7 @@ void UpdateManager::_mqtt_event_handler(void *arg, esp_event_base_t event_base, 
 }
 
 void UpdateManager::_task_reboot(void *param) {
+  InterfaceManager::hold_screen_for_reboot();
   LoadingPage::show();
   LoadingPage::set_loading_text("Rebooting");
   LoadingPage::set_secondary_text("");
