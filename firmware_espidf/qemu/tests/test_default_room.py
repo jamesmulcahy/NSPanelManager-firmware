@@ -4,6 +4,10 @@ import time
 
 from nspm_qemu import gui
 from nspm_qemu.fake_manager import Room
+import pytest
+from nspm_qemu.fake_nextion import TERMINAL
+
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 
 def _wait_until_quiet(rig, quiet=2.0, timeout=60):

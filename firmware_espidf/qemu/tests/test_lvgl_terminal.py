@@ -1,6 +1,6 @@
 """The LVGL UI, on a display that runs nspanel-terminal's TFT.
 
-Run with NSPM_QEMU_TERMINAL=us (or eu-on-us): the fake display is then nextion-tools' terminal
+Runs with NSPM_QEMU_TERMINAL=us (the default) or eu-on-us: the fake display is then nextion-tools' terminal
 receiver, the firmware's LvglUi draws every page and streams the pixels, and touches arrive as
 terminal touch samples (see fake_nextion.py). Without it these tests are skipped, and the rest of
 the suite runs against NSPM's own TFT as usual.
@@ -18,7 +18,7 @@ import pytest
 
 from nspm_qemu.fake_nextion import TERMINAL
 
-pytestmark = pytest.mark.skipif(TERMINAL is None, reason="needs NSPM_QEMU_TERMINAL=us|eu-on-us")
+pytestmark = pytest.mark.skipif(TERMINAL is None, reason="needs the LVGL UI: NSPM_QEMU_TERMINAL=us|eu-on-us (the default)")
 
 
 def settle(nextion, quiet: float = 1.5, timeout: float = 60) -> None:

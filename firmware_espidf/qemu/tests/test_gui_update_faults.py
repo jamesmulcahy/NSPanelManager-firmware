@@ -11,6 +11,9 @@ import pytest
 
 from nspm_qemu.gui_update import check_invariants, run_gui_update
 from test_gui_update import TFT_SIZE, make_tft
+from nspm_qemu.fake_nextion import TERMINAL
+
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 CHUNK = 4096
 # A Django DEBUG=True error page, as the real manager serves on an exception.

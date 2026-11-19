@@ -1,7 +1,7 @@
 """Panel timers on the LVGL UI: start one from the swipe-down menu, watch the engine's wakeups close in
 on it, see the alarm when it fires, and find a running one again after a reboot.
 
-Needs NSPM_QEMU_TERMINAL=us (the LVGL UI; touch coordinates are for the US layout), as
+Needs NSPM_QEMU_TERMINAL=us (the LVGL UI, the default; touch coordinates are for the US layout), as
 test_lvgl_terminal.py does. The coordinates below are from the host simulator's screens
 (test/host/lvgl_sim: us-32-menu, us-38-timer-set, us-39-timer-alarm).
 
@@ -19,7 +19,7 @@ from nspm_qemu.fake_nextion import TERMINAL
 
 from test_lvgl_terminal import settle, swipe_down, upright_rgb565, wake_to_home
 
-pytestmark = pytest.mark.skipif(TERMINAL is None, reason="needs NSPM_QEMU_TERMINAL=us|eu-on-us")
+pytestmark = pytest.mark.skipif(TERMINAL is None, reason="needs the LVGL UI: NSPM_QEMU_TERMINAL=us|eu-on-us (the default)")
 
 US_MENU_TIMERS = (238, 407)
 US_ROLLER_X = {"hours": 56, "minutes": 160, "seconds": 264}

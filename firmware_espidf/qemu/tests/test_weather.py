@@ -4,6 +4,9 @@ import pytest
 
 from nspm_qemu.fake_manager import default_weather
 from nspm_qemu.proto import nspanel as pb
+from nspm_qemu.fake_nextion import TERMINAL
+
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 
 @pytest.fixture

@@ -5,9 +5,8 @@ calendar comes from its own retained topic, status/calendar. The view turns to t
 timer and ScreensaverPage logs each turn ("Screensaver card: calendar (5 s)"), which is what these
 tests read: the pixels of a card are checked on the host (test/host/lvgl_sim).
 
-Needs NSPM_QEMU_TERMINAL=us|eu-on-us (the LVGL UI), and a schema that has NSPanelCalendarUpdate:
-until qemu/nspanelmanager.ref is bumped past the manager's screensaver cards, point NSPM_PROTO_DIR at
-a manager checkout's docker/protobuf.
+Needs the LVGL UI (NSPM_QEMU_TERMINAL=us|eu-on-us; us is the default), and a schema that has NSPanelCalendarUpdate:
+qemu/protobuf.ref pins a fork commit that has it; NSPM_PROTO_DIR points at another checkout.
 """
 
 import re
@@ -19,8 +18,8 @@ from nspm_qemu.fake_nextion import TERMINAL
 from nspm_qemu.proto import nspanel as pb
 
 pytestmark = [
-    pytest.mark.skipif(TERMINAL is None, reason="needs NSPM_QEMU_TERMINAL=us|eu-on-us"),
-    pytest.mark.skipif(not hasattr(pb, "NSPanelCalendarUpdate"), reason="the pinned schema has no NSPanelCalendarUpdate"),
+    pytest.mark.skipif(TERMINAL is None, reason="needs the LVGL UI: NSPM_QEMU_TERMINAL=us|eu-on-us (the default)"),
+    pytest.mark.skipif(not hasattr(pb, "NSPanelCalendarUpdate"), reason="the schema has no NSPanelCalendarUpdate (see protobuf.ref, NSPM_PROTO_DIR)"),
 ]
 
 CARD = r"ScreensaverPage: Screensaver card: (\w+) \((\d+) s\)"

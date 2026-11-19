@@ -600,6 +600,7 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
 }
 
 void UpdateManager::_task_reboot(void *param) {
+  InterfaceManager::hold_screen_for_reboot();
   LoadingPage::show();
   LoadingPage::set_loading_text("Rebooting");
   LoadingPage::set_secondary_text("");

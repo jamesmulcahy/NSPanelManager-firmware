@@ -10,6 +10,10 @@ from PIL import Image
 from nextion_tools.emu.viewer import Viewer
 from nspm_qemu import gui
 from nspm_qemu.proto import nspanel as pb
+from nspm_qemu.fake_nextion import TERMINAL
+
+# The viewer shows the emulated Nextion display, and the test waits on NSPM's TFT page names.
+pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
 
 
 @pytest.fixture
