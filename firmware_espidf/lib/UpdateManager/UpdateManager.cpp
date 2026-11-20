@@ -257,7 +257,7 @@ void UpdateManager::update_gui(void *param) {
     std::string gui_md5 = std::string((char *)data.data(), data.size());
     ESP_LOGI("UpdateManager", "Got new GUI md5 checksum from manager: %s", gui_md5.c_str());
     ConfigManager::md5_gui = gui_md5;
-    ConfigManager::save_config();
+    ConfigManager::save_config(CONFIG_SAVE_BY_GUI_UPDATE);
 
     ESP_LOGI("UpdateManager", "GUI file successfully updated and new md5 checksum stored. Will reboot in 5 seconds.");
     vTaskDelay(pdMS_TO_TICKS(5000));
@@ -302,13 +302,13 @@ void UpdateManager::update_firmware(void *param) {
       if (UpdateManager::_force_update) {
         ESP_LOGI("UpdateManager", "This is a force update, clearing stored checksum for firmware.");
         ConfigManager::md5_firmware = "";
-        ConfigManager::save_config();
+        ConfigManager::save_config(CONFIG_SAVE_BY_FIRMWARE_UPDATE);
       }
       ESP_LOGI("UpdateManager", "New firmware available. Will update OTA.");
       if (UpdateManager::_update_firmware_ota() == ESP_OK) {
         ConfigManager::has_updated = true;
         ConfigManager::md5_firmware_pending = md5_string;
-        ConfigManager::save_config();
+        ConfigManager::save_config(CONFIG_SAVE_BY_FIRMWARE_UPDATE);
 
         ESP_LOGI("UpdateManager", "Firmware update complete. Stored firmware checksum will be updated on next successful boot.");
 
@@ -368,7 +368,7 @@ void UpdateManager::update_internal_firmware_checksum() {
   ConfigManager::md5_firmware = md5_string;
   ConfigManager::md5_firmware_pending = "";
   ConfigManager::has_updated = false;
-  if (ConfigManager::save_config() == ESP_OK) {
+  if (ConfigManager::save_config(CONFIG_SAVE_BY_FIRMWARE_UPDATE) == ESP_OK) {
     ESP_LOGI("UpdateManager", "Updated stored firmware checksum to %s. Will reboot.", md5_string.c_str());
   } else {
     ESP_LOGE("UpdateManager", "Failed to save config!");
@@ -569,7 +569,7 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
       if (json.contains("enable") && json["enable"].is_boolean()) {
         ConfigManager::lvgl_ui = json["enable"].get<bool>();
         ESP_LOGI("UpdateManager", "lvgl_ui set to %s; rebooting.", ConfigManager::lvgl_ui ? "true" : "false");
-        ConfigManager::save_config();
+        ConfigManager::save_config(CONFIG_SAVE_BY_COMMAND);
         xTaskCreatePinnedToCore(UpdateManager::_task_reboot, "reboot", 4096, NULL, 2, NULL, 1);
       } else {
         ESP_LOGI("UpdateManager", "lvgl_ui is %s; LVGL is %sthe UI.", ConfigManager::lvgl_ui ? "true" : "false", LvglUi::active() ? "" : "not ");
@@ -583,7 +583,7 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
         if (enable != ConfigManager::loop_watchdog) {
           ConfigManager::loop_watchdog = enable;
           ESP_LOGI("UpdateManager", "loop_watchdog set to %s.", enable ? "true" : "false");
-          ConfigManager::save_config();
+          ConfigManager::save_config(CONFIG_SAVE_BY_COMMAND);
           EventLoopWatchdog::set_enabled(enable);
         } else {
           ESP_LOGI("UpdateManager", "loop_watchdog is already %s.", enable ? "true" : "false");

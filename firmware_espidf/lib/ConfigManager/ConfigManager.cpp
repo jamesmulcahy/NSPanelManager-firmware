@@ -391,18 +391,22 @@ std::string ConfigManager::_serialise() {
   return json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
-esp_err_t ConfigManager::save_config(bool replace_unreadable) {
+void ConfigManager::_count_lock_timeout() {
+  PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_LOCK_TIMEOUT].add();
+}
+
+esp_err_t ConfigManager::save_config(ConfigSaveCaller caller, bool replace_unreadable) {
   if (!ConfigManager::_lock()) {
     ESP_LOGE(TAG, "Config lock busy for %d ms. Not saving.", SAVE_LOCK_TIMEOUT_MS);
-    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_LOCK_TIMEOUT].add();
+    ConfigManager::_count_lock_timeout();
     return ESP_ERR_TIMEOUT;
   }
-  esp_err_t result = ConfigManager::_save_locked(replace_unreadable);
+  esp_err_t result = ConfigManager::_save_locked(caller, replace_unreadable);
   ConfigManager::_unlock();
   return result;
 }
 
-esp_err_t ConfigManager::_save_locked(bool replace_unreadable) {
+esp_err_t ConfigManager::_save_locked(ConfigSaveCaller caller, bool replace_unreadable) {
   // Serialised under the save lock, before the file is opened. The std::string and std::vector fields changed
   // after boot are changed through change(), under the same lock, so they are never read mid-assignment. The
   // rest are bools and integers (a word-sized read can be stale but never torn), and the md5 strings, which
@@ -416,6 +420,7 @@ esp_err_t ConfigManager::_save_locked(bool replace_unreadable) {
   case ConfigFileState::SaveAction::SKIP_UNCHANGED:
     ESP_LOGD(TAG, "config.json unchanged, not written.");
     PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_UNCHANGED].add();
+    PanelMetrics::config_saves_by_caller[caller][PanelMetrics::CALLER_SAVE_UNCHANGED].add();
     return ESP_OK;
   case ConfigFileState::SaveAction::REFUSE_UNREADABLE:
     ESP_LOGW(TAG, "config.json could not be read at boot. Not saving over it until the settings are saved from the web UI.");
@@ -452,6 +457,7 @@ esp_err_t ConfigManager::_save_locked(bool replace_unreadable) {
 
   ConfigManager::_file_state.saved(std::move(content));
   PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_WRITTEN].add();
+  PanelMetrics::config_saves_by_caller[caller][PanelMetrics::CALLER_SAVE_WRITTEN].add();
   PanelMetrics::config_written_bytes.add(bytes_written);
   PanelMetrics::config_file_bytes.set(static_cast<int32_t>(bytes_written));
   ESP_LOGI(TAG, "Saved %zu bytes to /littlefs/config.json", bytes_written);

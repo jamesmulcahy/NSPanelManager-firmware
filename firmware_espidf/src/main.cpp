@@ -159,7 +159,7 @@ extern "C" void app_main() {
   case ConfigFileState::BootAction::SAVE_DEFAULTS_AND_START_AP: {
     ESP_LOGE("Main", "No config.json on LittleFS. If this is the first time running the panel this is normal as no config has been saved yet.");
     ESP_LOGI("Main", "Default config values has been applied, will save to create a config file.");
-    esp_err_t config_save_result = ConfigManager::save_config();
+    esp_err_t config_save_result = ConfigManager::save_config(CONFIG_SAVE_BY_BOOT_DEFAULTS);
     if (config_save_result != ESP_OK) {
       ESP_LOGE("Main", "Failed to save config to LittleFS, got error %s!", esp_err_to_name(config_save_result));
     }

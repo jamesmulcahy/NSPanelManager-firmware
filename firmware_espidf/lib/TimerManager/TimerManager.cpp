@@ -251,7 +251,7 @@ void TimerManager::_save() {
     }
   }
   // Under the save lock: another task's save must not iterate the vector while it is replaced.
-  if (ConfigManager::change([&timers]() { ConfigManager::timers.swap(timers); }) != ESP_OK) {
+  if (ConfigManager::change(CONFIG_SAVE_BY_TIMERS, [&timers]() { ConfigManager::timers.swap(timers); }) != ESP_OK) {
     ESP_LOGW(TAG, "Failed to save the timers.");
   }
 }

@@ -27,6 +27,7 @@ Gauge mqtt_handler_stack_peak[HANDLER_COUNT];
 FastHistogram nextion_window_wait[NEXTION_WRITE_COUNT];
 Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 Counter config_saves[CONFIG_SAVE_OUTCOME_COUNT];
+Counter config_saves_by_caller[CONFIG_SAVE_CALLER_COUNT][CALLER_SAVE_OUTCOME_COUNT];
 LatencyHistogram config_write_duration;
 Counter config_written_bytes;
 Gauge config_file_bytes;
@@ -155,6 +156,10 @@ bool sample_uptime(int64_t *value) {
 #define SUBSCRIBE_LATENCY(cause, cause_label, stage, stage_label) \
   metric("nspanel_mqtt_subscribe_latency_seconds", subscribe_latency[cause][stage], {"cause", cause_label}, {"stage", stage_label})
 
+#define CONFIG_SAVES_BY(caller, caller_label)                                                                                                  \
+  metric("nspanel_config_saves_by_caller_total", config_saves_by_caller[caller][CALLER_SAVE_WRITTEN], {"caller", caller_label}, {"outcome", "written"}), \
+      metric("nspanel_config_saves_by_caller_total", config_saves_by_caller[caller][CALLER_SAVE_UNCHANGED], {"caller", caller_label}, {"outcome", "unchanged"})
+
 // Series of the same metric must be listed together (checked below).
 constexpr MetricDesc registry[] = {
     // Time from subscribe() (or a reconnect) to the topic's retained value, by stage: total, queued
@@ -268,6 +273,18 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_REFUSED_UNREADABLE], {"outcome", "refused_unreadable"}),
     metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_LOCK_TIMEOUT], {"outcome", "lock_timeout"}),
     metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_FAILED], {"outcome", "failed"}),
+    // The same saves by what asked for them, written or skipped as unchanged.
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_BOOT_DEFAULTS, "boot_defaults"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_BUTTONS, "buttons"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_US_LAYOUT, "us_layout"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_LOOK, "look"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_LOOK_CONFIRMED, "look_confirmed"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_PANEL_NAME, "panel_name"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_TIMERS, "timers"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_FIRMWARE_UPDATE, "firmware_update"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_GUI_UPDATE, "gui_update"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_COMMAND, "command"),
+    CONFIG_SAVES_BY(CONFIG_SAVE_BY_WEB_UI, "web_ui"),
     metric("nspanel_config_write_duration_seconds", config_write_duration),
     metric("nspanel_config_written_bytes_total", config_written_bytes),
     metric("nspanel_config_file_bytes", config_file_bytes),

@@ -1,4 +1,5 @@
 #pragma once
+#include <ConfigSaveCaller.hpp>
 #include <Metrics.hpp>
 #include <esp_err.h>
 
@@ -103,6 +104,12 @@ enum ConfigSaveOutcome { CONFIG_SAVE_WRITTEN,
                          CONFIG_SAVE_FAILED,
                          CONFIG_SAVE_OUTCOME_COUNT };
 extern Counter config_saves[CONFIG_SAVE_OUTCOME_COUNT];
+// nspanel_config_saves_by_caller_total{caller, outcome}: the saves that were written or skipped as
+// unchanged, by what asked for them (ConfigSaveCaller). Errors are only in nspanel_config_saves_total.
+enum CallerSaveOutcome { CALLER_SAVE_WRITTEN,
+                         CALLER_SAVE_UNCHANGED,
+                         CALLER_SAVE_OUTCOME_COUNT };
+extern Counter config_saves_by_caller[CONFIG_SAVE_CALLER_COUNT][CALLER_SAVE_OUTCOME_COUNT];
 extern LatencyHistogram config_write_duration;
 extern Counter config_written_bytes;
 extern Gauge config_file_bytes;
