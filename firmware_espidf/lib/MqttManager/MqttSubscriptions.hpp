@@ -180,6 +180,12 @@ public:
   size_t holds(const std::string &filter);
   /** Whether the filter is still known (held, lingering, or waiting for its UNSUBSCRIBE to finish). */
   bool known(const std::string &filter);
+  /**
+   * Whether the broker has acknowledged the SUBSCRIBE for this filter on the current connection, so
+   * a message published to it from now on reaches this client. False while disconnected, and again
+   * from a reconnect until the new SUBACK.
+   */
+  bool acknowledged(const std::string &filter);
   size_t cached_topics();
   /** A consistent snapshot under the bookkeeping lock. Cheap: walks the entries and the cache (dozens). Any task. */
   Stats stats();
@@ -317,5 +323,6 @@ private:
 void set_default(Subscriptions *subscriptions);
 Subscription subscribe(std::string filter, Kind kind, Callback callback, void *context, int metrics_id);
 bool latest(std::string_view topic, std::vector<uint8_t> &out);
+bool acknowledged(const std::string &filter); // Subscriptions::acknowledged() on the default instance.
 
 } // namespace mqtt

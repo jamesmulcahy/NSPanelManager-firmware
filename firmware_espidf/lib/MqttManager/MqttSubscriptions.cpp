@@ -949,6 +949,12 @@ bool Subscriptions::known(const std::string &filter) {
   return _find(filter) != nullptr;
 }
 
+bool Subscriptions::acknowledged(const std::string &filter) {
+  std::lock_guard<std::mutex> lock(_mutex);
+  Entry *entry = _find(filter);
+  return _connected && entry != nullptr && entry->sub.state == OpState::DONE;
+}
+
 static Subscriptions *default_subscriptions = nullptr;
 
 void set_default(Subscriptions *subscriptions) {
@@ -964,6 +970,10 @@ Subscription subscribe(std::string filter, Kind kind, Callback callback, void *c
 
 bool latest(std::string_view topic, std::vector<uint8_t> &out) {
   return default_subscriptions != nullptr && default_subscriptions->latest(topic, out);
+}
+
+bool acknowledged(const std::string &filter) {
+  return default_subscriptions != nullptr && default_subscriptions->acknowledged(filter);
 }
 
 } // namespace mqtt
