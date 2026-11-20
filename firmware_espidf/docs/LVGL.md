@@ -11,7 +11,7 @@ NSPM's pages, data, navigation and manager protocol are unchanged; only the draw
 |---|---|---|
 | Mode | `lib/LvglUi/LvglUi.cpp` (`init()`) | LVGL is the UI when the display reports a terminal TFT (`NextionTerminal::is_receiver()`), sent no NSPM startup flag, and `lvgl_ui` is on |
 | Page adapters | `lib/Pages/*` (`LvglUi::active()` branches) | Where a page would drive the Nextion, it hands a view's state to `LvglUi::show()`; view actions call the same handlers the Nextion touch events did |
-| Host | `lib/LvglUi/` | Screensaver timeout and wake, swipe-down menu, touch sound, backlight, album art fetch (`LvglArt`), Latin-1 text (`LvglText`) |
+| Host | `lib/LvglUi/` | Screensaver timeout and wake, gestures (below), touch sound, backlight, album art fetch (`LvglArt`), Latin-1 text (`LvglText`) |
 | Views | `lib/LvglRenderer/*View.cpp`, `Theme`, `Ui`, `Background` | The screens, free of ESP-IDF (the host simulator builds them) |
 | Renderer | `lib/LvglRenderer/LvglRenderer.cpp` | LVGL's task, draw buffer, touch input, boot screen |
 | Transport | `lib/NextionTerminal/` | The terminal session; see its README |
@@ -20,6 +20,21 @@ NSPM's pages, data, navigation and manager protocol are unchanged; only the draw
 Threads: LVGL runs on its own task (core 1) and nothing else calls it; other tasks `post()` work to
 it. View actions run there too, so they `LvglUi::defer()` anything that publishes or changes pages.
 The terminal task (core 0) encodes and sends while LVGL renders the next band.
+
+## Gestures
+
+`LvglUi::_touch()` sees every touch before LVGL does, and recognises the swipes itself (LVGL's own
+gesture detection missed them on Office):
+
+| Where | Gesture | Does |
+|---|---|---|
+| Any page but the screensaver, the loading page and the timer alarm | Swipe down, starting in the top 72 px, 48 px or more | Opens the menu; on the menu and its pages (Look, Clean screen, Timers), back to Home. Only from the top edge, so a drag lower down stays with what is under the finger (a landscape panel's vertical sliders, a list) |
+| Screensaver, with two or more cards in the rotation | Swipe left / right, 80 px or more | The next / previous card, which then stays twice its time; the panel sleeps on |
+| Screensaver | Anything else | Wakes the panel. With cards to turn between it wakes on the release, not the press, so that a swipe can be told from a tap |
+
+Once a swipe-down is recognised, LVGL is told to drop the press (`LvglRenderer::cancel_press`), so
+the header button or slider it started on is not clicked or set. A release whose coordinates do not
+map (255,255 on Kitchen) is delivered at the last point that did (`NextionTerminal`).
 
 ## The home page's controls
 

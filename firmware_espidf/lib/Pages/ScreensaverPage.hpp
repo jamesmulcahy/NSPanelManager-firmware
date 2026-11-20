@@ -47,6 +47,18 @@ public:
    */
   static bool showing();
 
+  /**
+   * With LVGL as the UI: whether the screensaver shown has cards a swipe can turn between (two or
+   * more in the rotation). Any task.
+   */
+  static bool can_turn_cards();
+
+  /**
+   * With LVGL as the UI: a swipe on the screensaver turns its body by `step` cards (1 the next, -1 the
+   * one before). Any task; the view turns on the GUI task.
+   */
+  static void turn_card(int step);
+
 private:
   /**
    * Update the display with new values for time and AM/PM

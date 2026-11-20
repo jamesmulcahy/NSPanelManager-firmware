@@ -75,6 +75,13 @@ public:
   static inline bool (*touch_filter)(bool down, uint16_t x, uint16_t y) = nullptr;
 
   /**
+   * Any task: the press going on is the host's (a swipe-down), not the widget's under the finger.
+   * The GUI task then sends that widget PRESS_LOST and ignores the touch until the release, so a
+   * header button the swipe started on is not clicked and a slider is not set.
+   */
+  static inline std::atomic<bool> cancel_press = false;
+
+  /**
    * From any task: a touch edge or move in screen coordinates, as if the terminal reported it (it
    * goes through touch_filter too). The terminal's touches arrive here; also for testing over MQTT
    * (the "lvgl_tap" command).

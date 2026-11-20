@@ -4,8 +4,8 @@
 
 /**
  * The HMI's swipe-down `dropdown` page and its `cleanscreen` page, which the Nextion ran by
- * itself; with LVGL as the UI (LvglUi) the firmware runs them. Swiping down on Home opens the
- * menu. "Look" opens the look picker (LookPage). "Clean screen" works as in the HMI: the screen
+ * itself; with LVGL as the UI (LvglUi) the firmware runs them. Swiping down from the top edge of
+ * any page opens the menu. "Look" opens the look picker (LookPage). "Clean screen" works as in the HMI: the screen
  * ignores touches for 10 s (each touch starts the countdown again), then goes back to Home. "Timers" opens the
  * timer pages (TimerPage); its tile shows the next timer's time left, redrawn once a second while timers run.
  */
@@ -17,8 +17,9 @@ public:
   static void unshow_clean_screen();
 
   /**
-   * A swipe down (LvglUi detects it): from Home to the menu; from the menu, the look picker or the clean screen back
-   * to Home, as the HMI's gestures did; likewise the Timers and New timer pages. The timer alarm ignores it.
+   * A swipe down from the top edge (LvglUi detects it): from any page to the menu; from the menu, the look picker,
+   * the clean screen, the Timers and New timer pages back to Home. The screensaver, the loading page and the timer
+   * alarm ignore it.
    * LvglUi's task.
    */
   static void swipe_down();

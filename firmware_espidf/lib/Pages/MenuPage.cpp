@@ -1,9 +1,11 @@
 #include <HomePage.hpp>
 #include <InterfaceManager.hpp>
+#include <LoadingPage.hpp>
 #include <LookPage.hpp>
 #include <LvglUi.hpp>
 #include <MenuPage.hpp>
 #include <MenuView.hpp>
+#include <ScreensaverPage.hpp>
 #include <TimerManager.hpp>
 #include <TimerPage.hpp>
 #include <TimerSchedule.hpp>
@@ -138,12 +140,13 @@ void MenuPage::_tick(void *arg) {
 }
 
 void MenuPage::swipe_down() {
-  if (InterfaceManager::is_current_page(HomePage::unshow)) {
-    MenuPage::show();
-  } else if (InterfaceManager::is_current_page(MenuPage::unshow) || InterfaceManager::is_current_page(MenuPage::unshow_clean_screen) ||
-             InterfaceManager::is_current_page(LookPage::unshow) || InterfaceManager::is_current_page(TimerPage::unshow) ||
-             InterfaceManager::is_current_page(TimerPage::unshow_set)) {
+  if (InterfaceManager::is_current_page(MenuPage::unshow) || InterfaceManager::is_current_page(MenuPage::unshow_clean_screen) ||
+      InterfaceManager::is_current_page(LookPage::unshow) || InterfaceManager::is_current_page(TimerPage::unshow) ||
+      InterfaceManager::is_current_page(TimerPage::unshow_set)) {
     HomePage::show();
+  } else if (!LoadingPage::showing() && !ScreensaverPage::showing() && !InterfaceManager::is_current_page(TimerPage::unshow_alarm)) {
+    // From any page, not only Home: the panel may wake to Scenes, and a physical button opens an
+    // entity page. The menu's back still goes Home. The timer alarm ignores it: only Dismiss closes it.
+    MenuPage::show();
   }
-  // The timer alarm ignores the swipe: only Dismiss closes it.
 }
