@@ -313,7 +313,7 @@ void UpdateManager::promote_pending_firmware_checksum() {
   ConfigManager::md5_firmware = ConfigManager::md5_firmware_pending;
   ConfigManager::md5_firmware_pending = "";
   ConfigManager::has_updated = false;
-  if (ConfigManager::save_config() == ESP_OK) {
+  if (ConfigManager::save_config(CONFIG_SAVE_BY_FIRMWARE_UPDATE) == ESP_OK) {
     ESP_LOGI("UpdateManager", "First boot after a firmware update: stored firmware checksum %s.", ConfigManager::md5_firmware.c_str());
   } else {
     // Still reported from memory for this boot; the next update compares against config.json's.
