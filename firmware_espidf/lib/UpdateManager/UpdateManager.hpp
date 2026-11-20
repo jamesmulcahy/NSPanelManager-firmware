@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <esp_err.h>
 #include <esp_http_client.h>
 #include <esp_https_ota.h>
@@ -92,6 +93,39 @@ private:
   static esp_err_t _get_remote_file_size(std::string remote_file_url, size_t *file_size);
 
   /**
+   * @brief Request the TFT file from `offset` to its end and check the manager answered with exactly those bytes.
+   * @param url: The TFT download URL.
+   * @param offset: First byte to download.
+   * @param file_size: Size of the whole TFT file, as found by _get_remote_file_size.
+   * @param client: Set to the open client, ready for esp_http_client_read(), on success.
+   * @return ESP_OK on success, otherwise an error with the client already cleaned up.
+   */
+  static esp_err_t _open_tft_stream(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client);
+
+  /**
+   * @brief _open_tft_stream, retried GUI_UPDATE_DOWNLOAD_ATTEMPTS times.
+   * @return ESP_OK on success, ESP_ERR_TIMEOUT if every attempt failed.
+   */
+  static esp_err_t _open_tft_stream_with_retries(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client);
+
+  /**
+   * @brief Give up on a GUI update that has already put the display into upload mode: log why, keep the old GUI checksum, reboot.
+   * Does not return.
+   */
+  static void _abandon_gui_update(const char *reason);
+
+  /**
+   * @brief Put the upload position back to the start of the file, for a new upload or a restarted one.
+   */
+  static void _reset_nextion_update_position();
+
+  /**
+   * @brief Fetch the GUI md5 checksum from `url`, trying up to `attempts` times.
+   * @return ESP_OK with `md5` set to a 32-digit hex checksum, otherwise ESP_ERR_TIMEOUT.
+   */
+  static esp_err_t _get_gui_md5(const std::string &url, int attempts, std::string *md5);
+
+  /**
    * Handle event from ESP HTTP client
    */
   static inline esp_err_t _http_event_handler(esp_http_client_event_t *event);
@@ -111,6 +145,16 @@ private:
 
   // Next Nextion update TFT update offset.
   static inline uint64_t _nextion_update_current_offset = 0;
+
+  // Size of the TFT file being uploaded.
+  static inline uint64_t _nextion_update_file_size = 0;
+
+  // Set when the display owes a reply (after the upload command and after each chunk), cleared by
+  // the first one. Written by the update task, read by the Nextion event handler.
+  static inline std::atomic<bool> _nextion_update_awaiting_ack = false;
+
+  // Set by the Nextion event handler when the display asks to jump past the end of the file.
+  static inline bool _nextion_update_bad_jump = false;
 
   // How many bytes were last written to the Nextion display
   static inline uint64_t _nextion_update_next_chunk_size = 0;

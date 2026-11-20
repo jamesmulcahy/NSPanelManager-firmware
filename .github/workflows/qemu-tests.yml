@@ -76,18 +76,12 @@ jobs:
             timeout: 60
           # The GUI update tests, also on NSPM's TFT. Each flashes the panel and reboots it, often more
           # than once, so they take most of the time and are split two ways to run side by side.
-          # GUI updates under faults that the firmware handles.
+          # GUI updates under faults (every fault the tests inject is handled; a new unhandled one goes in as a strict xfail,
+          # with its own job for `-m xfail` added back).
           - display: gui-updates
             terminal: nextion
             tests: "test_gui_update_faults"
             marks: "not xfail"
-            timeout: 45
-          # GUI update faults the firmware does not handle yet (strict xfail). Most run until the
-          # harness's stall timeouts, so they are the slowest; an XPASS fails this job.
-          - display: gui-updates-known-bugs
-            terminal: nextion
-            tests: "test_gui_update_faults"
-            marks: "xfail"
             timeout: 45
           # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
           # receiver. Only the LVGL tests (the UI, and the timers); the rest drive NSPM's Nextion pages.

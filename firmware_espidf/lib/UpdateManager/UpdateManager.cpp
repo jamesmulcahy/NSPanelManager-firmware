@@ -26,6 +26,14 @@
 
 ESP_EVENT_DEFINE_BASE(UPDATEMANAGER_EVENT);
 
+// How often a GUI update asks the manager for something before giving up. Before the display is
+// put into upload mode, giving up costs nothing (the panel carries on as it was), so the size
+// probe gives up sooner. After that, giving up means a reboot with a display that has no GUI, so
+// the download and the checksum are retried for longer, to ride out a manager restart.
+static constexpr int GUI_UPDATE_PROBE_ATTEMPTS = 10;
+static constexpr int GUI_UPDATE_DOWNLOAD_ATTEMPTS = 20;
+static constexpr TickType_t GUI_UPDATE_RETRY_DELAY = pdMS_TO_TICKS(2000);
+
 void UpdateManager::init() {
   esp_log_level_set("UpdateManager", ConfigManager::log_level);
   UpdateManager::_download_data_store_mutex = xSemaphoreCreateMutex();
@@ -50,16 +58,42 @@ void UpdateManager::update_gui(void *param) {
     tft_file_url.append("/download_tft/");
     tft_file_url.append(std::to_string(config->nspanel_id));
 
-    esp_http_client_config_t http_client_config = {};
-    http_client_config.url = tft_file_url.c_str();
-    http_client_config.cert_pem = NULL;
-    http_client_config.keep_alive_enable = true;
+    std::string gui_md5_checksum_url = "http://";
+    gui_md5_checksum_url.append(NSPM_ConfigManager::get_manager_address());
+    gui_md5_checksum_url.append(":");
+    gui_md5_checksum_url.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
+    gui_md5_checksum_url.append("/checksum_tft_file/");
+    gui_md5_checksum_url.append(std::to_string(config->nspanel_id));
 
-    size_t remote_tft_file_size;
-    while (UpdateManager::_get_remote_file_size(tft_file_url, &remote_tft_file_size) != ESP_OK) {
-      ESP_LOGW("UpdateManager", "Failed to get remote TFT file size. Will try again in 500ms");
-      vTaskDelay(pdMS_TO_TICKS(500));
+    size_t remote_tft_file_size = 0;
+    esp_err_t probe_result = ESP_FAIL;
+    for (int attempt = 1; attempt <= GUI_UPDATE_PROBE_ATTEMPTS; attempt++) {
+      probe_result = UpdateManager::_get_remote_file_size(tft_file_url, &remote_tft_file_size);
+      if (probe_result == ESP_OK) {
+        break;
+      }
+      ESP_LOGW("UpdateManager", "Failed to get remote TFT file size (attempt %d/%d).", attempt, GUI_UPDATE_PROBE_ATTEMPTS);
+      vTaskDelay(GUI_UPDATE_RETRY_DELAY);
     }
+    // The md5 of the file being uploaded, taken now and compared again when the upload is done. If
+    // the manager's file changes in between, the display may have parts of both, and neither md5
+    // describes what it holds.
+    std::string md5_before;
+    if (probe_result == ESP_OK) {
+      probe_result = UpdateManager::_get_gui_md5(gui_md5_checksum_url, GUI_UPDATE_PROBE_ATTEMPTS, &md5_before);
+    }
+    if (probe_result != ESP_OK) {
+      // Nothing has been sent to the display yet, so there is nothing to recover from: stay up and
+      // let the manager ask again.
+      // Ready for another update before saying so.
+      esp_event_handler_unregister(NEXTION_EVENT, ESP_EVENT_ANY_ID, UpdateManager::_nextion_event_handler);
+      UpdateManager::_current_update_task = NULL;
+      ESP_LOGE("UpdateManager", "Giving up on GUI update: could not get the TFT file's size and checksum from the manager.");
+      vTaskDelete(NULL);
+      return;
+    }
+    UpdateManager::_nextion_update_file_size = remote_tft_file_size;
+    UpdateManager::_reset_nextion_update_position();
 
     ESP_LOGI("UpdateManager", "Will start updating GUI. Remote file size: %zu bytes", remote_tft_file_size);
     // With LVGL as the UI the terminal holds the display's UART for good: end it first. The panel
@@ -75,58 +109,22 @@ void UpdateManager::update_gui(void *param) {
     esp_event_post(UPDATEMANAGER_EVENT, updatemanager_event_t::NEXTION_UPDATE_STARTED, NULL, 0, pdMS_TO_TICKS(500));
 
     std::vector<uint8_t> tft_data_buffer;
-    uint8_t consecutive_errors = 0;
+    // Upload restarts after the display stopped acknowledging. Only a whole update finishing resets
+    // this: an ack after a restart says the display is alive, not that the upload will get through.
+    uint8_t restarts = 0;
     esp_http_client_handle_t http_client;
-    for (;;) { // Try forever to setup a valid HTTP client
-      http_client = esp_http_client_init(&http_client_config);
-      if (http_client == NULL) {
-        ESP_LOGE("UpdateManager", "Failed to init http_client. Got NULL! Will try again in 2 seconds.");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        continue;
-      }
-
-      std::string range_header = "bytes=";
-      range_header.append(std::to_string(UpdateManager::_nextion_update_current_offset));
-      range_header.append("-");
-      // NOTE: RFC 7233 byte ranges are inclusive, so the correct end would be
-      // (remote_tft_file_size - 1). However, the server-side implementation uses
-      // Python slice notation data[start:end] (exclusive end), so it interprets
-      // the range end as exclusive too. Both sides use the same non-standard
-      // convention and the protocol works correctly as a result. Do not change
-      // this without a coordinated fix to the server. See PR #12 for context.
-      range_header.append(std::to_string(remote_tft_file_size));
-      esp_err_t err = esp_http_client_set_header(http_client, "Range", range_header.c_str());
-      if (err != ESP_OK) {
-        ESP_LOGE("UpdateManager", "Failed to set range header will trying to download chunk of data! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-        esp_http_client_cleanup(http_client);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        continue;
-      }
-
-      err = esp_http_client_open(http_client, 0);
-      if (err != ESP_OK) {
-        ESP_LOGE("UpdateManager", "Failed to call esp_http_client_open! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-        esp_http_client_cleanup(http_client);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        continue;
-      }
-
-      int64_t err_code = esp_http_client_fetch_headers(http_client);
-      if (err_code > 0) {
-        ESP_LOGI("UpdateManager", "HTTP Client status: %d, remote file size: %lld", esp_http_client_get_status_code(http_client), esp_http_client_get_content_length(http_client));
-        break; // Client created successfully and header set.
-      } else {
-        ESP_LOGE("UpdateManager", "Failed to call esp_http_client_fetch_headers! Error: %lld. Will try again in 2 seconds", err_code);
-        esp_http_client_cleanup(http_client);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-      }
+    if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
+      UpdateManager::_abandon_gui_update("could not start the TFT download");
     }
 
     // Update started. Wait for notifications and when they arrive, download data from offset into buffer and write to display.
     float progress;
     for (;;) {
       if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20000)) == pdPASS) {
-        consecutive_errors = 0;
+        if (UpdateManager::_nextion_update_bad_jump) {
+          esp_http_client_cleanup(http_client);
+          UpdateManager::_abandon_gui_update("the display asked to continue from past the end of the file");
+        }
         if (UpdateManager::_nextion_update_reset_http_client) {
           esp_http_client_cleanup(http_client);
           UpdateManager::_nextion_update_reset_http_client = false;
@@ -134,11 +132,9 @@ void UpdateManager::update_gui(void *param) {
           ESP_LOGI("UpdateManager", "Will reset HTTP client. Waiting 2 seconds for cleanup before establishing a new HTTP client.");
           vTaskDelay(pdMS_TO_TICKS(2000));
 
-          while (UpdateManager::_setup_http_client(&http_client, &tft_data_buffer, tft_file_url.c_str(), UpdateManager::_nextion_update_current_offset, remote_tft_file_size - UpdateManager::_nextion_update_current_offset) != ESP_OK) {
-            ESP_LOGE("UpdateManager", "Failed to setup HTTP client. Will try again in 5 seconds.");
-            vTaskDelay(pdMS_TO_TICKS(5000));
+          if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, UpdateManager::_nextion_update_current_offset, remote_tft_file_size, &http_client) != ESP_OK) {
+            UpdateManager::_abandon_gui_update("could not continue the TFT download after the display jumped");
           }
-          ESP_LOGI("UpdateManager", "HTTP Client reset successfully. New range: %llu -> %llu.", UpdateManager::_nextion_update_current_offset, remote_tft_file_size - UpdateManager::_nextion_update_current_offset);
         }
 
         // Got event to send new data. Calculate next chunk size but a max of 4096 bytes:
@@ -163,49 +159,14 @@ void UpdateManager::update_gui(void *param) {
             esp_http_client_cleanup(http_client);
             vTaskDelay(pdMS_TO_TICKS(5000));
 
-            for (;;) { // Try forever to setup a valid HTTP client
-              http_client = esp_http_client_init(&http_client_config);
-              if (http_client == NULL) {
-                ESP_LOGE("UpdateManager", "Failed to init http_client. Got NULL! Will try again in 2 seconds.");
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
-              }
-
-              std::string range_header = "bytes=";
-              range_header.append(std::to_string(UpdateManager::_nextion_update_current_offset + downloaded_bytes));
-              range_header.append("-");
-              // See comment above: end is intentionally non-RFC-compliant to match server.
-              range_header.append(std::to_string(remote_tft_file_size));
-              esp_err_t err = esp_http_client_set_header(http_client, "Range", range_header.c_str());
-              if (err != ESP_OK) {
-                ESP_LOGE("UpdateManager", "Failed to set range header will trying to download chunk of data! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-                esp_http_client_cleanup(http_client);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
-              }
-
-              err = esp_http_client_open(http_client, 0);
-              if (err != ESP_OK) {
-                ESP_LOGE("UpdateManager", "Failed to call esp_http_client_open! Error: %s. Will try again in 2 seconds", esp_err_to_name(err));
-                esp_http_client_cleanup(http_client);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                continue;
-              }
-
-              int64_t err_code = esp_http_client_fetch_headers(http_client);
-              if (err_code > 0) {
-                ESP_LOGI("UpdateManager", "HTTP Client status: %d, remote file size: %lld", esp_http_client_get_status_code(http_client), esp_http_client_get_content_length(http_client));
-                break; // Client created successfully and header set.
-              } else {
-                ESP_LOGE("UpdateManager", "Failed to call esp_http_client_fetch_headers! Error: %lld. Will try again in 2 seconds", err_code);
-                esp_http_client_cleanup(http_client);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-              }
+            if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, UpdateManager::_nextion_update_current_offset + downloaded_bytes, remote_tft_file_size, &http_client) != ESP_OK) {
+              UpdateManager::_abandon_gui_update("could not resume the TFT download");
             }
-            ESP_LOGI("UpdateManager", "HTTP Client reset successfully. New range: %llu -> %zu.", UpdateManager::_nextion_update_current_offset, remote_tft_file_size);
           }
         }
 
+        // Before writing: the display can answer as soon as the last byte is out.
+        UpdateManager::_nextion_update_awaiting_ack = true;
         while (Nextion::write_update_bytes(tft_data_buffer.data(), tft_data_buffer.size()) != ESP_OK) {
           ESP_LOGE("UpdateManager", "Failed to write TFT chunk to UART while updating GUI. Will try again in 5 seconds.");
           vTaskDelay(pdMS_TO_TICKS(5000));
@@ -219,16 +180,24 @@ void UpdateManager::update_gui(void *param) {
           break; // Update complete
         }
       } else {
-        consecutive_errors++;
-        ESP_LOGE("UpdateManager", "No Nextion update event in 20s (error %u/3). Will retry.", consecutive_errors);
-        if (consecutive_errors >= 3) {
-          ESP_LOGE("UpdateManager", "Too many consecutive update timeouts — rebooting.");
-          vTaskDelay(pdMS_TO_TICKS(2000));
-          StatusUpdateManager::reboot();
+        restarts++;
+        ESP_LOGE("UpdateManager", "No Nextion update event in 20s (%u/3). Will restart the upload from the beginning.", restarts);
+        if (restarts >= 3) {
+          esp_http_client_cleanup(http_client);
+          UpdateManager::_abandon_gui_update("the display stopped acknowledging the upload");
         }
+
+        // start_update() power-cycles the display, which then expects the file from byte 0, so the
+        // offset and the HTTP stream start over too. Reset before start_update(): an ack from the
+        // old upload landing late then advances the offset by 0.
+        esp_http_client_cleanup(http_client);
+        UpdateManager::_reset_nextion_update_position();
         while (Nextion::start_update(ConfigManager::nextion_upload_baudrate, ConfigManager::use_latest_nextion_upload_protocol, remote_tft_file_size) != ESP_OK) {
           ESP_LOGW("UpdateManager", "Failed to init update process with Nextion display. Will try again in 5000ms");
           vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+        if (UpdateManager::_open_tft_stream_with_retries(tft_file_url, 0, remote_tft_file_size, &http_client) != ESP_OK) {
+          UpdateManager::_abandon_gui_update("could not restart the TFT download");
         }
       }
     }
@@ -238,24 +207,21 @@ void UpdateManager::update_gui(void *param) {
     esp_http_client_cleanup(http_client);
 
     esp_event_post(UPDATEMANAGER_EVENT, updatemanager_event_t::NEXTION_UPDATE_FINISHED, NULL, 0, pdMS_TO_TICKS(500));
-    ESP_LOGI("UpdateManager", "Nextion GUI update complete. Updating stored GUI md5 checksum.");
-
-    std::string gui_md5_checksum_url = "http://";
-    gui_md5_checksum_url.append(NSPM_ConfigManager::get_manager_address());
-    gui_md5_checksum_url.append(":");
-    gui_md5_checksum_url.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
-    gui_md5_checksum_url.append("/checksum_tft_file/");
-    gui_md5_checksum_url.append(std::to_string(config->nspanel_id));
+    ESP_LOGI("UpdateManager", "Nextion GUI upload finished. Checking the TFT file did not change meanwhile.");
 
     ESP_LOGD("UpdateManager", "Will download md5 checksum from URL: %s", gui_md5_checksum_url.c_str());
-    std::vector<uint8_t> data;
-    while (UpdateManager::_download_data(&data, gui_md5_checksum_url.c_str(), -1, -1) != ESP_OK) {
-      ESP_LOGE("UpdateManager", "Failed to get MD5 checksum from manager. Will try again in 1 second.");
-      vTaskDelay(pdMS_TO_TICKS(1000));
+    std::string gui_md5;
+    if (UpdateManager::_get_gui_md5(gui_md5_checksum_url, GUI_UPDATE_DOWNLOAD_ATTEMPTS, &gui_md5) != ESP_OK) {
+      // The display has the new GUI, but without its checksum the panel cannot say so. Leaving the
+      // old checksum in place only means the manager offers the update again.
+      UpdateManager::_abandon_gui_update("could not get the new GUI's checksum from the manager");
+    }
+    if (gui_md5 != md5_before) {
+      ESP_LOGE("UpdateManager", "TFT file changed during the update (md5 %s, now %s).", md5_before.c_str(), gui_md5.c_str());
+      UpdateManager::_abandon_gui_update("the TFT file on the manager changed during the update");
     }
 
-    std::string gui_md5 = std::string((char *)data.data(), data.size());
-    ESP_LOGI("UpdateManager", "Got new GUI md5 checksum from manager: %s", gui_md5.c_str());
+    ESP_LOGI("UpdateManager", "Nextion GUI update complete. Storing GUI md5 checksum %s.", gui_md5.c_str());
     ConfigManager::md5_gui = gui_md5;
     ConfigManager::save_config();
 
@@ -412,9 +378,15 @@ esp_err_t UpdateManager::_download_data(std::vector<uint8_t> *return_data, const
   if (xSemaphoreTake(UpdateManager::_download_data_store_mutex, portMAX_DELAY) == pdPASS) {
     esp_http_client_handle_t client;
     UpdateManager::_download_data_max_bytes = 0;
+    return_data->clear(); // Callers retry with the same vector; a failed attempt must not leave its body in it.
     if (UpdateManager::_setup_http_client(&client, return_data, download_url, offset, length) == ESP_OK) {
       // Perform the actual HTTP request to get data
       esp_err_t err = esp_http_client_perform(client);
+      // perform() succeeds for any complete response, an error page included, and the caller stores
+      // what it gets (a checksum, for instance), so only a 200 counts.
+      if (err == ESP_OK && esp_http_client_get_status_code(client) != 200) {
+        err = ESP_ERR_INVALID_RESPONSE;
+      }
 
       if (err == ESP_OK) {
         esp_http_client_cleanup(client);
@@ -442,7 +414,6 @@ esp_err_t UpdateManager::_get_remote_file_size(std::string url, size_t *file_siz
   http_config.cert_pem = NULL;
   http_config.keep_alive_enable = true;
 
-  // Setup HTTP connection:
   esp_http_client_handle_t client = esp_http_client_init(&http_config);
   if (client == NULL) {
     ESP_LOGE("UpdateManager", "Failed to initialise HTTP connection");
@@ -455,10 +426,108 @@ esp_err_t UpdateManager::_get_remote_file_size(std::string url, size_t *file_siz
     return ESP_ERR_NOT_FINISHED;
   }
 
-  esp_http_client_fetch_headers(client);
-  *file_size = esp_http_client_get_content_length(client);
-
+  // Only the headers are read; the size is the Content-Length of a successful response. An error
+  // page has a length too, and a response without one (chunked, or a failed fetch) reports -1.
+  int64_t length = esp_http_client_fetch_headers(client);
+  int status = esp_http_client_get_status_code(client);
   esp_http_client_cleanup(client);
+  if (status != 200 || length <= 0) {
+    ESP_LOGE("UpdateManager", "Manager answered %s with status %d and Content-Length %lld.", url.c_str(), status, length);
+    return ESP_ERR_INVALID_RESPONSE;
+  }
+
+  *file_size = length;
+  return ESP_OK;
+}
+
+esp_err_t UpdateManager::_open_tft_stream_with_retries(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client) {
+  for (int attempt = 1; attempt <= GUI_UPDATE_DOWNLOAD_ATTEMPTS; attempt++) {
+    if (UpdateManager::_open_tft_stream(url, offset, file_size, client) == ESP_OK) {
+      return ESP_OK;
+    }
+    ESP_LOGW("UpdateManager", "Could not open the TFT download (attempt %d/%d).", attempt, GUI_UPDATE_DOWNLOAD_ATTEMPTS);
+    vTaskDelay(GUI_UPDATE_RETRY_DELAY);
+  }
+  return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t UpdateManager::_get_gui_md5(const std::string &url, int attempts, std::string *md5) {
+  std::vector<uint8_t> data;
+  for (int attempt = 1; attempt <= attempts; attempt++) {
+    if (UpdateManager::_download_data(&data, url.c_str(), -1, -1) == ESP_OK) {
+      std::string text((char *)data.data(), data.size());
+      // A checksum is 32 hex digits; anything else is not one, whatever the status code said.
+      if (text.size() == 32 && text.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos) {
+        *md5 = text;
+        return ESP_OK;
+      }
+      ESP_LOGE("UpdateManager", "Manager sent %zu bytes that are not an md5 checksum.", text.size());
+    }
+    ESP_LOGE("UpdateManager", "Failed to get the GUI md5 checksum from the manager (attempt %d/%d).", attempt, attempts);
+    vTaskDelay(GUI_UPDATE_RETRY_DELAY);
+  }
+  return ESP_ERR_TIMEOUT;
+}
+
+void UpdateManager::_reset_nextion_update_position() {
+  UpdateManager::_nextion_update_current_offset = 0;
+  UpdateManager::_nextion_update_next_chunk_size = 0;
+  UpdateManager::_nextion_update_reset_http_client = false;
+  UpdateManager::_nextion_update_bad_jump = false;
+  UpdateManager::_nextion_update_awaiting_ack = true; // The display acknowledges the upload command first.
+}
+
+void UpdateManager::_abandon_gui_update(const char *reason) {
+  // The display is in upload mode and will not show a GUI until it is power-cycled, and the stored
+  // checksum is still the old one, so the manager will offer the update again.
+  ESP_LOGE("UpdateManager", "Giving up on GUI update: %s. Rebooting without storing a new GUI checksum.", reason);
+  vTaskDelay(pdMS_TO_TICKS(2000));
+  StatusUpdateManager::reboot();
+  vTaskDelete(NULL);
+}
+
+esp_err_t UpdateManager::_open_tft_stream(const std::string &url, uint64_t offset, uint64_t file_size, esp_http_client_handle_t *client) {
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.cert_pem = NULL;
+  config.keep_alive_enable = true;
+
+  *client = esp_http_client_init(&config);
+  if (*client == NULL) {
+    ESP_LOGE("UpdateManager", "Failed to init HTTP client for %s.", url.c_str());
+    return ESP_ERR_NOT_FINISHED;
+  }
+
+  // NOTE: RFC 7233 byte ranges are inclusive, so the correct end would be
+  // (file_size - 1). However, the server-side implementation uses Python slice
+  // notation data[start:end] (exclusive end), so it interprets the range end as
+  // exclusive too. Both sides use the same non-standard convention and the
+  // protocol works correctly as a result. Do not change this without a
+  // coordinated fix to the server. See PR #12 for context.
+  std::string range_header = "bytes=" + std::to_string(offset) + "-" + std::to_string(file_size);
+  esp_err_t err = esp_http_client_set_header(*client, "Range", range_header.c_str());
+  if (err == ESP_OK) {
+    err = esp_http_client_open(*client, 0);
+  }
+  if (err != ESP_OK) {
+    ESP_LOGE("UpdateManager", "Failed to request TFT %s: %s.", range_header.c_str(), esp_err_to_name(err));
+    esp_http_client_cleanup(*client);
+    return ESP_ERR_NOT_FINISHED;
+  }
+
+  // Whatever comes back is written to the display as TFT data from `offset` on, so it must be
+  // exactly the rest of the file. The manager answers a range with 200 and just those bytes; a
+  // standard server would send 206. Anything else (an error page, or the whole file from a
+  // server that ignored Range) has the wrong status or length.
+  int64_t length = esp_http_client_fetch_headers(*client);
+  int status = esp_http_client_get_status_code(*client);
+  if ((status != 200 && status != 206) || length != (int64_t)(file_size - offset)) {
+    ESP_LOGE("UpdateManager", "Manager answered TFT %s with status %d and %lld bytes, expected %llu bytes.", range_header.c_str(), status, length, file_size - offset);
+    esp_http_client_cleanup(*client);
+    return ESP_ERR_INVALID_RESPONSE;
+  }
+
+  ESP_LOGI("UpdateManager", "Downloading TFT from offset %llu, %lld bytes.", offset, length);
   return ESP_OK;
 }
 
@@ -608,6 +677,13 @@ void UpdateManager::_task_reboot(void *param) {
 }
 
 void UpdateManager::_nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  if ((event_id == nextion_event_t::UPDATE_READY_FOR_NEXT_CHUNK || event_id == nextion_event_t::UPDATE_JUMP_TO_OFFSET) &&
+      !UpdateManager::_nextion_update_awaiting_ack.exchange(false)) {
+    // One reply per chunk written (and one for the upload command). A second one would move the
+    // offset past a chunk the display never got.
+    ESP_LOGW("UpdateManager", "Ignoring an extra acknowledgement from the Nextion display.");
+    return;
+  }
   switch (event_id) {
   case nextion_event_t::UPDATE_READY_FOR_NEXT_CHUNK: {
     UpdateManager::_nextion_update_current_offset += UpdateManager::_nextion_update_next_chunk_size;
@@ -617,7 +693,11 @@ void UpdateManager::_nextion_event_handler(void *arg, esp_event_base_t event_bas
 
   case nextion_event_t::UPDATE_JUMP_TO_OFFSET: {
     size_t *jump_offset = (size_t *)event_data;
-    if (*jump_offset > 0) { // If set to zero, continue and treat it as a 0x05 as 0 means "continue and do not jump"
+    if (*jump_offset >= UpdateManager::_nextion_update_file_size) {
+      // Nothing to send from there. update_gui() gives up when it wakes.
+      ESP_LOGE("UpdateManager", "Nextion display asked to jump to %zu, past the end of the %llu-byte TFT file.", *jump_offset, UpdateManager::_nextion_update_file_size);
+      UpdateManager::_nextion_update_bad_jump = true;
+    } else if (*jump_offset > 0) { // If set to zero, continue and treat it as a 0x05 as 0 means "continue and do not jump"
       UpdateManager::_nextion_update_current_offset = *jump_offset;
       UpdateManager::_nextion_update_reset_http_client = true; // We jumped in file. Reset HTTP client and reconnect with correct "Range"-header set.
     } else {
