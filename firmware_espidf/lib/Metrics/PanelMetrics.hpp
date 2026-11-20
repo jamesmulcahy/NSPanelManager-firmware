@@ -91,9 +91,10 @@ extern Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 void wifi_power_save_applied(bool low_latency);
 void wifi_power_save_failed();
 
-// config.json on LittleFS, recorded by ConfigManager. nspanel_config_saves_total{outcome}: every
-// save_config() call by what it did (written, skipped as unchanged, refused because config.json could
-// not be read at boot, lock timeout, or a failed open/write/close). nspanel_config_write_duration_seconds:
+// config.json on LittleFS, recorded by ConfigManager. nspanel_config_saves_total{caller, outcome}: every
+// save_config() and change() call by what asked for it (ConfigSaveCaller) and what it did (written,
+// skipped as unchanged, refused because config.json could not be read at boot, lock timeout, or a
+// failed open/write/close). nspanel_config_write_duration_seconds:
 // fopen() to fclose() of each write attempted. nspanel_config_written_bytes_total: bytes written (wear).
 // nspanel_config_file_bytes: the size of the last successful write. nspanel_config_load_state: what
 // the boot load found: 0 loaded, 1 missing, 2 unreadable.
@@ -103,13 +104,7 @@ enum ConfigSaveOutcome { CONFIG_SAVE_WRITTEN,
                          CONFIG_SAVE_LOCK_TIMEOUT,
                          CONFIG_SAVE_FAILED,
                          CONFIG_SAVE_OUTCOME_COUNT };
-extern Counter config_saves[CONFIG_SAVE_OUTCOME_COUNT];
-// nspanel_config_saves_by_caller_total{caller, outcome}: the saves that were written or skipped as
-// unchanged, by what asked for them (ConfigSaveCaller). Errors are only in nspanel_config_saves_total.
-enum CallerSaveOutcome { CALLER_SAVE_WRITTEN,
-                         CALLER_SAVE_UNCHANGED,
-                         CALLER_SAVE_OUTCOME_COUNT };
-extern Counter config_saves_by_caller[CONFIG_SAVE_CALLER_COUNT][CALLER_SAVE_OUTCOME_COUNT];
+extern Counter config_saves[CONFIG_SAVE_CALLER_COUNT][CONFIG_SAVE_OUTCOME_COUNT];
 extern LatencyHistogram config_write_duration;
 extern Counter config_written_bytes;
 extern Gauge config_file_bytes;

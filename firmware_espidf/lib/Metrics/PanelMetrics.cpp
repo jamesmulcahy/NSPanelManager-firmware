@@ -26,8 +26,7 @@ FastHistogram mqtt_handler_duration[HANDLER_COUNT];
 Gauge mqtt_handler_stack_peak[HANDLER_COUNT];
 FastHistogram nextion_window_wait[NEXTION_WRITE_COUNT];
 Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
-Counter config_saves[CONFIG_SAVE_OUTCOME_COUNT];
-Counter config_saves_by_caller[CONFIG_SAVE_CALLER_COUNT][CALLER_SAVE_OUTCOME_COUNT];
+Counter config_saves[CONFIG_SAVE_CALLER_COUNT][CONFIG_SAVE_OUTCOME_COUNT];
 LatencyHistogram config_write_duration;
 Counter config_written_bytes;
 Gauge config_file_bytes;
@@ -156,9 +155,14 @@ bool sample_uptime(int64_t *value) {
 #define SUBSCRIBE_LATENCY(cause, cause_label, stage, stage_label) \
   metric("nspanel_mqtt_subscribe_latency_seconds", subscribe_latency[cause][stage], {"cause", cause_label}, {"stage", stage_label})
 
-#define CONFIG_SAVES_BY(caller, caller_label)                                                                                                  \
-  metric("nspanel_config_saves_by_caller_total", config_saves_by_caller[caller][CALLER_SAVE_WRITTEN], {"caller", caller_label}, {"outcome", "written"}), \
-      metric("nspanel_config_saves_by_caller_total", config_saves_by_caller[caller][CALLER_SAVE_UNCHANGED], {"caller", caller_label}, {"outcome", "unchanged"})
+#define CONFIG_SAVE(caller, caller_label, outcome, outcome_label) \
+  metric("nspanel_config_saves_total", config_saves[caller][outcome], {"caller", caller_label}, {"outcome", outcome_label})
+#define CONFIG_SAVES_BY(caller, caller_label)                                                          \
+  CONFIG_SAVE(caller, caller_label, CONFIG_SAVE_WRITTEN, "written"),                                   \
+      CONFIG_SAVE(caller, caller_label, CONFIG_SAVE_UNCHANGED, "unchanged"),                           \
+      CONFIG_SAVE(caller, caller_label, CONFIG_SAVE_REFUSED_UNREADABLE, "refused_unreadable"),         \
+      CONFIG_SAVE(caller, caller_label, CONFIG_SAVE_LOCK_TIMEOUT, "lock_timeout"),                     \
+      CONFIG_SAVE(caller, caller_label, CONFIG_SAVE_FAILED, "failed")
 
 // Series of the same metric must be listed together (checked below).
 constexpr MetricDesc registry[] = {
@@ -266,14 +270,9 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_log_serial_write_duration_seconds", log_serial_write_duration),
     // Lines lost because the queue to the MQTT log publisher was full.
     metric("nspanel_log_lines_dropped_total", log_lines_dropped),
-    // config.json saves by outcome; "unchanged" is a save skipped because nothing changed. Writes only
-    // in the duration histogram, so its _count is writes attempted and its buckets the flash cost.
-    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_WRITTEN], {"outcome", "written"}),
-    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_UNCHANGED], {"outcome", "unchanged"}),
-    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_REFUSED_UNREADABLE], {"outcome", "refused_unreadable"}),
-    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_LOCK_TIMEOUT], {"outcome", "lock_timeout"}),
-    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_FAILED], {"outcome", "failed"}),
-    // The same saves by what asked for them, written or skipped as unchanged.
+    // config.json saves by what asked for them and outcome; "unchanged" is a save skipped because nothing
+    // changed. Writes only in the duration histogram, so its _count is writes attempted and its buckets the
+    // flash cost.
     CONFIG_SAVES_BY(CONFIG_SAVE_BY_BOOT_DEFAULTS, "boot_defaults"),
     CONFIG_SAVES_BY(CONFIG_SAVE_BY_BUTTONS, "buttons"),
     CONFIG_SAVES_BY(CONFIG_SAVE_BY_US_LAYOUT, "us_layout"),

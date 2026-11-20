@@ -1,6 +1,6 @@
 #pragma once
 
-// What asked ConfigManager to save config.json, for nspanel_config_saves_by_caller_total{caller}.
+// What asked ConfigManager to save config.json: the caller label of nspanel_config_saves_total.
 // Every save_config() and change() call names one, so a write on flash can be traced to its cause.
 enum ConfigSaveCaller {
   CONFIG_SAVE_BY_BOOT_DEFAULTS,   // No config.json at boot: the defaults are written to create it.
