@@ -18,6 +18,7 @@
 #include <RoomManager_event.hpp>
 #include <ScreensaverPage.hpp>
 #include <TimerPage.hpp>
+#include <UpdateManager.hpp>
 #include <UpdateManager_event.hpp>
 #include <WiFiManager.hpp>
 #include <cmath>
@@ -137,6 +138,10 @@ void InterfaceManager::init() {
   }
 
   LoadingPage::set_loading_text("Loading config and status");
+  // Listen for commands on nspanel/<mac>/command (reboot, updates, look, ...) before registering: the
+  // manager may send one as soon as it accepts the panel, and a command is never replayed. The display
+  // and the loading page are up by now, which the reboot and update commands use.
+  UpdateManager::init();
   NSPM_ConfigManager::init(); // Register to manager and load all config
 
   ESP_LOGI("InterfaceManager", "Interface manager init complete. Waiting for config and status to load.");

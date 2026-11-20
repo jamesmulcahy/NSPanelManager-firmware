@@ -213,6 +213,10 @@ class FakeManager:
         # Answer a look report as MQTTManager does (NSPanel::_handle_lvgl_look_report).
         self.confirm_looks = True
         self.look_reports: List[dict] = []
+        # JSON commands ("reboot", ...) to send on the MAC command topic straight after the next
+        # register_accept, as a manager does when someone presses a button while the panel registers.
+        # Sent once, then cleared.
+        self.commands_after_accept: List[str] = []
         broker.add_listener(self._on_message)
 
     # ---- topics ------------------------------------------------------------
@@ -412,3 +416,6 @@ class FakeManager:
         self.publish_everything()
         self.broker.publish("nspanel/%s/command" % self.panel_name, accept)
         self.broker.publish("nspanel/%s/command" % self.panel_mac, accept)
+        commands, self.commands_after_accept = self.commands_after_accept, []
+        for command in commands:
+            self.send_command(command)

@@ -80,3 +80,15 @@ def test_boots_when_its_web_port_is_taken(rig):
     assert rig.panel.web_port != taken
     status, body = rig.http_get("/")
     assert status == 200 and b"<html" in body.lower()
+
+
+def test_command_sent_right_after_register_accept_is_acted_on(rig):
+    # The manager can send a command (here a reboot) as soon as it has accepted the panel. The panel
+    # listens for commands before it registers, so even one sent straight after the accept is handled.
+    rig.manager.commands_after_accept = ["reboot"]
+    rig.start()
+    rig.manager.wait_for_registration(timeout=BOOT_TIMEOUT)
+    rig.panel.wait_for_reboot(1, timeout=60)
+    assert rig.panel.resets[1] == "SW_CPU_RESET", rig.panel.resets
+    # And comes back: registers again after the reboot.
+    rig.manager.wait_for_registration(timeout=BOOT_TIMEOUT, since=rig.manager.registration_mark())

@@ -152,6 +152,8 @@ extern "C" void app_main() {
   esp_err_t config_load_result = ConfigManager::load_config();
   switch (ConfigManager::boot_action(config_load_result)) {
   case ConfigFileState::BootAction::CONNECT:
+    // The first boot after a firmware update stores its checksum now, before anything reports it.
+    UpdateManager::promote_pending_firmware_checksum();
     // Start task that handles WiFi connection
     WiFiManager::start_client(&ConfigManager::wifi_ssid, &ConfigManager::wifi_psk, &ConfigManager::wifi_hostname, &ConfigManager::wifi_hostname);
     break;
@@ -252,10 +254,9 @@ extern "C" void app_main() {
     vTaskDelay(pdMS_TO_TICKS(250));
   }
 
-  // Hook into update manager
-  UpdateManager::init();
-
-  // We have been accepted, update internal stored checksum of installed software if needed
+  // We have been accepted. (UpdateManager::init() ran in InterfaceManager::init(), before registering.)
+  // Only after an update installed by a firmware that recorded no checksum:
+  // ask the manager for it and reboot.
   UpdateManager::update_internal_firmware_checksum();
 
   // Nextion::init() logged how the display link came up before panel logs reached MQTT; repeat it now.

@@ -300,7 +300,25 @@ void UpdateManager::update_firmware(void *param) {
 
 void UpdateManager::mark_boot_successful() {
   esp_ota_mark_app_valid_cancel_rollback();
-  ESP_LOGI("UpdateManager", "Current boot marked as successful, will not rollback on reboot. Updating stored FW checksum in config.json.");
+  ESP_LOGI("UpdateManager", "Current boot marked as successful, will not rollback on reboot.");
+}
+
+void UpdateManager::promote_pending_firmware_checksum() {
+  if (!ConfigManager::has_updated || ConfigManager::md5_firmware_pending.empty()) {
+    return;
+  }
+
+  // Before anything reads md5_firmware: StatusUpdateManager keeps a pointer to its characters, so
+  // changing it later would leave that pointer dangling.
+  ConfigManager::md5_firmware = ConfigManager::md5_firmware_pending;
+  ConfigManager::md5_firmware_pending = "";
+  ConfigManager::has_updated = false;
+  if (ConfigManager::save_config() == ESP_OK) {
+    ESP_LOGI("UpdateManager", "First boot after a firmware update: stored firmware checksum %s.", ConfigManager::md5_firmware.c_str());
+  } else {
+    // Still reported from memory for this boot; the next update compares against config.json's.
+    ESP_LOGE("UpdateManager", "First boot after a firmware update: failed to store firmware checksum %s.", ConfigManager::md5_firmware.c_str());
+  }
 }
 
 void UpdateManager::update_internal_firmware_checksum() {
@@ -308,10 +326,11 @@ void UpdateManager::update_internal_firmware_checksum() {
     return;
   }
 
-  // Use the checksum recorded when the firmware was flashed. The manager may be serving a different firmware by now.
-  std::string md5_string = ConfigManager::md5_firmware_pending;
-  if (md5_string.empty()) {
-    // Update was installed by a firmware that did not record a pending checksum, fall back to asking the manager.
+  // promote_pending_firmware_checksum() has already stored a checksum recorded when the firmware was
+  // flashed, so has_updated is only still set when the firmware that installed this one recorded none.
+  // Ask the manager, which may be serving a different firmware by now, but has nothing better.
+  std::string md5_string;
+  {
     std::string firmware_md5_string = "http://";
     firmware_md5_string.append(NSPM_ConfigManager::get_manager_address());
     firmware_md5_string.append(":");
@@ -340,7 +359,8 @@ void UpdateManager::update_internal_firmware_checksum() {
     ESP_LOGE("UpdateManager", "Failed to save config!");
   }
 
-  // Always reboot: InterfaceManager stays on the "Updated checksums, rebooting." page while has_updated was set.
+  // Reboot: InterfaceManager stays on the "Updated checksums, rebooting." page while has_updated was set,
+  // and StatusUpdateManager's pointer to md5_firmware's characters may be stale now.
   vTaskDelay(pdMS_TO_TICKS(10));
   StatusUpdateManager::reboot();
 }
@@ -582,12 +602,14 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
         ESP_LOGE("UpdateManager", "Failed to create the reboot task. Restarting without the status report.");
         PanelRestart::restart();
       }
-    } else if (command_string.compare("firmware_update") == 0 && UpdateManager::_current_update_task == NULL) {
-      UpdateManager::_force_update = false;
-      xTaskCreatePinnedToCore(UpdateManager::update_firmware, "update_firmware", 8192, NULL, 2, &UpdateManager::_current_update_task, 1);
-    } else if (command_string.compare("firmware_update_force") == 0 && UpdateManager::_current_update_task == NULL) {
-      UpdateManager::_force_update = true;
-      xTaskCreatePinnedToCore(UpdateManager::update_firmware, "update_firmware", 8192, NULL, 2, &UpdateManager::_current_update_task, 1);
+    } else if ((command_string.compare("firmware_update") == 0 || command_string.compare("firmware_update_force") == 0) && UpdateManager::_current_update_task == NULL) {
+      // Subscribed before registering, so this can come before a register_accept says where the manager is.
+      if (NSPM_ConfigManager::get_manager_address().empty()) {
+        ESP_LOGE("UpdateManager", "Cannot start firmware update: manager address not yet known.");
+      } else {
+        UpdateManager::_force_update = command_string.compare("firmware_update_force") == 0;
+        xTaskCreatePinnedToCore(UpdateManager::update_firmware, "update_firmware", 8192, NULL, 2, &UpdateManager::_current_update_task, 1);
+      }
     } else if (command_string.compare("tft_update") == 0 && UpdateManager::_current_update_task == NULL) {
       if (NSPM_ConfigManager::get_manager_address().empty()) {
         ESP_LOGE("UpdateManager", "Cannot start TFT update: manager address not yet known.");

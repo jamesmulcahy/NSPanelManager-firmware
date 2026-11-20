@@ -35,7 +35,17 @@ public:
   static void mark_boot_successful();
 
   /*
-   * Update the stored checksum in config for what firmware is installed. This will pull the checksum from the manager.
+   * After a firmware update, store the checksum recorded when it was flashed as the installed firmware's.
+   * Call once config.json is loaded and before MQTT and StatusUpdateManager start, so the first
+   * register_request and every status report carry it. Does nothing if this boot is not the first
+   * after an update, or if the update was installed by a firmware that recorded no checksum (see
+   * update_internal_firmware_checksum()).
+   */
+  static void promote_pending_firmware_checksum();
+
+  /*
+   * Only for an update installed by a firmware that recorded no checksum when it flashed: ask the
+   * manager for it, store it and reboot. Needs the manager's address, so call it after register_accept.
    */
   static void update_internal_firmware_checksum();
 
