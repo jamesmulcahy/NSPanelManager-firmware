@@ -88,7 +88,8 @@ def test_command_sent_right_after_register_accept_is_acted_on(rig):
     rig.manager.commands_after_accept = ["reboot"]
     rig.start()
     rig.manager.wait_for_registration(timeout=BOOT_TIMEOUT)
+    # Every boot under QEMU is a POWERON_RESET (the rig restarts QEMU), so the panel's own line says why.
+    rig.panel.wait_for_log(r"UpdateManager: Received command to reboot", timeout=60)
     rig.panel.wait_for_reboot(1, timeout=60)
-    assert rig.panel.resets[1] == "SW_CPU_RESET", rig.panel.resets
     # And comes back: registers again after the reboot.
     rig.manager.wait_for_registration(timeout=BOOT_TIMEOUT, since=rig.manager.registration_mark())
