@@ -122,6 +122,13 @@ class Rig:
         # Ethernet RX ring (see "What differs from hardware" in the README),
         # and pages switched meanwhile unshow late.
         self.panel.wait_for_log(CONFIG_SAVE_DONE, timeout=120)
+        # app_main() is still running when the screensaver shows: UpdateManager::init(), which
+        # handles commands on the MAC command topic (tft_update, reboot, loop_watchdog, ...), is
+        # among its last steps. The topic is already subscribed by then (NSPM_ConfigManager takes
+        # register_accept on it), so a broker-side subscription proves nothing, and a command sent
+        # before this line reaches no handler. The skipped save above no longer stalls the guest
+        # long enough to hide that.
+        self.panel.wait_for_log(r"Main: Task setup OK\. Exiting main\.", timeout=60)
         if self.nextion.terminal_profile is not None:
             # That save stops the guest long enough that the terminal session can time out
             # (the firmware's reverse timeout, on the guest's clock), and the firmware then
