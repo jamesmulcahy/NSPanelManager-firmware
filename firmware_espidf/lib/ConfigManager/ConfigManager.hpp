@@ -1,5 +1,6 @@
 #pragma once
 #include <ConfigFileState.hpp>
+#include <ConfigSaveCaller.hpp>
 #include <cstdint>
 #include <esp_err.h>
 #include <esp_log.h>
@@ -41,7 +42,7 @@ public:
    * @return ESP_OK if the file holds the current config (written, or already identical). ESP_ERR_TIMEOUT if the lock
    * was not free in time, ESP_ERR_INVALID_STATE if refused as above, ESP_ERR_NOT_FINISHED if the write failed.
    */
-  static esp_err_t save_config(bool replace_unreadable = false);
+  static esp_err_t save_config(ConfigSaveCaller caller, bool replace_unreadable = false);
 
   /**
    * @brief Change config fields and save them, both under the save lock, so that no other task's save serialises
@@ -51,14 +52,15 @@ public:
    * If the lock is not free in time, `change` still runs (so the running panel uses the new values, as before)
    * and ESP_ERR_TIMEOUT is returned without saving.
    */
-  template <typename F> static esp_err_t change(F &&change, bool replace_unreadable = false) {
+  template <typename F> static esp_err_t change(ConfigSaveCaller caller, F &&change, bool replace_unreadable = false) {
     if (!ConfigManager::_lock()) {
       ESP_LOGE("ConfigManager", "Config lock busy for %d ms. Changed the config without saving it.", SAVE_LOCK_TIMEOUT_MS);
       std::forward<F>(change)();
+      ConfigManager::_count_lock_timeout();
       return ESP_ERR_TIMEOUT;
     }
     std::forward<F>(change)();
-    esp_err_t result = ConfigManager::_save_locked(replace_unreadable);
+    esp_err_t result = ConfigManager::_save_locked(caller, replace_unreadable);
     ConfigManager::_unlock();
     return result;
   }
@@ -200,7 +202,9 @@ private:
   static bool _lock();
   static void _unlock();
   // save_config() with the lock held.
-  static esp_err_t _save_locked(bool replace_unreadable);
+  static esp_err_t _save_locked(ConfigSaveCaller caller, bool replace_unreadable);
+  // Counts a save that gave up waiting for the lock (here, so the header needs no PanelMetrics).
+  static void _count_lock_timeout();
   // The config as save_config() writes it.
   static std::string _serialise();
   // What config.json holds, as far as this boot knows. Under the save lock.
