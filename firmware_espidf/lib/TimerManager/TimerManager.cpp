@@ -244,13 +244,14 @@ void TimerManager::_save() {
   if (!TimerManager::_restored) {
     return; // The saved timers haven't been read back yet, and would be lost
   }
-  ConfigManager::timers.clear();
+  std::vector<ConfigManager::PersistedTimer> timers;
   for (const Entry &e : _active) {
     if (e.deadline_epoch_s != 0) {
-      ConfigManager::timers.push_back({e.duration_s, e.deadline_epoch_s});
+      timers.push_back({e.duration_s, e.deadline_epoch_s});
     }
   }
-  if (ConfigManager::save_config() != ESP_OK) {
+  // Under the save lock: another task's save must not iterate the vector while it is replaced.
+  if (ConfigManager::change([&timers]() { ConfigManager::timers.swap(timers); }) != ESP_OK) {
     ESP_LOGW(TAG, "Failed to save the timers.");
   }
 }

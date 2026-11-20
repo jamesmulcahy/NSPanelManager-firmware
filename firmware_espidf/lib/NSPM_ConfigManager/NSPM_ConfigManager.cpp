@@ -212,8 +212,8 @@ void NSPM_ConfigManager::_handle_new_config_data(const char *data, size_t data_l
 
     if (ConfigManager::wifi_hostname.compare(new_config->name) != 0) {
       ESP_LOGI("NSPM_ConfigManager", "Updating internal WiFi hostname to match manager provided friendly name.");
-      ConfigManager::wifi_hostname = new_config->name;
-      ConfigManager::save_config();
+      std::string name = new_config->name;
+      ConfigManager::change([&name]() { ConfigManager::wifi_hostname = std::move(name); });
     }
   } else {
     ESP_LOGE("NSPM_ConfigManager", "Failed to gain config mutex while processing new config from MQTT!");

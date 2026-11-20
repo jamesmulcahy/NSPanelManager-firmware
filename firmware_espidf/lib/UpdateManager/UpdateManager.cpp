@@ -375,7 +375,7 @@ void UpdateManager::update_internal_firmware_checksum() {
   }
 
   // Always reboot: InterfaceManager stays on the "Updated checksums, rebooting." page while has_updated was set.
-  vTaskDelay(pdTICKS_TO_MS(10));
+  vTaskDelay(pdMS_TO_TICKS(10));
   StatusUpdateManager::reboot();
 }
 

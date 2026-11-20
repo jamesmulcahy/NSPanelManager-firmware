@@ -69,16 +69,19 @@ void LvglLook::_set(const std::string &background, const std::string &theme, boo
     // nothing new for the manager.
     return;
   }
-  ConfigManager::lvgl_background = new_background;
-  ConfigManager::lvgl_theme = new_theme;
   // Only a panel that draws with LVGL reports (and so waits for a confirmation): on NSPM's TFT the
   // look is only kept for later, and the manager's config may replace it.
   report = report && LvglUi::active();
+  ConfigManager::change([&]() {
+    ConfigManager::lvgl_background = new_background;
+    ConfigManager::lvgl_theme = new_theme;
+    if (report) {
+      ConfigManager::lvgl_look_unconfirmed = true;
+    }
+  });
   if (report) {
-    ConfigManager::lvgl_look_unconfirmed = true;
     LvglLook::_last_report_us = 0; // A new look is reported at once.
   }
-  ConfigManager::save_config();
   if (LvglUi::active()) {
     LvglUi::set_look(new_background, new_theme);
   }

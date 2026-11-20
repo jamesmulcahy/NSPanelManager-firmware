@@ -149,18 +149,31 @@ extern "C" void app_main() {
   ConfigManager::create_default(); // Set default values on all config entities
 
   WiFiManager::init();
-  if (ConfigManager::load_config() != ESP_OK) {
-    ESP_LOGE("Main", "Failed to load config from LittleFS. If this is the first time running the panel this is normal as no config has been saved yet.");
+  esp_err_t config_load_result = ConfigManager::load_config();
+  switch (ConfigManager::boot_action(config_load_result)) {
+  case ConfigFileState::BootAction::CONNECT:
+    // Start task that handles WiFi connection
+    WiFiManager::start_client(&ConfigManager::wifi_ssid, &ConfigManager::wifi_psk, &ConfigManager::wifi_hostname, &ConfigManager::wifi_hostname);
+    break;
+
+  case ConfigFileState::BootAction::SAVE_DEFAULTS_AND_START_AP: {
+    ESP_LOGE("Main", "No config.json on LittleFS. If this is the first time running the panel this is normal as no config has been saved yet.");
     ESP_LOGI("Main", "Default config values has been applied, will save to create a config file.");
     esp_err_t config_save_result = ConfigManager::save_config();
     if (config_save_result != ESP_OK) {
       ESP_LOGE("Main", "Failed to save config to LittleFS, got error %s!", esp_err_to_name(config_save_result));
     }
-
     WiFiManager::start_ap(&ConfigManager::wifi_hostname);
-  } else {
-    // Start task that handles WiFi connection
-    WiFiManager::start_client(&ConfigManager::wifi_ssid, &ConfigManager::wifi_psk, &ConfigManager::wifi_hostname, &ConfigManager::wifi_hostname);
+    break;
+  }
+
+  case ConfigFileState::BootAction::START_AP_WITHOUT_SAVING:
+    // The file is there but could not be used, perhaps only this once (the read buffer's malloc). Writing the
+    // defaults now would lose every setting in it, so leave it: a reboot may load it, and a save from the setup
+    // page replaces it. Until then ConfigManager refuses every other save.
+    ESP_LOGE("Main", "config.json could not be loaded (%s). Starting the setup AP with defaults, and leaving the file as it is.", esp_err_to_name(config_load_result));
+    WiFiManager::start_ap(&ConfigManager::wifi_hostname);
+    break;
   }
 
   EventLoopWatchdog::set_enabled(ConfigManager::loop_watchdog);
