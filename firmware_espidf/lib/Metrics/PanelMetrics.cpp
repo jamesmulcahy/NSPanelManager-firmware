@@ -26,6 +26,11 @@ FastHistogram mqtt_handler_duration[HANDLER_COUNT];
 Gauge mqtt_handler_stack_peak[HANDLER_COUNT];
 FastHistogram nextion_window_wait[NEXTION_WRITE_COUNT];
 Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
+Counter config_saves[CONFIG_SAVE_OUTCOME_COUNT];
+LatencyHistogram config_write_duration;
+Counter config_written_bytes;
+Gauge config_file_bytes;
+Gauge config_load_state;
 
 namespace {
 // Wi-Fi power save time keeping. Indexed by mode: 0 WIFI_PS_NONE, 1 WIFI_PS_MIN_MODEM. Counted from
@@ -256,6 +261,17 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_log_serial_write_duration_seconds", log_serial_write_duration),
     // Lines lost because the queue to the MQTT log publisher was full.
     metric("nspanel_log_lines_dropped_total", log_lines_dropped),
+    // config.json saves by outcome; "unchanged" is a save skipped because nothing changed. Writes only
+    // in the duration histogram, so its _count is writes attempted and its buckets the flash cost.
+    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_WRITTEN], {"outcome", "written"}),
+    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_UNCHANGED], {"outcome", "unchanged"}),
+    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_REFUSED_UNREADABLE], {"outcome", "refused_unreadable"}),
+    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_LOCK_TIMEOUT], {"outcome", "lock_timeout"}),
+    metric("nspanel_config_saves_total", config_saves[CONFIG_SAVE_FAILED], {"outcome", "failed"}),
+    metric("nspanel_config_write_duration_seconds", config_write_duration),
+    metric("nspanel_config_written_bytes_total", config_written_bytes),
+    metric("nspanel_config_file_bytes", config_file_bytes),
+    metric("nspanel_config_load_state", config_load_state),
     metric("nspanel_log_queue_high_water", log_queue_high_water),
     // Time spent in each of our esp_timer callbacks. They share one task with every other timer,
     // Wi-Fi's included, so a slow one delays them all.

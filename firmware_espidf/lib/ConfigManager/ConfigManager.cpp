@@ -1,9 +1,11 @@
 #include "ConfigManager.hpp"
 #include <LittleFS.hpp>
+#include <PanelMetrics.hpp>
 #include <errno.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <nlohmann/json.hpp>
@@ -49,6 +51,7 @@ ConfigFileState::BootAction ConfigManager::boot_action(esp_err_t load_result) {
   ConfigFileState::LoadOutcome outcome = load_result == ESP_OK               ? ConfigFileState::LoadOutcome::LOADED
                                          : load_result == ESP_ERR_NOT_FOUND ? ConfigFileState::LoadOutcome::MISSING
                                                                              : ConfigFileState::LoadOutcome::UNREADABLE;
+  PanelMetrics::config_load_state.set(outcome == ConfigFileState::LoadOutcome::LOADED ? 0 : outcome == ConfigFileState::LoadOutcome::MISSING ? 1 : 2);
   return ConfigFileState::boot_action(outcome);
 }
 
@@ -391,6 +394,7 @@ std::string ConfigManager::_serialise() {
 esp_err_t ConfigManager::save_config(bool replace_unreadable) {
   if (!ConfigManager::_lock()) {
     ESP_LOGE(TAG, "Config lock busy for %d ms. Not saving.", SAVE_LOCK_TIMEOUT_MS);
+    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_LOCK_TIMEOUT].add();
     return ESP_ERR_TIMEOUT;
   }
   esp_err_t result = ConfigManager::_save_locked(replace_unreadable);
@@ -411,17 +415,21 @@ esp_err_t ConfigManager::_save_locked(bool replace_unreadable) {
   switch (ConfigManager::_file_state.save_action(content, replace_unreadable)) {
   case ConfigFileState::SaveAction::SKIP_UNCHANGED:
     ESP_LOGD(TAG, "config.json unchanged, not written.");
+    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_UNCHANGED].add();
     return ESP_OK;
   case ConfigFileState::SaveAction::REFUSE_UNREADABLE:
     ESP_LOGW(TAG, "config.json could not be read at boot. Not saving over it until the settings are saved from the web UI.");
+    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_REFUSED_UNREADABLE].add();
     return ESP_ERR_INVALID_STATE;
   case ConfigFileState::SaveAction::WRITE:
     break;
   }
 
+  int64_t write_start_us = esp_timer_get_time();
   FILE *f = fopen(CONFIG_PATH, "w");
   if (f == NULL) {
     ESP_LOGE(TAG, "Failed to open /littlefs/config.json for writing: %s.", strerror(errno));
+    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_FAILED].add();
     return ESP_ERR_NOT_FINISHED;
   }
 
@@ -430,16 +438,22 @@ esp_err_t ConfigManager::_save_locked(bool replace_unreadable) {
   // fclose() is what commits the new contents (see the #error above). After a failed write LittleFS skips the
   // commit and the old file stays, but fclose() must still be called to free the handle.
   int close_result = fclose(f);
+  PanelMetrics::config_write_duration.observe_us(esp_timer_get_time() - write_start_us);
   if (!write_ok) {
     ESP_LOGE(TAG, "Wrote %zu of %zu bytes to /littlefs/config.json. The file keeps its old contents.", bytes_written, content.size());
+    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_FAILED].add();
     return ESP_ERR_NOT_FINISHED;
   }
   if (close_result != 0) {
     ESP_LOGE(TAG, "Failed to close /littlefs/config.json after writing: %s. The file keeps its old contents.", strerror(errno));
+    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_FAILED].add();
     return ESP_ERR_NOT_FINISHED;
   }
 
   ConfigManager::_file_state.saved(std::move(content));
+  PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_WRITTEN].add();
+  PanelMetrics::config_written_bytes.add(bytes_written);
+  PanelMetrics::config_file_bytes.set(static_cast<int32_t>(bytes_written));
   ESP_LOGI(TAG, "Saved %zu bytes to /littlefs/config.json", bytes_written);
   return ESP_OK;
 }
