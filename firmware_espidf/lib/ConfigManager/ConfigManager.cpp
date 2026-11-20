@@ -391,14 +391,14 @@ std::string ConfigManager::_serialise() {
   return json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
-void ConfigManager::_count_lock_timeout() {
-  PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_LOCK_TIMEOUT].add();
+void ConfigManager::_count_lock_timeout(ConfigSaveCaller caller) {
+  PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_LOCK_TIMEOUT].add();
 }
 
 esp_err_t ConfigManager::save_config(ConfigSaveCaller caller, bool replace_unreadable) {
   if (!ConfigManager::_lock()) {
     ESP_LOGE(TAG, "Config lock busy for %d ms. Not saving.", SAVE_LOCK_TIMEOUT_MS);
-    ConfigManager::_count_lock_timeout();
+    ConfigManager::_count_lock_timeout(caller);
     return ESP_ERR_TIMEOUT;
   }
   esp_err_t result = ConfigManager::_save_locked(caller, replace_unreadable);
@@ -419,12 +419,11 @@ esp_err_t ConfigManager::_save_locked(ConfigSaveCaller caller, bool replace_unre
   switch (ConfigManager::_file_state.save_action(content, replace_unreadable)) {
   case ConfigFileState::SaveAction::SKIP_UNCHANGED:
     ESP_LOGD(TAG, "config.json unchanged, not written.");
-    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_UNCHANGED].add();
-    PanelMetrics::config_saves_by_caller[caller][PanelMetrics::CALLER_SAVE_UNCHANGED].add();
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_UNCHANGED].add();
     return ESP_OK;
   case ConfigFileState::SaveAction::REFUSE_UNREADABLE:
     ESP_LOGW(TAG, "config.json could not be read at boot. Not saving over it until the settings are saved from the web UI.");
-    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_REFUSED_UNREADABLE].add();
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_REFUSED_UNREADABLE].add();
     return ESP_ERR_INVALID_STATE;
   case ConfigFileState::SaveAction::WRITE:
     break;
@@ -434,7 +433,7 @@ esp_err_t ConfigManager::_save_locked(ConfigSaveCaller caller, bool replace_unre
   FILE *f = fopen(CONFIG_PATH, "w");
   if (f == NULL) {
     ESP_LOGE(TAG, "Failed to open /littlefs/config.json for writing: %s.", strerror(errno));
-    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_FAILED].add();
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_FAILED].add();
     return ESP_ERR_NOT_FINISHED;
   }
 
@@ -446,18 +445,17 @@ esp_err_t ConfigManager::_save_locked(ConfigSaveCaller caller, bool replace_unre
   PanelMetrics::config_write_duration.observe_us(esp_timer_get_time() - write_start_us);
   if (!write_ok) {
     ESP_LOGE(TAG, "Wrote %zu of %zu bytes to /littlefs/config.json. The file keeps its old contents.", bytes_written, content.size());
-    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_FAILED].add();
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_FAILED].add();
     return ESP_ERR_NOT_FINISHED;
   }
   if (close_result != 0) {
     ESP_LOGE(TAG, "Failed to close /littlefs/config.json after writing: %s. The file keeps its old contents.", strerror(errno));
-    PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_FAILED].add();
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_FAILED].add();
     return ESP_ERR_NOT_FINISHED;
   }
 
   ConfigManager::_file_state.saved(std::move(content));
-  PanelMetrics::config_saves[PanelMetrics::CONFIG_SAVE_WRITTEN].add();
-  PanelMetrics::config_saves_by_caller[caller][PanelMetrics::CALLER_SAVE_WRITTEN].add();
+  PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_WRITTEN].add();
   PanelMetrics::config_written_bytes.add(bytes_written);
   PanelMetrics::config_file_bytes.set(static_cast<int32_t>(bytes_written));
   ESP_LOGI(TAG, "Saved %zu bytes to /littlefs/config.json", bytes_written);

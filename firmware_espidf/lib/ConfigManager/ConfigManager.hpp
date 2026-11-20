@@ -56,7 +56,7 @@ public:
     if (!ConfigManager::_lock()) {
       ESP_LOGE("ConfigManager", "Config lock busy for %d ms. Changed the config without saving it.", SAVE_LOCK_TIMEOUT_MS);
       std::forward<F>(change)();
-      ConfigManager::_count_lock_timeout();
+      ConfigManager::_count_lock_timeout(caller);
       return ESP_ERR_TIMEOUT;
     }
     std::forward<F>(change)();
@@ -204,7 +204,7 @@ private:
   // save_config() with the lock held.
   static esp_err_t _save_locked(ConfigSaveCaller caller, bool replace_unreadable);
   // Counts a save that gave up waiting for the lock (here, so the header needs no PanelMetrics).
-  static void _count_lock_timeout();
+  static void _count_lock_timeout(ConfigSaveCaller caller);
   // The config as save_config() writes it.
   static std::string _serialise();
   // What config.json holds, as far as this boot knows. Under the save lock.
