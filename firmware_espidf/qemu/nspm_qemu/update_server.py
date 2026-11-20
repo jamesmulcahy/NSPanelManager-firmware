@@ -231,11 +231,11 @@ class UpdateServer:
         """Disarm every fault, as if the manager came back."""
         with self._lock:
             self._offset_faults.clear()
-            self._drop_next = 0
-            self._respond_next.clear()
-            self._checksum_respond_next.clear()
+            self._drop_next = {t: 0 for t in TARGETS}
+            self._respond_next = {t: [] for t in TARGETS}
+            self._checksum_respond_next = {t: [] for t in TARGETS}
             self._ignore_range_next = 0
-            self._no_length_next = 0
+            self._no_length_next = {t: 0 for t in TARGETS}
 
     def _arm(self, fault: _OffsetFault) -> None:
         with self._lock:
