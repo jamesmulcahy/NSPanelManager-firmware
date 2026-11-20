@@ -76,13 +76,16 @@ def build_littlefs(files: Dict[str, bytes], size: int, out_path: str) -> None:
 
 
 def build_flash_image(build_dir: str, project_dir: str, panel_config: Optional[dict], out_path: str,
-                      blank_littlefs: bool = False) -> None:
+                      blank_littlefs: bool = False, raw_config_json: Optional[bytes] = None) -> None:
     """With `blank_littlefs` the partition is left erased (all 0xFF), as after a flash that wrote
-    no filesystem image."""
+    no filesystem image. `raw_config_json` is written as config.json in place of `panel_config`,
+    byte for byte (an empty or corrupt file)."""
     parts = read_partitions(os.path.join(project_dir, "partitions.csv"))
     fs = parts["spiffs"]  # LittleFS lives in the partition named "spiffs" (lib/LittleFSManager)
     files = {}
-    if panel_config is not None:
+    if raw_config_json is not None:
+        files["config.json"] = raw_config_json
+    elif panel_config is not None:
         files["config.json"] = json.dumps(panel_config, indent=2).encode()
     with tempfile.TemporaryDirectory() as tmp:
         fs_path = os.path.join(tmp, "littlefs.bin")

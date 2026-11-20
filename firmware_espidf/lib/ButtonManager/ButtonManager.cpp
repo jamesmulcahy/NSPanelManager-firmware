@@ -476,7 +476,7 @@ void ButtonManager::_nspm_configmanager_event_handler(void *arg, esp_event_base_
     }
 
     if (save) {
-      ConfigManager::save_config();
+      ConfigManager::save_config(CONFIG_SAVE_BY_BUTTONS);
     }
 
     ButtonManager::_current_config = config;

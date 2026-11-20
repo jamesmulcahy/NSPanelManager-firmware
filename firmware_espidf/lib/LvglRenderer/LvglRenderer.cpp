@@ -399,7 +399,7 @@ void LvglRenderer::_config_event_handler(void *arg, esp_event_base_t event_base,
   if (us_layout != ConfigManager::lvgl_us_layout) {
     // Remembered so that the next boot lays out its first screen for this panel.
     ConfigManager::lvgl_us_layout = us_layout;
-    ConfigManager::save_config();
+    ConfigManager::save_config(CONFIG_SAVE_BY_US_LAYOUT);
   }
   LvglRenderer::_wanted_region = us_layout ? 1 : 0;
   LvglRenderer::notify();

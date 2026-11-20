@@ -27,6 +27,9 @@ BOOT_TIMEOUT = 180
 # How long a terminal session the boot-time config save ended takes to be restarted: the
 # firmware notices within ~2 s (its reverse timeout) and retries 1 s later.
 TERMINAL_RESTART_GRACE = 5
+# What ConfigManager logs when a save ends: written, or skipped as unchanged (DEBUG, which the
+# default config.json logs at).
+CONFIG_SAVE_DONE = r"ConfigManager: (Saved \d+ bytes to /littlefs/config\.json|config\.json unchanged, not written)"
 
 
 class Rig:
@@ -109,14 +112,23 @@ class Rig:
             self.panel.wait_for_log(r"NextionTerminal: Receiver ready", timeout=60)
             self.nextion.wait_for_rectangles(1, timeout=60)
         self.panel.wait_for_log(r"ScreensaverPage: Showing screensaver", timeout=60)
-        # The manager's first config never matches the config.json written
-        # above (button timings differ), so ButtonManager saves it to LittleFS
-        # from the default loop. Under QEMU that takes ~20 s of guest time,
-        # with the default loop stalled and flash cache off. Let it finish
-        # before a test starts: MQTT traffic during it can overflow the
+        # The manager's first config never matches the panel's button timings,
+        # so ButtonManager saves from the default loop. Those timings are not
+        # in config.json, so with the default config.json the save is skipped
+        # as unchanged; a test whose config.json differs from the manager's
+        # config gets a real write. Under QEMU a write takes ~20 s of guest
+        # time, with the default loop stalled and flash cache off. Let it
+        # finish before a test starts: MQTT traffic during it can overflow the
         # Ethernet RX ring (see "What differs from hardware" in the README),
         # and pages switched meanwhile unshow late.
-        self.panel.wait_for_log(r"ConfigManager: Saved \d+ bytes to /littlefs/config.json", timeout=120)
+        self.panel.wait_for_log(CONFIG_SAVE_DONE, timeout=120)
+        # app_main() is still running when the screensaver shows: UpdateManager::init(), which
+        # handles commands on the MAC command topic (tft_update, reboot, loop_watchdog, ...), is
+        # among its last steps. The topic is already subscribed by then (NSPM_ConfigManager takes
+        # register_accept on it), so a broker-side subscription proves nothing, and a command sent
+        # before this line reaches no handler. The skipped save above no longer stalls the guest
+        # long enough to hide that.
+        self.panel.wait_for_log(r"Main: Task setup OK\. Exiting main\.", timeout=60)
         if self.nextion.terminal_profile is not None:
             # That save stops the guest long enough that the terminal session can time out
             # (the firmware's reverse timeout, on the guest's clock), and the firmware then

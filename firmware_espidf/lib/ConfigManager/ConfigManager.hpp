@@ -1,17 +1,27 @@
 #pragma once
+#include <ConfigFileState.hpp>
+#include <ConfigSaveCaller.hpp>
 #include <cstdint>
-#include <vector>
 #include <esp_err.h>
 #include <esp_log.h>
 #include <string>
+#include <utility>
+#include <vector>
 
 class ConfigManager {
 public:
   /**
    * @brief Load the saved config from LittleFS. This requires that LittleFS has already been mounted.
-   * @return ESP_OK if everything was loaded correctly from config. ESP_ERR_NOT_FOUND if config was not found on LittleFS. ESP_ERR_INVALID_STATE if failed to parse JSON.
+   * @return ESP_OK if everything was loaded correctly from config. ESP_ERR_NOT_FOUND if there is no config file.
+   * ESP_ERR_NOT_FINISHED if there is a file but it could not be used: empty, a short read, out of memory, or bad JSON.
    */
   static esp_err_t load_config();
+
+  /**
+   * @brief What app_main() does after load_config() returned `load_result`: only a missing file is replaced by
+   * the defaults. Any other failure may be transient (the read buffer's malloc), so the file is left alone.
+   */
+  static ConfigFileState::BootAction boot_action(esp_err_t load_result);
 
   /**
    * Create a default config file. This will not be saved to LittleFS. It simply sets default values.
@@ -20,9 +30,43 @@ public:
 
   /**
    * @brief Save the current config values to the config file in LittleFS. This requires that LittleFS has already been mounted.
-   * @return ESP_OK if everything was saved correctly, otherwise ESP_ERR_NOT_FINISHED.
+   *
+   * Any task may call it. Saves are serialised by a lock (waited for up to SAVE_LOCK_TIMEOUT_MS), the JSON is built
+   * before the file is opened, and a save that would write exactly what the file already holds touches no flash.
+   * It does not wait on the network, the display or any other lock, but a real write costs tens of ms of flash time
+   * on the calling task: call it only when something changed, and never from an esp_timer callback.
+   *
+   * @param replace_unreadable: replace config.json even if it could not be read at boot. Only for saves the user
+   * asked for (the web UI's save and factory reset); every other save is refused then, so that a file that failed
+   * to load for a transient reason is not lost to the defaults.
+   * @return ESP_OK if the file holds the current config (written, or already identical). ESP_ERR_TIMEOUT if the lock
+   * was not free in time, ESP_ERR_INVALID_STATE if refused as above, ESP_ERR_NOT_FINISHED if the write failed.
    */
-  static esp_err_t save_config();
+  static esp_err_t save_config(ConfigSaveCaller caller, bool replace_unreadable = false);
+
+  /**
+   * @brief Change config fields and save them, both under the save lock, so that no other task's save serialises
+   * a string or the timers half-way through an assignment. Use it for the std::string and std::vector fields
+   * changed after boot. `change` must only assign fields: it must not wait, log at length, or call out.
+   *
+   * If the lock is not free in time, `change` still runs (so the running panel uses the new values, as before)
+   * and ESP_ERR_TIMEOUT is returned without saving.
+   */
+  template <typename F> static esp_err_t change(ConfigSaveCaller caller, F &&change, bool replace_unreadable = false) {
+    if (!ConfigManager::_lock()) {
+      ESP_LOGE("ConfigManager", "Config lock busy for %d ms. Changed the config without saving it.", SAVE_LOCK_TIMEOUT_MS);
+      std::forward<F>(change)();
+      ConfigManager::_count_lock_timeout(caller);
+      return ESP_ERR_TIMEOUT;
+    }
+    std::forward<F>(change)();
+    esp_err_t result = ConfigManager::_save_locked(caller, replace_unreadable);
+    ConfigManager::_unlock();
+    return result;
+  }
+
+  // The longest a save waits for another task's save to finish. See ConfigManager.cpp.
+  static constexpr int SAVE_LOCK_TIMEOUT_MS = 1000;
 
   // Hostname of this NSPanel
   static inline std::string wifi_hostname;
@@ -152,4 +196,17 @@ public:
     int64_t deadline_epoch_s;
   };
   static inline std::vector<PersistedTimer> timers;
+
+private:
+  // The save lock: recursive, so that change() can save while holding it. Bounded by SAVE_LOCK_TIMEOUT_MS.
+  static bool _lock();
+  static void _unlock();
+  // save_config() with the lock held.
+  static esp_err_t _save_locked(ConfigSaveCaller caller, bool replace_unreadable);
+  // Counts a save that gave up waiting for the lock (here, so the header needs no PanelMetrics).
+  static void _count_lock_timeout(ConfigSaveCaller caller);
+  // The config as save_config() writes it.
+  static std::string _serialise();
+  // What config.json holds, as far as this boot knows. Under the save lock.
+  static inline ConfigFileState _file_state;
 };

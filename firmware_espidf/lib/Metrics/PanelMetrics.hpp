@@ -1,4 +1,5 @@
 #pragma once
+#include <ConfigSaveCaller.hpp>
 #include <Metrics.hpp>
 #include <esp_err.h>
 
@@ -89,6 +90,25 @@ extern Counter wifi_disconnects[WIFI_DISCONNECT_COUNT];
 // nspanel_wifi_power_save_set_failures_total.
 void wifi_power_save_applied(bool low_latency);
 void wifi_power_save_failed();
+
+// config.json on LittleFS, recorded by ConfigManager. nspanel_config_saves_total{caller, outcome}: every
+// save_config() and change() call by what asked for it (ConfigSaveCaller) and what it did (written,
+// skipped as unchanged, refused because config.json could not be read at boot, lock timeout, or a
+// failed open/write/close). nspanel_config_write_duration_seconds:
+// fopen() to fclose() of each write attempted. nspanel_config_written_bytes_total: bytes written (wear).
+// nspanel_config_file_bytes: the size of the last successful write. nspanel_config_load_state: what
+// the boot load found: 0 loaded, 1 missing, 2 unreadable.
+enum ConfigSaveOutcome { CONFIG_SAVE_WRITTEN,
+                         CONFIG_SAVE_UNCHANGED,
+                         CONFIG_SAVE_REFUSED_UNREADABLE,
+                         CONFIG_SAVE_LOCK_TIMEOUT,
+                         CONFIG_SAVE_FAILED,
+                         CONFIG_SAVE_OUTCOME_COUNT };
+extern Counter config_saves[CONFIG_SAVE_CALLER_COUNT][CONFIG_SAVE_OUTCOME_COUNT];
+extern LatencyHistogram config_write_duration;
+extern Counter config_written_bytes;
+extern Gauge config_file_bytes;
+extern Gauge config_load_state;
 
 /**
  * Create the lock that serialises scrapes. Call once, before the web server starts.

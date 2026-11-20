@@ -1,16 +1,72 @@
 #include "ConfigManager.hpp"
 #include <LittleFS.hpp>
+#include <PanelMetrics.hpp>
+#include <errno.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_system.h>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <nlohmann/json.hpp>
+#include <sdkconfig.h>
 #include <string.h>
 
+// save_config() opens config.json with "w" and rewrites it in place, with no temporary file and rename. That is
+// only safe because esp_littlefs commits nothing until fclose(): O_TRUNC just marks the open file dirty in RAM,
+// the new contents and the truncation reach the metadata together in lfs_file_sync() on close, and a write
+// error skips that sync, so a power cut or a failed write leaves the old file whole. Flushing on every write
+// commits the truncated file at the first fwrite(), and a cut after it would leave config.json empty or short.
+#if CONFIG_LITTLEFS_FLUSH_FILE_EVERY_WRITE
+#error "CONFIG_LITTLEFS_FLUSH_FILE_EVERY_WRITE makes ConfigManager::save_config()'s in-place rewrite unsafe: switch it off, or save to a temporary file and rename it over config.json."
+#endif
+
+static const char *TAG = "ConfigManager";
+static const char *CONFIG_PATH = "/littlefs/config.json";
+
+// The save lock. Created on first use (a function-local static, which C++ initialises once even with several
+// tasks racing), so that it exists however early the first load or save comes.
+static SemaphoreHandle_t config_lock() {
+  static StaticSemaphore_t buffer;
+  static SemaphoreHandle_t handle = xSemaphoreCreateRecursiveMutexStatic(&buffer);
+  return handle;
+}
+
+// SAVE_LOCK_TIMEOUT_MS (1 s): the lock is held only for one save, which serialises about 1 KB of JSON and writes
+// it to LittleFS. That waits on nothing but the flash: no network, no display, no other component's lock. On the
+// panel a write takes tens of ms, and one that has to erase a block or compact LittleFS's metadata stays within
+// a few hundred. A second waits well past that, so a timeout means a save is stuck, not merely slow, while still
+// bounding how long a default-loop or MQTT handler can stall behind it far below the Wi-Fi and MQTT keepalive
+// margins (and LoopWatchdog's 15 s). A save that times out returns ESP_ERR_TIMEOUT and logs; the values stay in
+// RAM and the next save writes them.
+bool ConfigManager::_lock() {
+  return xSemaphoreTakeRecursive(config_lock(), pdMS_TO_TICKS(SAVE_LOCK_TIMEOUT_MS)) == pdTRUE;
+}
+
+void ConfigManager::_unlock() {
+  xSemaphoreGiveRecursive(config_lock());
+}
+
+ConfigFileState::BootAction ConfigManager::boot_action(esp_err_t load_result) {
+  ConfigFileState::LoadOutcome outcome = load_result == ESP_OK               ? ConfigFileState::LoadOutcome::LOADED
+                                         : load_result == ESP_ERR_NOT_FOUND ? ConfigFileState::LoadOutcome::MISSING
+                                                                             : ConfigFileState::LoadOutcome::UNREADABLE;
+  PanelMetrics::config_load_state.set(outcome == ConfigFileState::LoadOutcome::LOADED ? 0 : outcome == ConfigFileState::LoadOutcome::MISSING ? 1 : 2);
+  return ConfigFileState::boot_action(outcome);
+}
+
 esp_err_t ConfigManager::load_config() {
-  FILE *f = fopen("/littlefs/config.json", "r");
+  FILE *f = fopen(CONFIG_PATH, "r");
   if (f == NULL) {
-    ESP_LOGE("ConfigManager", "Failed to open /littlefs/config.json for reading.");
-    return ESP_ERR_NOT_FOUND;
+    if (errno == ENOENT) {
+      ESP_LOGE("ConfigManager", "No /littlefs/config.json to load.");
+      ConfigManager::_file_state.missing();
+      return ESP_ERR_NOT_FOUND;
+    }
+    // LittleFS not mounted, out of memory, an I/O error: the file may well be there.
+    ESP_LOGE("ConfigManager", "Failed to open /littlefs/config.json for reading: %s.", strerror(errno));
+    ConfigManager::_file_state.unreadable();
+    return ESP_ERR_NOT_FINISHED;
   }
 
   // Get file size.
@@ -25,11 +81,13 @@ esp_err_t ConfigManager::load_config() {
     if (read_buffer == NULL) {
       ESP_LOGE("ConfigManager", "Failed to allocate %ld bytes for read buffer while reading config from LittleFS.", file_size + 1);
       fclose(f);
+      ConfigManager::_file_state.unreadable();
       return ESP_ERR_NOT_FINISHED;
     }
   } else {
     ESP_LOGE("ConfigManager", "Returned invalid file size %ld of config file.", file_size);
     fclose(f);
+    ConfigManager::_file_state.unreadable();
     return ESP_ERR_NOT_FINISHED;
   }
 
@@ -38,6 +96,7 @@ esp_err_t ConfigManager::load_config() {
   if (bytes_read != (size_t)file_size) {
     ESP_LOGE("ConfigManager", "Read %zu of %ld bytes from config file.", bytes_read, file_size);
     free(read_buffer);
+    ConfigManager::_file_state.unreadable();
     return ESP_ERR_NOT_FINISHED;
   }
   read_buffer[bytes_read] = '\0';
@@ -47,6 +106,7 @@ esp_err_t ConfigManager::load_config() {
 
   if (config_data.is_discarded()) {
     ESP_LOGE("ConfigManager", "Failed to parse JSON while reading config from LittleFS!");
+    ConfigManager::_file_state.unreadable();
     return ESP_ERR_NOT_FINISHED;
   }
 
@@ -233,7 +293,14 @@ esp_err_t ConfigManager::load_config() {
     ConfigManager::relay2_upper_temperature = config_data["relay2_upper_temperature"].get<int32_t>();
   }
 
-  return esp_err_t();
+  // What a save of the values just loaded would write: a later save of the same values is then skipped. Fields
+  // the file lacks (an older firmware's) or that failed their type checks read back as their defaults, which is
+  // also what any save writes, so the comparison is against what the panel runs with, not the file's exact bytes.
+  if (ConfigManager::_lock()) {
+    ConfigManager::_file_state.loaded(ConfigManager::_serialise());
+    ConfigManager::_unlock();
+  }
+  return ESP_OK;
 }
 
 void ConfigManager::create_default() {
@@ -275,13 +342,7 @@ void ConfigManager::create_default() {
   ConfigManager::timers.clear();
 }
 
-esp_err_t ConfigManager::save_config() {
-  FILE *f = fopen("/littlefs/config.json", "w");
-  if (f == NULL) {
-    ESP_LOGE("ConfigManager", "Failed to open /littlefs/config.json for writing.");
-    return ESP_ERR_NOT_FINISHED;
-  }
-
+std::string ConfigManager::_serialise() {
   nlohmann::json json = nlohmann::json::object();
   json["log_level"] = static_cast<int>(ConfigManager::log_level);
   json["serial_log"] = static_cast<int>(ConfigManager::serial_log);
@@ -325,17 +386,78 @@ esp_err_t ConfigManager::save_config() {
   json["comms_baud"] = ConfigManager::communication_baud_rate;
   json["operating_baud"] = ConfigManager::operating_baud_rate;
 
-  std::string json_string = json.dump();
-  size_t bytes_written = fwrite(json_string.c_str(), sizeof(char), json_string.length(), f);
+  // replace, not the default strict: exceptions are off, so a string that is not valid UTF-8 (a panel name from
+  // the manager) would abort the panel in dump().
+  return json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
 
-  ESP_LOGI("ConfigManager", "Saved %d bytes to /littlefs/config.json", bytes_written);
+void ConfigManager::_count_lock_timeout(ConfigSaveCaller caller) {
+  PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_LOCK_TIMEOUT].add();
+}
 
-  bool wrote_correct_num_bytes = (bytes_written == (sizeof(char) * strlen(json_string.c_str())));
-  fclose(f);
+esp_err_t ConfigManager::save_config(ConfigSaveCaller caller, bool replace_unreadable) {
+  if (!ConfigManager::_lock()) {
+    ESP_LOGE(TAG, "Config lock busy for %d ms. Not saving.", SAVE_LOCK_TIMEOUT_MS);
+    ConfigManager::_count_lock_timeout(caller);
+    return ESP_ERR_TIMEOUT;
+  }
+  esp_err_t result = ConfigManager::_save_locked(caller, replace_unreadable);
+  ConfigManager::_unlock();
+  return result;
+}
 
-  if (wrote_correct_num_bytes) {
+esp_err_t ConfigManager::_save_locked(ConfigSaveCaller caller, bool replace_unreadable) {
+  // Serialised under the save lock, before the file is opened. The std::string and std::vector fields changed
+  // after boot are changed through change(), under the same lock, so they are never read mid-assignment. The
+  // rest are bools and integers (a word-sized read can be stale but never torn), and the md5 strings, which
+  // only UpdateManager's update tasks write, one update at a time, each assignment followed by the task's own
+  // save. A save racing one of those can serialise a stale or garbled md5 (the dump's replace handler keeps
+  // that from aborting), and the writer's save, queued behind it on this lock, replaces it at once.
+  // WebManager's setup form also assigns its fields unlocked, but the panel restarts right after its save.
+  std::string content = ConfigManager::_serialise();
+
+  switch (ConfigManager::_file_state.save_action(content, replace_unreadable)) {
+  case ConfigFileState::SaveAction::SKIP_UNCHANGED:
+    ESP_LOGD(TAG, "config.json unchanged, not written.");
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_UNCHANGED].add();
     return ESP_OK;
-  } else {
+  case ConfigFileState::SaveAction::REFUSE_UNREADABLE:
+    ESP_LOGW(TAG, "config.json could not be read at boot. Not saving over it until the settings are saved from the web UI.");
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_REFUSED_UNREADABLE].add();
+    return ESP_ERR_INVALID_STATE;
+  case ConfigFileState::SaveAction::WRITE:
+    break;
+  }
+
+  int64_t write_start_us = esp_timer_get_time();
+  FILE *f = fopen(CONFIG_PATH, "w");
+  if (f == NULL) {
+    ESP_LOGE(TAG, "Failed to open /littlefs/config.json for writing: %s.", strerror(errno));
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_FAILED].add();
     return ESP_ERR_NOT_FINISHED;
   }
+
+  size_t bytes_written = fwrite(content.data(), 1, content.size(), f);
+  bool write_ok = bytes_written == content.size() && ferror(f) == 0;
+  // fclose() is what commits the new contents (see the #error above). After a failed write LittleFS skips the
+  // commit and the old file stays, but fclose() must still be called to free the handle.
+  int close_result = fclose(f);
+  PanelMetrics::config_write_duration.observe_us(esp_timer_get_time() - write_start_us);
+  if (!write_ok) {
+    ESP_LOGE(TAG, "Wrote %zu of %zu bytes to /littlefs/config.json. The file keeps its old contents.", bytes_written, content.size());
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_FAILED].add();
+    return ESP_ERR_NOT_FINISHED;
+  }
+  if (close_result != 0) {
+    ESP_LOGE(TAG, "Failed to close /littlefs/config.json after writing: %s. The file keeps its old contents.", strerror(errno));
+    PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_FAILED].add();
+    return ESP_ERR_NOT_FINISHED;
+  }
+
+  ConfigManager::_file_state.saved(std::move(content));
+  PanelMetrics::config_saves[caller][PanelMetrics::CONFIG_SAVE_WRITTEN].add();
+  PanelMetrics::config_written_bytes.add(bytes_written);
+  PanelMetrics::config_file_bytes.set(static_cast<int32_t>(bytes_written));
+  ESP_LOGI(TAG, "Saved %zu bytes to /littlefs/config.json", bytes_written);
+  return ESP_OK;
 }
