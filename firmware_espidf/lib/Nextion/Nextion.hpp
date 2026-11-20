@@ -319,6 +319,14 @@ private:
   // Post data read from UART to _uart_data_handler on the UART data event loop
   static void _post_received_data(const std::vector<char> &data);
 
+  // While updating: split what the display sent into replies and post each one. Partial replies are
+  // kept for the next read.
+  static void _split_update_replies(const std::vector<char> &data);
+
+  // Bytes received while updating that do not yet make a whole reply. UART task only, except for
+  // the clear in start_update(), which holds _nextion_state_mutex like the UART task does here.
+  static inline std::vector<char> _update_reply_buffer;
+
   // Process UART events
   static void _uart_data_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 

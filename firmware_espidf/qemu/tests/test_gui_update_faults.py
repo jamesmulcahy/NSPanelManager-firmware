@@ -9,7 +9,7 @@ import hashlib
 
 import pytest
 
-from nspm_qemu.gui_update import check_invariants, run_gui_update
+from nspm_qemu.gui_update import check_invariants, run_gui_update, start_gui_update
 from test_gui_update import TFT_SIZE, make_tft
 from nspm_qemu.fake_nextion import TERMINAL
 
@@ -73,7 +73,6 @@ def test_manager_down_then_back(staged):
     check_invariants(run_gui_update(staged, during=after_reset(server, lambda: server.drop_next(4))))
 
 
-@pytest.mark.xfail(strict=True, reason="size probe: a failed request is taken as size 0, then the reconnect loop never ends")
 def test_size_probe_fails(staged):
     """H7: the manager is unreachable for the panel's first request, which only reads the file size."""
     staged.update_server.drop_next(1)
@@ -84,7 +83,6 @@ def test_size_probe_fails(staged):
     assert result.rebooted, "update never finished\n" + result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="H1: the HTTP status of a resumed download is not checked")
 def test_resume_error_page_is_not_flashed(staged):
     """H1: a resume that gets a 500 error page must not write the page into the TFT."""
     server = staged.update_server
@@ -92,7 +90,6 @@ def test_resume_error_page_is_not_flashed(staged):
     check_invariants(run_gui_update(staged, during=after_reset(server, lambda: server.respond_next(1, 500, ERROR_PAGE))))
 
 
-@pytest.mark.xfail(strict=True, reason="H1: the size probe's HTTP status is not checked")
 def test_error_page_on_size_probe(staged):
     """H1: the manager answers the size probe with a 500 page; its length is not the TFT's size."""
     staged.update_server.respond_next(1, 500, ERROR_PAGE)
@@ -102,7 +99,6 @@ def test_error_page_on_size_probe(staged):
     assert sizes <= {TFT_SIZE}, "panel announced upload size(s) %s for a %d-byte file\n%s" % (sizes, TFT_SIZE, result.summary())
 
 
-@pytest.mark.xfail(strict=True, reason="H2: Content-Length is not compared with the requested range")
 def test_ignored_range_is_not_flashed(staged):
     """H2: a resume answered with the whole file (Range ignored) must not be written at the resume offset."""
     server = staged.update_server
@@ -110,7 +106,13 @@ def test_ignored_range_is_not_flashed(staged):
     check_invariants(run_gui_update(staged, during=after_reset(server, lambda: server.ignore_range_next(1))))
 
 
-@pytest.mark.xfail(strict=True, reason="H7: the size probe takes a missing Content-Length (-1) as the size")
+def test_checksum_error_page_is_not_stored(staged):
+    """The manager answers the md5 request after the upload with an error page once; the page must not be stored as the md5."""
+    server = staged.update_server
+    check_invariants(run_gui_update(staged, during=lambda: (staged.nextion.wait_for_upload_start(),
+                                                            server.checksum_respond_next(1, 500, ERROR_PAGE))))
+
+
 def test_missing_content_length(staged):
     """H7: the size probe gets no Content-Length; the panel must not start an upload of a bogus size."""
     staged.update_server.no_content_length_next(1)
@@ -120,16 +122,17 @@ def test_missing_content_length(staged):
     assert sizes <= {TFT_SIZE}, "panel announced upload size(s) %s for a %d-byte file\n%s" % (sizes, TFT_SIZE, result.summary())
 
 
-@pytest.mark.xfail(strict=True, reason="H6: the md5 is fetched after the upload, not before it")
 def test_tft_replaced_mid_update(staged):
     """H6: a new TFT staged mid-update; the md5 stored must be that of the image the display got."""
     new = make_tft(46)
     staged.nextion.valid_md5s.add(hashlib.md5(new).hexdigest())
     staged.update_server.swap_file_at(int(TFT_SIZE * 0.5), new)
-    check_invariants(run_gui_update(staged), expect_success=False)
+    result = run_gui_update(staged)
+    check_invariants(result, expect_success=False)
+    # Neither md5 describes "the old file, which the manager no longer serves", so none is stored.
+    assert result.rebooted and not result.completed, result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="H6: nothing notices the file changed, so a resume mixes two files and an md5 is stored")
 def test_tft_replaced_then_resumed(staged):
     """H6: a new TFT staged mid-update, then the download drops: the resume reads the new file.
 
@@ -143,21 +146,88 @@ def test_tft_replaced_then_resumed(staged):
     staged.update_server.reset_at(int(TFT_SIZE * 0.6))
     result = run_gui_update(staged)
     check_invariants(result, expect_success=False)
-    assert result.image_md5 in result.valid_md5s or not result.completed, result.summary()
+    assert result.rebooted and not result.completed, result.summary()
+
+
+# ---- retries that run out ----------------------------------------------------
+# A correct panel gives up instead of retrying forever. Before the display is in
+# upload mode it just carries on; after that it reboots, keeping the old GUI md5.
+
+ABANDONED = r"Giving up on GUI update"
+# Twenty download attempts two seconds apart, plus connect time: longer than the
+# usual no-progress cutoff, so these tests allow more.
+OUTAGE_IDLE_TIMEOUT = 150
+
+
+def test_manager_unreachable_before_update(staged):
+    """The size probe never succeeds: the panel gives up without touching the display, and a later update works."""
+    server = staged.update_server
+    server.drop_next(1000)
+    boots = staged.panel.boots
+    mark = staged.panel.mark()
+    start_gui_update(staged)
+    staged.panel.wait_for_log(ABANDONED, timeout=180, since=mark)
+    assert staged.nextion.uploads == [], "the display was put into upload mode"
+    assert staged.panel.boots == boots, "the panel rebooted although the display was never touched"
+
+    server.clear_faults()
+    check_invariants(run_gui_update(staged))
+
+
+def test_checksum_unreachable_before_update(staged):
+    """The md5 cannot be fetched before the upload: give up without touching the display."""
+    server = staged.update_server
+    server.checksum_respond_next(1000, 500, ERROR_PAGE)
+    boots = staged.panel.boots
+    mark = staged.panel.mark()
+    start_gui_update(staged)
+    staged.panel.wait_for_log(ABANDONED, timeout=180, since=mark)
+    assert staged.nextion.uploads == [], "the display was put into upload mode"
+    assert staged.panel.boots == boots, "the panel rebooted although the display was never touched"
+
+
+def test_manager_goes_down_mid_update(staged):
+    """The download drops and the manager never comes back: reboot, old GUI md5 kept."""
+    server = staged.update_server
+    server.reset_at(int(TFT_SIZE * 0.5))
+    result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300,
+                            during=after_reset(server, lambda: server.drop_next(1000)))
+    check_invariants(result, expect_success=False)
+    assert result.rebooted and not result.completed, result.summary()
+    assert result.stored_md5 != server.md5, result.summary()
+
+
+def test_jump_past_end_of_file(staged):
+    """The display asks to continue from beyond the end of the file: give up, do not loop."""
+    staged.nextion.jump_offset = TFT_SIZE + 8 * CHUNK
+    result = run_gui_update(staged)
+    check_invariants(result, expect_success=False)
+    assert result.rebooted and not result.completed, result.summary()
+    assert result.stored_md5 != staged.update_server.md5, result.summary()
+
+
+def test_checksum_unreachable_after_upload(staged):
+    """The upload completes but the md5 never arrives: reboot without storing one (the manager will offer the update again)."""
+    server = staged.update_server
+    result = run_gui_update(staged, idle_timeout=OUTAGE_IDLE_TIMEOUT, timeout=300,
+                            during=lambda: (staged.nextion.wait_for_upload_start(),
+                                            server.checksum_respond_next(1000, 500, ERROR_PAGE)))
+    check_invariants(result, expect_success=False)
+    assert result.rebooted, result.summary()
+    assert result.image == result.data, "the upload itself should have been fine\n" + result.summary()
+    assert result.stored_md5 != server.md5, result.summary()
 
 
 # ---- the display -----------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="H3: re-init after an ack timeout keeps the old offset and HTTP stream")
 def test_display_ack_timeout(staged):
     """H3: one lost ack forces the 20 s re-init; the retry must start the display from byte 0."""
     staged.nextion.drop_ack_at = {10}
     result = run_gui_update(staged)
-    check_invariants(result, expect_success=False)
-    assert result.rebooted, "update never finished\n" + result.summary()
+    check_invariants(result)
+    assert len(result.uploads) == 2, result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="the timeout counter is reset by the first ack after each re-init, so it never reaches 3")
 def test_display_keeps_stalling(staged):
     """The display stalls at the same chunk on every attempt: after three timeouts the panel must give up and reboot."""
     staged.nextion.always_drop_ack_at = {10}
@@ -185,20 +255,20 @@ def test_jump_offset(staged):
     assert result.uploads[-1].chunks[1][0] == 20 * CHUNK, result.summary()
 
 
-@pytest.mark.xfail(strict=True, reason="H5: the UPDATING RX path expects 0x08 and its offset in separate UART reads")
 def test_jump_reply_in_one_read(staged):
     """H5: the 0x08 and its offset arrive together, as one UART read."""
     staged.nextion.split_jump = False
-    check_invariants(run_gui_update(staged))
+    result = run_gui_update(staged)
+    check_invariants(result)
+    assert len(result.uploads) == 1, "the upload had to restart\n" + result.summary()
 
 
 def test_duplicate_ack(staged):
     """H8: the display acks one chunk twice."""
     staged.nextion.dup_ack_at = {10}
-    check_invariants(run_gui_update(staged), expect_success=False)
+    check_invariants(run_gui_update(staged))
 
 
-@pytest.mark.xfail(strict=True, reason="H8: the UPDATING RX path treats each UART read as one message")
 def test_frames_sharing_a_read_with_an_ack(staged):
     """H8: another frame reaches the panel in the same UART read as an ack (here, a touch just ahead of it).
 
@@ -206,7 +276,10 @@ def test_frames_sharing_a_read_with_an_ack(staged):
     at its first byte, so the ack behind the touch is lost.
     """
     staged.nextion.inject_at = {10: bytes([0x65, 0x00, 0x01, 0x01, 0xFF, 0xFF, 0xFF])}
-    check_invariants(run_gui_update(staged))
+    result = run_gui_update(staged)
+    check_invariants(result)
+    # Restarting after the 20 s ack timeout recovers, but only because the ack was lost; it must not be.
+    assert len(result.uploads) == 1, "the upload had to restart\n" + result.summary()
 
 
 # ---- the rest of the system ------------------------------------------------

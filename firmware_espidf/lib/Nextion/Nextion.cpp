@@ -338,7 +338,6 @@ void Nextion::_task_uart_event(void *param) {
 
   uart_event_t event;
   std::vector<char> uart_buffer;
-  bool read_nextion_jump_instruction = false;
   std::vector<uint8_t> uart_pattern_buffer(3);
   // Bytes read but not yet part of a complete frame, kept for the next read.
   std::vector<char> pending_frames;
@@ -355,26 +354,9 @@ void Nextion::_task_uart_event(void *param) {
           if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
             if (Nextion::_current_nextion_state == nextion_state_t::UPDATING) {
               uart_buffer.resize(event.size);
-              uart_read_bytes(UART_NUM_2, uart_buffer.data(), event.size, pdMS_TO_TICKS(64));
-
-              // Special handling for 0x08 jump instruction from Nextion display.
-              if (uart_buffer[0] == 0x08) {
-                read_nextion_jump_instruction = true;
-                xSemaphoreGive(Nextion::_nextion_state_mutex); // Give back mutex as we do a continue here and will not reach the xSemaphoreGive at the bottom.
-                continue;                                      // Wait for next event after 0x08 to received the 4 bytes of offset data.
-              } else if (read_nextion_jump_instruction) {      // Least event read was a 0x08 jump instruction. Read this data as jump dest and reset.
-                if (event.size >= 4) {
-                  // Copy all data 1 byte forward in memory and then set data[0] = 0x08
-                  uart_buffer.resize(event.size + 1);
-                  for (int i = event.size; i > 0; i--) {
-                    uart_buffer[i] = uart_buffer[i - 1];
-                  }
-                  uart_buffer[0] = 0x08;
-                }
-                read_nextion_jump_instruction = false; // Reset special handling
-              }
-
-              Nextion::_post_received_data(uart_buffer);
+              int read = uart_read_bytes(UART_NUM_2, uart_buffer.data(), event.size, pdMS_TO_TICKS(64));
+              uart_buffer.resize(read > 0 ? read : 0);
+              Nextion::_split_update_replies(uart_buffer);
             }
 #if defined(NSPM_QEMU)
             else if (Nextion::_current_nextion_state != nextion_state_t::TERMINAL) {
@@ -496,6 +478,49 @@ void Nextion::_post_received_frames(std::vector<char> &pending) {
   if (pending.size() > NEXTION_UART_BUFFER_SIZE) [[unlikely]] {
     // No terminator in all that: not a frame, or not one that can be recovered.
     ESP_LOGW("Nextion", "Dropping %zu bytes from the display that never ended a frame.", pending.size());
+    pending.clear();
+  }
+}
+
+void Nextion::_split_update_replies(const std::vector<char> &data) {
+  // During an upload the display answers with bare bytes: 0x05 (send the next chunk), or 0x08 and a
+  // 4-byte offset (v1.2: continue from there). Anything else it sends is an ordinary FF FF FF
+  // terminated message (comok, a touch, ...). How these are cut into UART reads is down to timing:
+  // an offset can arrive after its 0x08, or an ack in the same read as the message before it. So
+  // collect the bytes and post each reply on its own, whatever the reads looked like.
+  std::vector<char> &pending = Nextion::_update_reply_buffer;
+  pending.insert(pending.end(), data.begin(), data.end());
+
+  size_t pos = 0;
+  while (pos < pending.size()) {
+    uint8_t first = (uint8_t)pending[pos];
+    size_t length;
+    if (first == NEX_RET_UPDATE_READY_FOR_NEXT_CHUNK) {
+      length = 1;
+    } else if (first == NEX_RET_UPDATE_JUMP_TO_OFFSET) {
+      length = 5;
+      if (pending.size() - pos < length) {
+        break; // The offset is still on its way.
+      }
+    } else {
+      size_t end = pos;
+      while (end + 2 < pending.size() && !((uint8_t)pending[end] == 0xFF && (uint8_t)pending[end + 1] == 0xFF && (uint8_t)pending[end + 2] == 0xFF)) {
+        end++;
+      }
+      if (end + 2 >= pending.size()) {
+        break; // No terminator yet.
+      }
+      Nextion::_post_received_data(std::vector<char>(pending.begin() + pos, pending.begin() + end));
+      pos = end + 3;
+      continue;
+    }
+    Nextion::_post_received_data(std::vector<char>(pending.begin() + pos, pending.begin() + pos + length));
+    pos += length;
+  }
+  pending.erase(pending.begin(), pending.begin() + pos);
+
+  if (pending.size() > NEXTION_UART_BUFFER_SIZE) {
+    ESP_LOGW("Nextion", "Discarding %zu bytes received during the update that are not a reply.", pending.size());
     pending.clear();
   }
 }
@@ -1001,6 +1026,7 @@ esp_err_t Nextion::start_update(uint32_t upload_baudrate, bool use_new_upload_pr
     if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
       Nextion::_current_nextion_state = nextion_state_t::UPDATING; // Set state to updating so that other functions won't write to the UART.
       NextionWindow::stop_locked();                                // The update protocol has replies of its own.
+      Nextion::_update_reply_buffer.clear();
       xSemaphoreGive(Nextion::_nextion_state_mutex);
     } else {
       ESP_LOGE("Nextion", "Failed to take _nextion_state_mutex while processing request to start update!");

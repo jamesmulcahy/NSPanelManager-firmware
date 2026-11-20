@@ -106,6 +106,7 @@ class UpdateServer:
         self._offset_faults: List[_OffsetFault] = []
         self._drop_next = {t: 0 for t in TARGETS}
         self._respond_next: Dict[str, List[Tuple[int, bytes]]] = {t: [] for t in TARGETS}
+        self._checksum_respond_next: Dict[str, List[Tuple[int, bytes]]] = {t: [] for t in TARGETS}
         self._ignore_range_next = 0
         self._no_length_next = {t: 0 for t in TARGETS}
         self._segment = SEGMENT
@@ -211,6 +212,11 @@ class UpdateServer:
         with self._lock:
             self._respond_next[target] += [(status, body)] * n
 
+    def checksum_respond_next(self, n: int, status: int, body: bytes, target: str = "tft") -> None:
+        """Answer the next n checksum requests with `status` and `body` instead of the md5."""
+        with self._lock:
+            self._checksum_respond_next[target] += [(status, body)] * n
+
     def ignore_range_next(self, n: int) -> None:
         """Answer the next n downloads with the whole file, whatever Range asked for."""
         with self._lock:
@@ -220,6 +226,16 @@ class UpdateServer:
         """Answer the next n downloads without a Content-Length (closing to end the body)."""
         with self._lock:
             self._no_length_next[target] += n
+
+    def clear_faults(self) -> None:
+        """Disarm every fault, as if the manager came back."""
+        with self._lock:
+            self._offset_faults.clear()
+            self._drop_next = {t: 0 for t in TARGETS}
+            self._respond_next = {t: [] for t in TARGETS}
+            self._checksum_respond_next = {t: [] for t in TARGETS}
+            self._ignore_range_next = 0
+            self._no_length_next = {t: 0 for t in TARGETS}
 
     def _arm(self, fault: _OffsetFault) -> None:
         with self._lock:
@@ -274,7 +290,11 @@ class UpdateServer:
         checksum = _target(_CHECKSUMS, h.path)
         download = _target(_DOWNLOADS, h.path)
         if checksum is not None:
-            self._send_simple(h, req, 200, self.checksum(checksum).encode())
+            with self._lock:
+                queued = self._checksum_respond_next[checksum]
+                injected = queued.pop(0) if queued else None
+            status, body = injected if injected is not None else (200, self.checksum(checksum).encode())
+            self._send_simple(h, req, status, body)
         elif download is not None:
             req.target = download
             self._serve_download(h, req, download)
