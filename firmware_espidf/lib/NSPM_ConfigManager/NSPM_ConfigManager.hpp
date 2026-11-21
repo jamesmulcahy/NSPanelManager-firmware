@@ -176,6 +176,9 @@ private:
   // What _manager_online was when the connection dropped, put back on reconnect (see _mqtt_connection_listener()).
   // Only accessed from the MQTT client task.
   static inline bool _manager_online_before_disconnect = false;
+  // Whether MQTT is connected. Only accessed from the MQTT client task, like its neighbour. It exists so that a second
+  // disconnect without a connect in between does not overwrite _manager_online_before_disconnect.
+  static inline bool _mqtt_connected = false;
 
   // Topic for manager status message
   static inline std::string _mqtt_manager_status_topic;
