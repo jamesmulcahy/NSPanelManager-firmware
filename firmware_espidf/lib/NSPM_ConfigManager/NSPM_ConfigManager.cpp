@@ -88,11 +88,13 @@ void NSPM_ConfigManager::_mqtt_manager_status_handler(const mqtt::Message &messa
 void NSPM_ConfigManager::_mqtt_connection_listener(bool connected) {
   // Runs on the MQTT client task.
   if (connected) {
+    NSPM_ConfigManager::_mqtt_connected = true;
     // MqttManager re-subscribes the command, manager status and config topics after a reconnect.
 
     // The broker replays the retained manager status, but a replay identical to the last one delivered is not
     // delivered again. The disconnect cleared _manager_online, so put back what the last status said: a replay that
-    // differs (the manager went offline meanwhile) is delivered and overrides it.
+    // differs (the manager went offline meanwhile) is delivered and overrides it. Repeated disconnects without a
+    // connect in between keep the first saved value.
     if (NSPM_ConfigManager::_manager_online_before_disconnect && !NSPM_ConfigManager::_manager_online.exchange(true)) {
       esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
     }
@@ -105,7 +107,10 @@ void NSPM_ConfigManager::_mqtt_connection_listener(bool connected) {
       NSPM_ConfigManager::_start_register_request_task();
     }
   } else {
-    NSPM_ConfigManager::_manager_online_before_disconnect = NSPM_ConfigManager::_manager_online.exchange(false);
+    if (NSPM_ConfigManager::_mqtt_connected) {
+      NSPM_ConfigManager::_manager_online_before_disconnect = NSPM_ConfigManager::_manager_online.exchange(false);
+      NSPM_ConfigManager::_mqtt_connected = false;
+    }
     esp_event_post(NSPM_CONFIGMANAGER_EVENT, nspm_configmanager_event::MANAGER_STATE_CHANGE, NULL, 0, pdMS_TO_TICKS(250));
   }
 }
