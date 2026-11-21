@@ -371,6 +371,13 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   // race that would otherwise leave the flag set with no live task.
   for (;;) {
     while (NSPM_ConfigManager::_send_register_requests) {
+      // The manager answers on the command topic at once, and so may a command right behind its
+      // register_accept. Until the broker has acknowledged our SUBSCRIBE to that topic, both would be
+      // dropped and the panel would only register on the next attempt, 5 s later. Wait for the SUBACK
+      // (a few ms), but never longer than one attempt's interval.
+      for (int waited_ms = 0; !mqtt::acknowledged(NSPM_ConfigManager::_mqtt_command_topic) && waited_ms < 5000; waited_ms += 20) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+      }
       MqttManager::publish("nspanel/mqttmanager/command", json_string.c_str(), json_string.length(), false);
       vTaskDelay(pdMS_TO_TICKS(5000));
     }

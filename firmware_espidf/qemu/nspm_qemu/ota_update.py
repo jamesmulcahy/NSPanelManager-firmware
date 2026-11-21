@@ -20,18 +20,20 @@ from .update_server import Request
 # The partition holding LittleFS (lib/LittleFSManager mounts the one labelled "spiffs").
 FS_PARTITION = "spiffs"
 
-# Budget for one update: a 1.5 MB download and two reboots.
+# Budget for one update: a 1.5 MB download and a reboot.
 UPDATE_TIMEOUT = 420
 # From a reboot to the first register_request (see rig.BOOT_TIMEOUT).
 REGISTER_TIMEOUT = 180
-# A boot with no reboot for this long after it registered is the last one: the
-# firmware update's second reboot comes about 1 s after registering.
+# A boot with no reboot for this long after it registered is the last one. Only an update
+# installed by a firmware that recorded no checksum reboots a second time, about 1 s after
+# registering.
 SETTLED = 25
 
 
 @dataclass
 class OtaResult:
     rebooted: bool
+    reboots: int  # how many times the panel rebooted between the update command and settling
     registration: Optional[dict]  # the first register_request after the update, if any
     files: Dict[str, bytes]  # what LittleFS holds after the update (read back from flash)
     mounted: bool  # whether the LittleFS partition on flash could be read at all
@@ -53,8 +55,8 @@ class OtaResult:
 
     def summary(self) -> str:
         reg = self.registration or {}
-        lines = ["rebooted=%s, registered as %r with md5_data_file=%r md5_firmware=%r, littlefs %s (%s), %.0fs%s" % (
-            self.rebooted, reg.get("friendly_name"), reg.get("md5_data_file"), reg.get("md5_firmware"),
+        lines = ["rebooted=%s (%d), registered as %r with md5_data_file=%r md5_firmware=%r, littlefs %s (%s), %.0fs%s" % (
+            self.rebooted, self.reboots, reg.get("friendly_name"), reg.get("md5_data_file"), reg.get("md5_firmware"),
             "readable" if self.mounted else "UNREADABLE", ", ".join(sorted(self.files)) or "empty",
             self.elapsed, ", gave up: " + self.stalled if self.stalled else "")]
         for r in self.requests:
@@ -141,9 +143,9 @@ def _wait_until_settled(rig, boots_before: int, registrations_before: int, deadl
 def run_update(rig, timeout: float = UPDATE_TIMEOUT) -> OtaResult:
     """Start a firmware update and wait for the panel to reboot onto it and register again.
 
-    A firmware update reboots twice (once into the new image, once after storing its checksum),
-    so this waits until a registration after the last reboot. Never fails by itself; a hang comes
-    back with `stalled` set.
+    A firmware update reboots once, into the new image (twice if the firmware that installed it
+    recorded no checksum), so this waits until a registration after the last reboot. Never fails
+    by itself; a hang comes back with `stalled` set.
     """
     first_request = rig.update_server.mark()
     console = rig.panel.mark()
@@ -162,6 +164,7 @@ def run_update(rig, timeout: float = UPDATE_TIMEOUT) -> OtaResult:
     files = read_littlefs(rig) if rebooted else None
     return OtaResult(
         rebooted=rebooted,
+        reboots=rig.panel.boots - boots,
         registration=registration,
         files=files or {},
         mounted=files is not None,
@@ -178,6 +181,9 @@ def check_firmware_updated(rig, result: OtaResult) -> None:
     info = "\n" + result.summary()
     assert result.stalled is None, "update did not finish: %s%s" % (result.stalled, info)
     assert result.rebooted, "panel did not reboot%s" % info
+    # The checksum recorded when flashing is stored on the first boot of the new image, with no
+    # second reboot to store it.
+    assert result.reboots == 1, "panel rebooted %d times, not once%s" % (result.reboots, info)
     assert result.registration is not None, "panel did not register after the update%s" % info
     assert result.registration["friendly_name"] == rig.hostname, (
         "panel registered as %r, not %r: its settings were lost%s" % (
@@ -186,3 +192,5 @@ def check_firmware_updated(rig, result: OtaResult) -> None:
     assert result.registration["md5_data_file"] == "embedded", info
     assert result.mounted, "LittleFS on flash does not mount%s" % info
     assert result.config is not None, "config.json is missing from LittleFS%s" % info
+    assert result.config.get("has_updated") is False, info
+    assert result.config.get("md5_firmware") == rig.update_server.checksum("firmware"), info

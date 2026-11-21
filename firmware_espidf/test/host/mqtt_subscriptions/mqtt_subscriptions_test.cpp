@@ -390,6 +390,28 @@ static void reconnect() {
   STAT(s, filters_active, 2);
 }
 
+static void acknowledged_after_suback_only() {
+  // NSPM_ConfigManager waits for this before each register_request, so the manager's reply cannot
+  // reach the broker before the panel's subscription to it does.
+  Rig rig;
+  CHECK_EQ(rig.core->acknowledged("cmd"), false);
+  rig.cmd("cmd");
+  CHECK_EQ(rig.core->acknowledged("cmd"), false); // Held, SUBSCRIBE not sent yet.
+  rig.core->service();
+  CHECK_EQ(rig.core->acknowledged("cmd"), false); // Sent, no SUBACK yet.
+  rig.broker->process();
+  CHECK_EQ(rig.core->acknowledged("cmd"), true);
+  CHECK_EQ(rig.core->acknowledged("other"), false);
+
+  rig.core->on_disconnected();
+  CHECK_EQ(rig.core->acknowledged("cmd"), false);
+  rig.broker->subscriptions.clear();
+  rig.core->on_connected();
+  CHECK_EQ(rig.core->acknowledged("cmd"), false); // A clean session: subscribed again from scratch.
+  rig.run();
+  CHECK_EQ(rig.core->acknowledged("cmd"), true);
+}
+
 static void relay_group_echo_after_reconnect() {
   // Plan §5 decision 3: a relay group's state topic. The panel's relay changed while it was offline
   // and its publish is queued. The reconnect replays the old value, identical to the one delivered,
@@ -1045,6 +1067,7 @@ int main() {
   rehold_within_linger();
   move_assign_releases_old();
   reconnect();
+  acknowledged_after_suback_only();
   relay_group_echo_after_reconnect();
   relay_toggle_command_never_coalesced();
   retained_clear();
