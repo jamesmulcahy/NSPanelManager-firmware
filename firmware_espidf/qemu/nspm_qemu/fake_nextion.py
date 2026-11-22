@@ -17,8 +17,9 @@ for the panel (NextionTerminal::options_for()), and touches become terminal touc
 import logging
 import os
 import re
+import hashlib
 import time
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 from nextion_tools.emu import Display, TcpServer
 from nextion_tools.emu import terminal as _terminal
@@ -64,6 +65,13 @@ class FakeNextion(Display):
         # saves nothing.
         self.screenshots_dir: Optional[str] = None
         self._screenshots = 0
+        # What a TFT upload turns the display into. installs[md5] = "terminal" says that once an
+        # upload of that image completes, the display runs nspanel-terminal's TFT from its next
+        # power cycle (the firmware reboots, and powers the display off and on, at the end of an
+        # update): the migration from NSPM's HMI TFT to the terminal. Images that are not listed
+        # leave the display running whatever TFT it ran before.
+        self.installs: Dict[str, str] = {}
+        self._pending_install: Optional[str] = None
 
     def screenshot(self, name: str) -> Optional[str]:
         """Save what the screen shows as <screenshots_dir>/NN-<name>.png. Never fails a test:
@@ -96,6 +104,35 @@ class FakeNextion(Display):
             log.debug("display off (power cycle): dropped %d bytes", len(data))
             return
         super()._on_data(data)
+
+    def _upload_finished(self) -> None:
+        super()._upload_finished()
+        # Called with _cond held, once the last chunk is in. A corrupt image installs nothing.
+        md5 = hashlib.md5(self.flash).hexdigest()
+        self._pending_install = self.installs.get(md5) if self.display_state == "ok" else None
+
+    def _reset(self) -> None:
+        pending, self._pending_install = self._pending_install, None
+        if pending is not None:
+            self._become(pending)
+        super()._reset()
+
+    def _become(self, kind: str) -> None:
+        """The display now runs another TFT. Called with _cond held, from a power cycle."""
+        if kind == "hmi":
+            raise ValueError("a display cannot be turned from a terminal TFT into NSPM's HMI TFT here")
+        if self.terminal_profile is not None and self.terminal_profile is _terminal.profile(kind):
+            return
+        log.info("the display now runs the %s terminal TFT", kind)
+        self.terminal_profile = _terminal.profile(kind)
+        self.framebuffer = _terminal.Framebuffer(*self.terminal_profile.size)
+        self.comok = _terminal.terminal_comok(self.device.comok)
+        self.rotation = TERMINAL_ROTATION.get(str(kind), 0)
+        # No pages, no code and no NSPM banner: the terminal TFT prints none.
+        self.screen = None
+        self._code = None
+        self.banner = b""
+        self.terminal = None
 
     def wait_for_page(self, page: str, timeout: float = 30) -> None:
         super().wait_for_page(page, timeout)

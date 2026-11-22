@@ -36,6 +36,7 @@ class UpdateResult:
     elapsed: float
     valid_md5s: set = field(default_factory=set)
     stalled: Optional[str] = None  # why run_gui_update stopped waiting, if the panel never rebooted
+    display_mode: Optional[int] = None  # NSPanelStatusReport.display_mode after the reboot, if it rebooted
 
     @property
     def image(self) -> Optional[bytes]:
@@ -127,10 +128,12 @@ def run_gui_update(rig, timeout: float = UPDATE_TIMEOUT, idle_timeout: float = I
     rebooted = rig.panel.boots > boots
     completed = bool(rig.panel.log_lines(COMPLETE, since=console))
 
-    stored = None
+    stored, display_mode = None, None
     if rebooted:
         mark = rig.broker.mark()
-        stored = rig.status_report(since=mark, timeout=180).md5_tft_gui
+        report = rig.status_report(since=mark, timeout=180)
+        stored = report.md5_tft_gui
+        display_mode = getattr(report, "display_mode", None)
     return UpdateResult(
         data=data,
         uploads=list(rig.nextion.uploads[first_upload:]),
@@ -142,6 +145,7 @@ def run_gui_update(rig, timeout: float = UPDATE_TIMEOUT, idle_timeout: float = I
         elapsed=time.monotonic() - t0,
         valid_md5s=set(rig.nextion.valid_md5s),
         stalled=stalled,
+        display_mode=display_mode,
     )
 
 

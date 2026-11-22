@@ -8,7 +8,6 @@ import time
 import urllib.request
 from typing import Optional
 
-from . import fake_nextion
 from .art_server import ArtServer
 from .broker import Broker
 from .fake_manager import QEMU_HOST_ADDRESS, FakeManager
@@ -39,7 +38,7 @@ class Rig:
 
     def __init__(self, workdir: str, mac: str = "C0:49:EF:00:00:01", hostname: str = "qemu-panel",
                  build_dir: Optional[str] = None, panel_config: Optional[dict] = None,
-                 stack: Optional[Stack] = None):
+                 stack: Optional[Stack] = None, display: Optional[str] = None):
         os.makedirs(workdir, exist_ok=True)
         if stack is None:
             self.broker = Broker(log_path=os.path.join(workdir, "mosquitto.log"))
@@ -48,10 +47,6 @@ class Rig:
             # Album art, as the manager's image server answers the panel (tests/test_screensaver_now_playing.py).
             self.art_server = ArtServer()
             self.manager = FakeManager(self.broker, port=self.update_server.port)
-            if fake_nextion.TERMINAL is not None:
-                # LvglRenderer lays out for the region the manager's config names, whatever
-                # config.json said at boot: US for the US receiver, EU for the EU one.
-                self.manager.config.is_us_panel = fake_nextion.TERMINAL == "us"
         else:
             # The stack's own manager serves updates and album art.
             self.update_server = None
@@ -63,8 +58,12 @@ class Rig:
         if panel_config is None:
             panel_config = self.default_panel_config()
         self.panel = QemuPanel(workdir, build_dir or os.environ.get("NSPM_QEMU_BUILD_DIR", DEFAULT_BUILD_DIR),
-                               PROJECT_DIR, mac, panel_config)
+                               PROJECT_DIR, mac, panel_config, display=display)
         self.nextion = self.panel.nextion
+        if stack is None and self.panel.terminal_kind is not None:
+            # LvglRenderer lays out for the region the manager's config names, whatever
+            # config.json said at boot: US for the US receiver, EU for the EU one.
+            self.manager.config.is_us_panel = self.panel.terminal_kind == "us"
         # Every page a test waits for, and the screen when it fails (tests/conftest.py).
         self.nextion.screenshots_dir = os.path.join(workdir, "screens")
         # Any wait on a fake ends as soon as the firmware panics or QEMU exits.
@@ -145,10 +144,22 @@ class Rig:
         # on first show; once it is there the page is fully rendered.
         self.nextion.wait_for(lambda n: n.get("home.room.txt") is not None, what="home page rendered")
 
-    def set_tft(self, data: bytes) -> None:
-        """Stage a TFT on the manager, and have the display accept it as a valid GUI."""
+    def set_tft(self, data: bytes, installs: Optional[str] = None) -> None:
+        """Stage a TFT on the manager, and have the display accept it as a valid GUI. With
+        installs="terminal" it is the terminal TFT: a display running NSPM's HMI runs the terminal
+        one once the update has installed it (the firmware then starts the LVGL UI)."""
         self.update_server.data = data
         self.nextion.valid_md5s.add(self.update_server.md5)
+        if installs is not None:
+            if installs != "terminal":
+                raise ValueError("a TFT installs the 'terminal' display, not %r" % installs)
+            # The terminal TFT the display runs already, or the US one for a display that ran NSPM's.
+            self.nextion.installs[self.update_server.md5] = self.panel.terminal_kind or "us"
+            if self.panel.terminal_kind is None:
+                # The manager's config for the panel is what the LVGL UI lays out for (as with the
+                # terminal display from the start, above). Panels the manager moves to the
+                # terminal TFT are US ones.
+                self.manager.config.is_us_panel = True
 
     def status_report(self, since: int = 0, timeout: float = 60) -> "pb.NSPanelStatusReport":
         """The first status report the panel publishes after broker message index `since`."""

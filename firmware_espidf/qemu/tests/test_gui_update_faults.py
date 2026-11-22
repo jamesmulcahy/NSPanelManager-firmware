@@ -3,6 +3,11 @@
 Every test checks the same invariants (nspm_qemu.gui_update): the firmware may
 retry, give up or reboot, but it must never declare success, or store an md5,
 for an image the display did not receive intact.
+
+The faults are in the upload and the manager, which do not depend on what the display runs, so
+each test runs on NSPM's TFT (hmi-to-hmi) and on the terminal TFT (terminal-to-terminal), whichever
+NSPM_QEMU_TERMINAL selects (see test_gui_update.py). The migration, hmi-to-terminal, has two cases of its
+own at the end: a fault that makes the firmware retry must not stop the terminal TFT from taking over.
 """
 
 import hashlib
@@ -10,21 +15,24 @@ import hashlib
 import pytest
 
 from nspm_qemu.gui_update import check_invariants, run_gui_update, start_gui_update
-from test_gui_update import TFT_SIZE, make_tft
-from nspm_qemu.fake_nextion import TERMINAL
-
-pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
+from test_gui_update import (TFT_SIZE, check_display_after, make_tft, rig, stage_tft,  # noqa: F401
+                             transitions)
 
 CHUNK = 4096
 # A Django DEBUG=True error page, as the real manager serves on an exception.
 ERROR_PAGE = b"<!DOCTYPE html><html><head><title>Server Error (500)</title></head><body>" + b"x" * 60000 + b"</body></html>"
 
 
+@pytest.fixture(params=transitions("hmi-to-hmi", "terminal-to-terminal"))
+def transition(request):
+    return request.param
+
+
 @pytest.fixture
 def staged(rig):
     """A booted panel with a TFT staged on the manager."""
     rig.boot()
-    rig.set_tft(make_tft(45))
+    stage_tft(rig, make_tft(45))
     return rig
 
 
@@ -296,3 +304,42 @@ def test_mqtt_drop_during_update(staged):
             staged.broker.wait_for_event("connect", staged.panel.client_id, timeout=60, since=mark)
 
     check_invariants(run_gui_update(staged, during=drop_mqtt))
+
+
+# ---- the migration: NSPM's TFT to the terminal TFT ---------------------------
+
+@pytest.fixture(params=transitions("hmi-to-terminal"))
+def migrating(request, make_rig):
+    """A panel on NSPM's TFT, with the terminal TFT staged on the manager."""
+    r = make_rig(display=request.param.before)
+    r.transition = request.param
+    r.boot()
+    stage_tft(r, make_tft(47))
+    return r
+
+
+def test_migration_survives_http_reset(migrating):
+    """The download drops mid-update; the resume must still leave the terminal TFT installed and the LVGL UI running."""
+    migrating.update_server.reset_at(int(TFT_SIZE * 0.75))
+    result = run_gui_update(migrating)
+    check_invariants(result)
+    assert any(d.outcome == "reset" for d in result.downloads), "the fault did not hit the download\n" + result.summary()
+    check_display_after(migrating, result)
+
+
+def test_migration_survives_display_ack_timeout(migrating):
+    """One lost ack forces the 20 s re-init and a second upload; the terminal TFT must still take over."""
+    migrating.nextion.drop_ack_at = {10}
+    result = run_gui_update(migrating)
+    check_invariants(result)
+    assert len(result.uploads) == 2, result.summary()
+    check_display_after(migrating, result)
+
+
+def test_failed_migration_leaves_the_display_on_nspms_tft(migrating):
+    """An update that gives up (the display never takes the upload) installs nothing: the panel stays on NSPM's TFT."""
+    migrating.nextion.reject_upload = True
+    result = run_gui_update(migrating)
+    check_invariants(result, expect_success=False)
+    assert result.rebooted and not result.completed, result.summary()
+    assert migrating.nextion.terminal_profile is None, "the display switched TFT without an installed image"
