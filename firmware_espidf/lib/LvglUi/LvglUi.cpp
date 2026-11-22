@@ -70,29 +70,6 @@ bool LvglUi::init() {
   }
 
   Nextion::set_commands_blocked(true);
-  Nextion::set_page_redirect([](const char *page) {
-    // LoadingPage "goes to" the boot page, then draws its own screen; pages with an LVGL version
-    // show it themselves.
-    static const char *const drawn_by_lvgl[] = {
-        GUI_LOADING_PAGE::page_name,
-        GUI_SCREENSAVER_PAGE::page_name,
-        GUI_SCREENSAVER_PAGE::screensaver_minimal_page_name,
-        GUI_HOME_PAGE::page_name,
-        GUI_ITEMS4_PAGE::page_name,
-        GUI_ITEMS8_PAGE::page_name,
-        GUI_ITEMS12_PAGE::page_name,
-        GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name,
-        GUI_LIGHT_CONTROL_PAGE::page_name,
-        GUI_THERMOSTAT_CONTROL_PAGE::page_name,
-        GUI_COVER_CONTROL_PAGE::page_name,
-    };
-    for (const char *name : drawn_by_lvgl) {
-      if (strcmp(page, name) == 0) {
-        return;
-      }
-    }
-    LvglUi::show_placeholder(page);
-  });
   Nextion::set_brightness_redirect([](uint8_t brightness) { NextionTerminal::set_brightness(brightness); });
   LvglRenderer::touch_filter = LvglUi::_touch;
   // GUI task, after a region change rebuilt the screens: build the last view again.

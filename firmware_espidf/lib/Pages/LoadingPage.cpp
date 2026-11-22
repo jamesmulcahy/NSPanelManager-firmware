@@ -11,7 +11,7 @@ void LoadingPage::show() {
   }
 
   InterfaceManager::begin_page(LoadingPage::unshow);
-  Nextion::go_to_page(GUI_LOADING_PAGE::page_name, 250);
+  InterfaceManager::go_to_hmi_page(GUI_LOADING_PAGE::page_name, 250);
   if (LvglUi::active()) {
     LvglRenderer::activate(LvglRenderer::Screen::BOOT);
   }

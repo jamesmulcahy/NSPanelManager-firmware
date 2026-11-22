@@ -52,6 +52,14 @@ public:
   static void show_default_page();
 
   /**
+   * Brings up the HMI page `page` (a GUI_data.hpp name) on the Nextion, for the pages' HMI paths.
+   * When LVGL is the UI there is no HMI page to go to: the page shows its view itself with
+   * LvglUi::show() (or LoadingPage activates the boot screen), so this does nothing and reports
+   * success. Otherwise it is Nextion::go_to_page().
+   */
+  static esp_err_t go_to_hmi_page(const char *page, uint16_t mutex_timeout);
+
+  /**
    * @brief Keep the loading page up until the panel restarts. Call before LoadingPage::show()
    * when about to reboot, so that a page request arriving meanwhile (the first status at boot,
    * a manager coming back online) cannot cover "Rebooting" or write to a page without t_loading.

@@ -219,7 +219,7 @@ void EntityPage::_update_display_light() {
   if (!EntityPage::_currently_showing) {
     ESP_LOGD("EntityPage", "Switching page to %s", GUI_LIGHT_CONTROL_PAGE::page_name);
     EntityPage::_currently_showing = true;
-    if (Nextion::go_to_page(GUI_LIGHT_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
+    if (InterfaceManager::go_to_hmi_page(GUI_LIGHT_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
       ESP_LOGE("EntityPage", "Failed to navigate Nextion to page. Will go back.");
       EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
       return;
@@ -464,7 +464,7 @@ void EntityPage::_update_display_cover() {
   if (!EntityPage::_currently_showing) {
     ESP_LOGD("EntityPage", "Switching page to %s", GUI_COVER_CONTROL_PAGE::page_name);
     EntityPage::_currently_showing = true;
-    if (Nextion::go_to_page(GUI_COVER_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
+    if (InterfaceManager::go_to_hmi_page(GUI_COVER_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
       // A stock TFT has no cover page yet. Clear the flag before backing out, otherwise the next
       // state update would take the "already showing" path and write cover components onto
       // whatever page is actually displayed.
@@ -488,7 +488,7 @@ void EntityPage::_update_display_thermostat() {
   if (!EntityPage::_currently_showing) {
     ESP_LOGD("EntityPage", "Switching page to %s", GUI_THERMOSTAT_CONTROL_PAGE::page_name);
     EntityPage::_currently_showing = true;
-    if (Nextion::go_to_page(GUI_THERMOSTAT_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
+    if (InterfaceManager::go_to_hmi_page(GUI_THERMOSTAT_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
       ESP_LOGE("EntityPage", "Failed to navigate Nextion to page. Will go back.");
       EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
     }
@@ -827,7 +827,7 @@ void EntityPage::_update_display_media_player() {
   if (!EntityPage::_currently_showing) {
     ESP_LOGD("EntityPage", "Switching page to %s", GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name);
     EntityPage::_currently_showing = true;
-    if (Nextion::go_to_page(GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
+    if (InterfaceManager::go_to_hmi_page(GUI_MEDIA_PLAYER_CONTROL_PAGE::page_name, 1000) != ESP_OK) [[unlikely]] {
       // The official HMI has no media player page yet, so on a stock TFT this fails every time
       // rather than never. Clear the flag before backing out: otherwise the next state update
       // takes the "already showing" path, skips the page switch, and writes the media player

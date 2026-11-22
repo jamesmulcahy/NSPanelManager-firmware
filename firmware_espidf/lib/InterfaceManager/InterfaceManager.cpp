@@ -257,6 +257,13 @@ void InterfaceManager::show_default_page() {
   }
 }
 
+esp_err_t InterfaceManager::go_to_hmi_page(const char *page, uint16_t mutex_timeout) {
+  if (LvglUi::active()) {
+    return ESP_OK;
+  }
+  return Nextion::go_to_page(page, mutex_timeout);
+}
+
 void InterfaceManager::request_show_home_page() {
   InterfaceManager::_request_page(PageRequest::HOME);
 }
