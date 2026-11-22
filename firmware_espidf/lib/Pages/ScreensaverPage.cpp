@@ -35,7 +35,7 @@ void ScreensaverPage::init() {
   }
   esp_log_level_set("ScreensaverPage", ConfigManager::log_level);
   // The body turned to another card (GUI task): what the QEMU test and a log reader see of the rotation.
-  ScreensaverView::on_card = [](const char *card, uint32_t seconds) { ESP_LOGI("ScreensaverPage", "Screensaver card: %s (%u s)", card, (unsigned)seconds); };
+  ScreensaverView::on_card = [](const char *card, uint32_t seconds) { ESP_LOGD("ScreensaverPage", "Screensaver card: %s (%u s)", card, (unsigned)seconds); };
 
   // The art's size comes with the card's layout, which is built when the screensaver first shows: fetch then.
   ScreensaverView::on_art_size = [](uint16_t) {
@@ -248,7 +248,7 @@ void ScreensaverPage::_handle_energy(const mqtt::Message &message, void *context
     return;
   }
   // The cost in cents: no float formatting in the log.
-  ESP_LOGI("ScreensaverPage", "Energy update: power %d (%ld W), cost %d (%ld cents %s/day), lights %d (%ld, alert: %s).", (int)update->power, (long)update->power_watts, (int)update->cost,
+  ESP_LOGD("ScreensaverPage", "Energy update: power %d (%ld W), cost %d (%ld cents %s/day), lights %d (%ld, alert: %s).", (int)update->power, (long)update->power_watts, (int)update->cost,
            std::lround(update->cost_per_day * 100), update->currency != NULL ? update->currency : "", (int)update->lights, (long)update->lights_on, update->lights_alert ? "yes" : "no");
   ScreensaverPage::_energy.set(std::shared_ptr<NSPanelEnergyUpdate>(update, [](NSPanelEnergyUpdate *data) { nspanel_energy_update__free_unpacked(data, psram_protobuf_allocator()); }));
   ScreensaverPage::_request_lvgl_render();

@@ -247,7 +247,10 @@ def test_media_page_for_the_same_player_opens_from_the_cache_and_the_card_follow
     mark = rig.panel.mark()
     events = rig.broker.event_mark()
     rig.nextion.tap_screen(*US_ENTITIES_BUTTON)
-    rig.broker.wait_for_subscription(rig.panel.client_id, rig.manager.base + "/entity_pages/11/state", since=events)
+    # The page's topic is already held from boot (the first entities page is selected with the default room), and a
+    # held topic is not subscribed again, so wait for the page's state to arrive rather than for a SUBSCRIBE.
+    rig.panel.wait_for_log(r"EntitiesPage: Received new data", timeout=60, since=mark)
+    assert rig.manager.base + "/entity_pages/11/state" in rig.broker.subscriptions(rig.panel.client_id)
     settle(rig.nextion)
     rig.nextion.tap_screen(*US_FIRST_SLOT)
 
