@@ -33,8 +33,7 @@ enum class buzzer_event_t {
 class BuzzerManager {
 public:
   /**
-   * @brief Configure the buzzer output, register for Nextion touch events so that screen touches are
-   * tracked as buzzer events, and register for config updates to load the sound for each event.
+   * @brief Configure the buzzer output, register for config updates to load the sound for each event.
    */
   static void init();
 
@@ -80,13 +79,6 @@ private:
   static void _mqtt_message_handler(const mqtt::Message &message, void *context);
 
   /**
-   * @brief Handle touch events from the Nextion display. Raise a TOUCH event on press, or on release
-   * for components that only send release events. A release following a press of the same component
-   * is ignored so components that send both only raise one event.
-   */
-  static void _nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
-
-  /**
    * @brief Load the sound for each event from the NSPanelConfig when a new config is loaded.
    */
   static void _config_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
@@ -126,12 +118,6 @@ private:
   // new config is loaded, playback keeps its own reference to the steps. Only accessed while holding _sounds_mutex.
   static inline SemaphoreHandle_t _sounds_mutex = NULL;
   static inline std::array<std::shared_ptr<const std::vector<buzzer_tone_step_t>>, static_cast<size_t>(buzzer_event_t::COUNT)> _sounds;
-
-  // Component that last raised a TOUCH event on press and has not yet been released. Only accessed
-  // from the default event loop task.
-  static inline bool _awaiting_release = false;
-  static inline uint8_t _pressed_page = 0;
-  static inline uint8_t _pressed_component = 0;
 
   // Set by raise_event_for_touch() when the touch being handled already raised its own event. Only accessed
   // from the default event loop task.

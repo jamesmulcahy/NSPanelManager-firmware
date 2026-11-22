@@ -1,7 +1,5 @@
-#include <AlbumArt.hpp>
 #include <EntitiesPage.hpp>
 #include <EntityPage.hpp>
-#include <GUI_data.hpp>
 #include <InterfaceManager.hpp>
 #include <LvglArt.hpp>
 #include <LvglText.hpp>
@@ -11,23 +9,10 @@
 #include <MediaSourcePage.hpp>
 #include <MqttManager.hpp>
 #include <NSPM_ConfigManager.hpp>
-#include <Nextion.hpp>
 #include <algorithm>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <sys/time.h>
-
-MediaPlayerPage::_component_t MediaPlayerPage::_components[] = {
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::back_button_name, _action::BACK, GUI_MEDIA_PLAYER_CONTROL_PAGE::back_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::previous_track_button_name, _action::PREVIOUS_TRACK, GUI_MEDIA_PLAYER_CONTROL_PAGE::previous_track_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::next_track_button_name, _action::NEXT_TRACK, GUI_MEDIA_PLAYER_CONTROL_PAGE::next_track_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::play_pause_button_name, _action::PLAY_PAUSE, GUI_MEDIA_PLAYER_CONTROL_PAGE::play_pause_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::mute_button_name, _action::MUTE, GUI_MEDIA_PLAYER_CONTROL_PAGE::mute_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::source_switch_button_name, _action::SOURCE_SWITCH, GUI_MEDIA_PLAYER_CONTROL_PAGE::source_switch_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_up_button_name, _action::VOLUME_UP, GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_up_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_down_button_name, _action::VOLUME_DOWN, GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_down_button_id},
-    {GUI_MEDIA_PLAYER_CONTROL_PAGE::album_art_hotspot_name, _action::ALBUM_ART, GUI_MEDIA_PLAYER_CONTROL_PAGE::album_art_hotspot_id},
-};
 
 void MediaPlayerPage::return_to_media_player(std::string state_topic) {
   MediaPlayerPage::_returning = true;
@@ -42,9 +27,6 @@ void MediaPlayerPage::handle_state(const NSPanelEntityState__MediaPlayer *media_
 
 void MediaPlayerPage::unshow() {
   MediaPlayerPage::_showing = false;
-  // A full render takes seconds and outlives this page, so stop it rather than let it paint
-  // over whatever comes next.
-  AlbumArt::cancel();
   {
     // LVGL: let the cache evict the art if it needs to (the view keeps its own hold while it draws it).
     // Opening the page again finds it in the cache, or fetches it.
@@ -125,18 +107,14 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
       MediaPlayerView::on_action = [](MediaPlayerView::Action action) {
         LvglUi::defer([action]() { MediaPlayerPage::_lvgl_action((int)action); });
       };
-    } else {
-      MediaPlayerPage::_resolve_component_ids();
     }
 
-    MediaPlayerPage::_position_bar_value = -2;
     if (MediaPlayerPage::_position_task_handle == NULL) {
       if (xTaskCreatePinnedToCore(MediaPlayerPage::_task_position, "media_position", 3072, NULL, 2, &MediaPlayerPage::_position_task_handle, 1) != pdPASS) [[unlikely]] {
         ESP_LOGE("MediaPlayerPage", "Failed to create the media player position task. The position bar won't advance while playing.");
         MediaPlayerPage::_position_task_handle = NULL;
       }
     }
-    Nextion::set_timer_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_bar_timer_name, MediaPlayerPage::_volume_bar_timeout_ms, 250);
     if (!MediaPlayerPage::_returning.exchange(false)) {
       MediaPlayerPage::_controlling_source = false;
     }
@@ -145,51 +123,15 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
     taskEXIT_CRITICAL(&MediaPlayerPage::_spinlock);
   }
 
-  bool is_playing = media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING ||
-                    media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__BUFFERING;
   // Fall back to the player if the source has gone away while it was selected.
   bool controlling_source = MediaPlayerPage::_controlling_source && media_player->has_source_volume;
 
-  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::title_label_name, media_player->media_title, 1000);
-  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::artist_label_name, media_player->media_artist, 1000);
-
-  // Icons follow the player's state rather than the press, so the page stays right when something
-  // else controls the player.
-  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::play_pause_button_name, is_playing ? GUI_MEDIA_ICONS::pause : GUI_MEDIA_ICONS::play, 250);
-  // Buttons the player can't use now are greyed out rather than hidden, so the layout stays put.
-  for (const _component_t &component : MediaPlayerPage::_components) {
-    switch (component.action) {
-    case _action::PREVIOUS_TRACK:
-    case _action::NEXT_TRACK:
-    case _action::PLAY_PAUSE:
-    case _action::MUTE:
-    case _action::VOLUME_UP:
-    case _action::VOLUME_DOWN:
-      MediaPlayerPage::_set_button_enabled(component.name, MediaPlayerPage::_action_enabled(component.action, media_player, controlling_source));
-      break;
-    default:
-      break;
-    }
-  }
-
-  // The switch shows what the volume controls act on now: this room's player, or the source feeding it.
-  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::source_switch_button_name, controlling_source ? GUI_MEDIA_ICONS::speaker_multiple : GUI_MEDIA_ICONS::speaker, 250);
-  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::source_switch_button_name, media_player->has_source_volume, 250);
-
-  Nextion::set_component_text(GUI_MEDIA_PLAYER_CONTROL_PAGE::mute_button_name, media_player->is_muted ? GUI_MEDIA_ICONS::volume_mute : GUI_MEDIA_ICONS::volume_high, 250);
-  // Only the value: the bar is shown briefly when the volume buttons are pressed, not on every update.
-  Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_bar_name, MediaPlayerPage::_volume(media_player, controlling_source), 250);
-
-  MediaPlayerPage::_update_position_bar(media_player);
   // The task advances the bar while playing, and sleeps otherwise, so let it look at the new state.
   if (MediaPlayerPage::_position_task_handle != NULL) {
     xTaskNotifyGive(MediaPlayerPage::_position_task_handle);
   }
 
-  // Draw the art when the page opens and whenever it changes, for example on the next track. A new
-  // render replaces one still in progress, and unshow() cancels one that outlives the page.
-  // Start it last: a render streams thousands of fills, and the writes above, made on the MQTT task,
-  // would otherwise wait their turn behind them on every track change.
+  // The art, when the page opens and whenever it changes, for example on the next track.
   {
     std::string album_art_url = media_player->album_art_url != NULL ? media_player->album_art_url : "";
     std::lock_guard<std::mutex> lock_guard(MediaPlayerPage::_album_art_url_mutex);
@@ -206,15 +148,6 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
         } else {
           LvglArt::fetch(album_art_url, MediaPlayerView::ART_SIZE, MediaPlayerPage::_lvgl_art_done); // Joins one on its way
         }
-      }
-    } else if (page_just_opened || album_art_url != MediaPlayerPage::_album_art_url) {
-      MediaPlayerPage::_album_art_url = album_art_url;
-      if (!album_art_url.empty()) {
-        AlbumArt::render(album_art_url, MediaPlayerPage::_album_art_x, MediaPlayerPage::_album_art_y, MediaPlayerPage::_on_screen);
-      } else if (page_just_opened) {
-        AlbumArt::cancel(); // Nothing drawn on this page yet.
-      } else {
-        AlbumArt::clear(); // Remove the last track's art, or what was drawn of it.
       }
     }
   }
@@ -244,24 +177,6 @@ int32_t MediaPlayerPage::_position_percent(const NSPanelEntityState__MediaPlayer
   return position * 100 / media_player->media_duration;
 }
 
-void MediaPlayerPage::_update_position_bar(const NSPanelEntityState__MediaPlayer *media_player) {
-  int32_t value = MediaPlayerPage::_position_percent(media_player);
-  int32_t shown = MediaPlayerPage::_position_bar_value.exchange(value);
-  if (value == shown) {
-    return;
-  }
-
-  if (value < 0) {
-    Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::position_bar_name, false, 250);
-    return;
-  }
-  // Set the value before showing it, so a hidden bar doesn't flash its old value.
-  Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::position_bar_name, value, 250);
-  if (shown < 0) {
-    Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::position_bar_name, true, 250);
-  }
-}
-
 void MediaPlayerPage::_task_position(void *param) {
   for (;;) {
     bool playing = false;
@@ -271,8 +186,6 @@ void MediaPlayerPage::_task_position(void *param) {
         playing = state->media_player->state == NSPANEL_ENTITY_STATE__MEDIA_PLAYER__PLAYBACK_STATE__PLAYING;
         if (playing && LvglUi::active()) {
           MediaPlayerPage::_lvgl_render(state->media_player, MediaPlayerPage::_controlling_source && state->media_player->has_source_volume);
-        } else if (playing) {
-          MediaPlayerPage::_update_position_bar(state->media_player);
         }
       }
     }
@@ -303,27 +216,8 @@ bool MediaPlayerPage::_action_enabled(_action action, const NSPanelEntityState__
   }
 }
 
-void MediaPlayerPage::_set_button_enabled(const char *button_name, bool enabled) {
-  Nextion::set_component_foreground(button_name, enabled ? GUI_MEDIA_PLAYER_CONTROL_PAGE::button_pco : GUI_MEDIA_PLAYER_CONTROL_PAGE::button_disabled_pco, 250);
-  Nextion::set_component_pco2(button_name, enabled ? GUI_MEDIA_PLAYER_CONTROL_PAGE::button_pressed_pco2 : GUI_MEDIA_PLAYER_CONTROL_PAGE::button_disabled_pco, 250);
-}
-
-void MediaPlayerPage::handle_touch(uint16_t component_id, bool pressed) {
-  ESP_LOGD("MediaPlayerPage", "Touch component %d, pressed %s", component_id, pressed ? "Yes" : "No");
-  if (pressed) {
-    return; // The page sends release events only.
-  }
-
-  for (const _component_t &component : MediaPlayerPage::_components) {
-    if (component.id == component_id) {
-      MediaPlayerPage::_perform(component.action, component.name);
-      return;
-    }
-  }
-}
-
 void MediaPlayerPage::_perform(_action action, const char *name) {
-  // The button is greyed out, but the Nextion still reports presses.
+  // A button the player can't use now is disabled, but a press can race the state update that did it.
   std::shared_ptr<NSPanelEntityState> state = EntityPage::get_current_state();
   if (state != nullptr && state->entity_case == NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) {
     bool controlling_source = MediaPlayerPage::_controlling_source && state->media_player->has_source_volume;
@@ -382,42 +276,6 @@ void MediaPlayerPage::_perform(_action action, const char *name) {
     break;
   }
   }
-}
-
-void MediaPlayerPage::_resolve_component_ids() {
-  if (MediaPlayerPage::_component_ids_resolved) {
-    return;
-  }
-
-  bool all_resolved = true;
-  std::string resolved_ids;
-  for (_component_t &component : MediaPlayerPage::_components) {
-    int32_t id = -1;
-    if (Nextion::get_component_integer_attribute(component.name, "id", &id, 250, 250) == ESP_OK && id >= 0 && id <= UINT8_MAX) {
-      component.id = id;
-    } else {
-      // Keep the ID from GUI_data.hpp and try again the next time the page opens.
-      ESP_LOGE("MediaPlayerPage", "Failed to look up the ID of media player component %s, will use %d.", component.name, component.id.load());
-      all_resolved = false;
-    }
-    resolved_ids.append(" ").append(component.name).append("=").append(std::to_string(component.id.load()));
-  }
-  ESP_LOGI("MediaPlayerPage", "Media player component IDs:%s", resolved_ids.c_str());
-
-  int32_t x = -1;
-  int32_t y = -1;
-  if (Nextion::get_component_integer_attribute(GUI_MEDIA_PLAYER_CONTROL_PAGE::album_art_hotspot_name, "x", &x, 250, 250) == ESP_OK &&
-      Nextion::get_component_integer_attribute(GUI_MEDIA_PLAYER_CONTROL_PAGE::album_art_hotspot_name, "y", &y, 250, 250) == ESP_OK &&
-      x >= 0 && x <= UINT16_MAX && y >= 0 && y <= UINT16_MAX) {
-    MediaPlayerPage::_album_art_x = x;
-    MediaPlayerPage::_album_art_y = y;
-    ESP_LOGI("MediaPlayerPage", "Album art at %ld,%ld.", x, y);
-  } else {
-    ESP_LOGE("MediaPlayerPage", "Failed to read the position of %s, will draw the album art at %d,%d.", GUI_MEDIA_PLAYER_CONTROL_PAGE::album_art_hotspot_name,
-             MediaPlayerPage::_album_art_x.load(), MediaPlayerPage::_album_art_y.load());
-    all_resolved = false;
-  }
-  MediaPlayerPage::_component_ids_resolved = all_resolved;
 }
 
 void MediaPlayerPage::_play_pause() {
@@ -503,7 +361,7 @@ void MediaPlayerPage::_step_volume(int32_t direction) {
   } else {
     MediaPlayerPage::_set_volume(volume);
   }
-  MediaPlayerPage::_show_volume_bar(volume);
+  MediaPlayerPage::_redraw(); // The page always shows the volume.
 }
 
 int32_t MediaPlayerPage::_volume(const NSPanelEntityState__MediaPlayer *media_player, bool source) {
@@ -565,23 +423,6 @@ void MediaPlayerPage::_toggle_source() {
   MediaPlayerPage::_controlling_source = !MediaPlayerPage::_controlling_source;
   ESP_LOGD("MediaPlayerPage", "Volume controls now act on the %s.", MediaPlayerPage::_controlling_source ? "source" : "player");
   MediaPlayerPage::_redraw();
-  // Show the volume the controls now act on, as a volume press does.
-  MediaPlayerPage::_show_volume_bar(MediaPlayerPage::_volume(state->media_player, MediaPlayerPage::_controlling_source));
-}
-
-void MediaPlayerPage::_show_volume_bar(int32_t volume) {
-  if (LvglUi::active()) {
-    MediaPlayerPage::_redraw(); // The LVGL page always shows the volume.
-    return;
-  }
-  Nextion::set_component_value(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_bar_name, volume, 250);
-  Nextion::set_component_visibility(GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_bar_name, true, 250);
-
-  // The timer hides the bar. Stop it before starting it so that every press restarts the countdown,
-  // and holding the buttons keeps the bar up.
-  std::string timer = GUI_MEDIA_PLAYER_CONTROL_PAGE::volume_bar_timer_name;
-  Nextion::send_raw_command((timer + ".en=0").c_str(), 250);
-  Nextion::send_raw_command((timer + ".en=1").c_str(), 250);
 }
 
 void MediaPlayerPage::_send_command(NSPanelMQTTManagerCommand__MediaPlayerCommand *command) {
@@ -689,6 +530,6 @@ void MediaPlayerPage::_lvgl_action(int action) {
   case MediaPlayerView::Action::SOURCE_SWITCH: wanted = _action::SOURCE_SWITCH; break;
   default: return;
   }
-  // The same handler a release of the Nextion component reaches (enabled check included).
+  // The enabled check is in _perform().
   MediaPlayerPage::_perform(wanted, "an LVGL button");
 }

@@ -45,54 +45,25 @@ private:
   static void _handle_state(const mqtt::Message &message, void *context);
 
   /**
-   * Handle events from Nextion, such as touch events:
-   */
-  static void _handle_nextion_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
-
-  /**
    * Handle event for a new config from MQTTManager:
    */
   static void _handle_config_update(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
-   * Delegate to the correct update method
+   * Delegate to the correct update method (the LVGL renderers, for the entity's type)
    */
   static void _update_display();
 
   /**
-   * Delegate to the correct touch method
+   * Open the page if it is not showing yet. True if it was just opened.
    */
-  static void _handle_touch_event(const std::shared_ptr<NSPanelEntityState> &state, uint16_t component_id, bool pressed);
+  static bool _open_page();
 
   /*
-   * Update displayed page and value of "Light" page.
-   */
-  static void _update_display_light();
-
-  /*
-   * Handle touch event for "Light" page.
-   */
-  static void _handle_touch_event_light(const std::shared_ptr<NSPanelEntityState> &state, uint16_t component_id, bool pressed);
-
-  /*
-   * Update displayed page and value of "Thermostat" page.
-   */
-  static void _update_display_thermostat();
-
-  /*
-   * Update displayed page and value of "Cover" page.
-   */
-  static void _update_display_cover();
-
-  /*
-   * Handle Nextion string event.
+   * Handle a thermostat action, named by the strings the HMI's thermostat page sent: "activate:setN",
+   * "deactivate", "deactivatetemp", "back", "tempup", "tempdown". Run by the LVGL thermostat page.
    */
   static void _handle_string_event_thermostat(const std::shared_ptr<NSPanelEntityState> &state, char *data);
-
-  /*
-   * Update displayed page and value of "Media player" page.
-   */
-  static void _update_display_media_player();
 
   /**
    * properly delete pointer and clear old data when shared_ptr expires
@@ -142,20 +113,11 @@ private:
   // Are we currently displaying the page?
   static inline std::atomic<bool> _currently_showing = false;
 
-  // The last name to be updated on the display.
-  static inline std::string _last_displayed_name = "";
-
-  // Light specific variables
-  static inline uint8_t _last_brightness = 0;
-  static inline uint8_t _last_kelvin_pct = 0;
-  static inline uint8_t _last_hue = 0;
-  static inline uint8_t _last_saturation_pct = 0;
-
   // Thermostat specific variables
   static inline std::atomic<bool> _is_currently_editing = false;
   static inline uint8_t _selected_thermostat_option_index = 0;
 
-  // Written by the MQTT handler, read by the Nextion event loop. Never dereference _current_state directly:
+  // Written by the MQTT handler, read by the GUI task. Never dereference _current_state directly:
   // `->` on a shared_ptr returns a raw pointer and holds no reference, so a new state arriving mid-read can
   // free the one you are reading. Call _get_current_state() once per entry point, keep that copy for the
   // whole operation, and pass it down by const&. It returns nullptr until the first state has arrived.

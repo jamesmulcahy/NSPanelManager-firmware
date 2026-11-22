@@ -1,7 +1,6 @@
 #pragma once
 #include <lvgl.h>
 
-#include <GUI_data.hpp>
 #include <LvglArt.hpp>
 #include <atomic>
 #include <freertos/FreeRTOS.h>
@@ -14,7 +13,7 @@
 
 /*
  * The media player page: title and artist, playback and volume controls, and the position bar,
- * with the album art drawn by AlbumArt, which opens MediaSourcePage when pressed.
+ * with the album art drawn by LvglArt, which opens MediaSourcePage when pressed.
  *
  * EntityPage follows the player's state topic and holds its state, as for every entity, and
  * switches to the page. This class draws the page from that state and handles its touches.
@@ -31,11 +30,6 @@ public:
    * @param page_just_opened: EntityPage has just switched to the page, so set up what lasts while it is open.
    */
   static void update_display(const NSPanelEntityState__MediaPlayer *media_player, bool page_just_opened);
-
-  /**
-   * Handle a touch on the page.
-   */
-  static void handle_touch(uint16_t component_id, bool pressed);
 
   /**
    * The page has closed.
@@ -69,14 +63,6 @@ private:
    * Log a decoded media player state at debug level.
    */
   static void _log_state(const NSPanelEntityState__MediaPlayer *media_player);
-
-  /*
-   * Look up the IDs of the touchable media player components by name, and where the album art goes,
-   * and log them. Called with the page showing, as the Nextion only answers for components on the
-   * current page. Done once per boot: these only change with a new TFT, and installing one reboots
-   * the panel.
-   */
-  static void _resolve_component_ids();
 
   /*
    * Commands for the currently displayed media player. Decisions that depend on the
@@ -118,17 +104,6 @@ private:
   static void _toggle_source();
 
   /*
-   * Show the volume bar at the given volume. The page's tm_vol timer hides it again.
-   */
-  static void _show_volume_bar(int32_t volume);
-
-  /*
-   * Show the position bar at the current playback position, or hide it if there is none to show.
-   * Only talks to the display when what it shows changes.
-   */
-  static void _update_position_bar(const NSPanelEntityState__MediaPlayer *media_player);
-
-  /*
    * The position bar's value, 0-100, for the media player's position now, or -1 if there is none to
    * show: no position, an unknown duration, or a playing player and no wall clock to advance it by.
    */
@@ -150,7 +125,7 @@ private:
 
   /**
    * A MediaPlayerView action (as int, keeping LVGL out of this header), on LvglUi's task: what a
-   * release of the matching Nextion component does.
+   * press of the matching button does.
    */
   static void _lvgl_action(int action);
 
@@ -170,9 +145,6 @@ private:
   // Whether the volume controls act on the source feeding the player rather than the player itself.
   // Reset to the player whenever the page opens.
   static inline std::atomic<bool> _controlling_source = false;
-  // How long the volume bar stays up after the last volume press or source switch. The page's tm_vol
-  // timer hides it; the TFT's own interval is shorter, so it is set whenever the page opens.
-  static constexpr uint16_t _volume_bar_timeout_ms = 3000;
   // Set by return_to_media_player() so that opening the page keeps _controlling_source.
   static inline std::atomic<bool> _returning = false;
   // Percent per press of the volume -/+ buttons when the manager sends no volume_step. Matches Home
@@ -192,7 +164,7 @@ private:
   // A press that changes nothing, + at 100 say, stays pending until it lapses, as no new state comes;
   // the two volumes are equal, so that is harmless. Nothing redraws when it lapses, but the volume bar
   // has hidden itself by then.
-  // Guarded by _spinlock: written from the Nextion handler, read from MQTT too.
+  // Guarded by _spinlock: written from the GUI task, read from MQTT too.
   struct _pending_volume_t {
     int32_t volume;       // -1 when nothing is pending
     bool source;          // Whether it is for the source rather than the player
@@ -214,36 +186,20 @@ private:
     VOLUME_DOWN,
     ALBUM_ART,
   };
-  // A touchable media player component. id starts as the ID in GUI_data.hpp and is replaced by the one
-  // the Nextion reports. Written from the MQTT task, read from the Nextion handler.
-  struct _component_t {
-    const char *name;
-    _action action;
-    std::atomic<uint8_t> id;
-  };
-  static _component_t _components[];
   // Whether the media player can do what action does now. Buttons it can't are greyed out, and
   // their presses ignored.
   static bool _action_enabled(_action action, const NSPanelEntityState__MediaPlayer *media_player, bool controlling_source);
-  static void _set_button_enabled(const char *button_name, bool enabled);
-  // Does what a touch on a media player button does, for both UIs. name is only for the log.
+  // Does what a touch on a media player button does. name is only for the log.
   static void _perform(_action action, const char *name);
-  static inline std::atomic<bool> _component_ids_resolved = false;
-  // What the position bar shows: its value, -1 while hidden, or -2 when unknown because the page has just
-  // opened. Updated from the MQTT task and from the position task.
-  static inline std::atomic<int32_t> _position_bar_value = -2;
   static inline TaskHandle_t _position_task_handle = NULL;
   // Wall clock times before this (2026-01-01 UTC) mean the panel's clock hasn't been set yet. A playing
   // player's position can't be advanced without it, so the bar is hidden until it is.
   // TODO: Use PanelClock::is_set() once the panel sets its clock from the manager.
   static constexpr int64_t _min_wall_clock = 1767225600;
 
-  // Top left of the album art: the position of the h_art hotspot on this TFT's layout.
-  static inline std::atomic<uint16_t> _album_art_x = GUI_MEDIA_PLAYER_CONTROL_PAGE::album_art_x;
-  static inline std::atomic<uint16_t> _album_art_y = GUI_MEDIA_PLAYER_CONTROL_PAGE::album_art_y;
-  // The album art URL last handed to AlbumArt, so that new art is drawn when it changes, for example on
+  // The album art URL last handed to LvglArt, so that new art is drawn when it changes, for example on
   // the next track. Guarded by _album_art_url_mutex: the page is updated from the MQTT
-  // task and from the Nextion handler.
+  // task and from the GUI task.
   static inline std::string _album_art_url;
   static inline std::mutex _album_art_url_mutex;
   // LVGL: a hold on the art for _album_art_url, from LvglArt's cache; empty while it is on its way, or
