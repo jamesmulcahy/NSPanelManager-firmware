@@ -344,8 +344,46 @@ def open_look_picker(rig) -> None:
     rig.nextion.screenshot("look-picker")
 
 
-def test_register_request_lists_the_lvgl_look_feature(booted):
-    assert "lvgl_look" in booted.manager.register_requests[0].get("features", [])
+def test_register_request_lists_the_lvgl_look_and_no_hmi_features(booted):
+    assert booted.manager.register_requests[0].get("features") == ["lvgl_look", "no_hmi"]
+
+
+def test_landscape_layout_on_us_hardware(make_rig):
+    # A US panel mounted sideways: the manager says it is not a US panel (is_us_panel false) and serves
+    # the EU terminal TFT, whose 454x320 receiver the US display runs turned 90 degrees. The firmware
+    # lays out for landscape from the config alone, as on an EU panel.
+    rig = make_rig(display="eu-on-us")
+    assert not rig.manager.config.is_us_panel and rig.panel.panel_config["lvgl_us_layout"] is False
+    rig.boot()
+    rig.panel.wait_for_log(r"LvglRenderer: LVGL [\d.]+ drawing 480x320\.", timeout=5)
+    from nspm_qemu.proto import nspanel as pb
+    assert rig.status_report(since=0).display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_LVGL
+    wake_to_home(rig)
+    rig.nextion.screenshot("landscape-home")
+    assert not rig.nextion.terminal.faults
+
+
+def test_saved_lvgl_ui_false_is_ignored(rig):
+    # Older firmware kept the HMI pages with lvgl_ui false in config.json. There are none now: the TFT
+    # alone decides, so a terminal TFT gets the LVGL UI anyway (rig.boot() waits for it to draw).
+    rig.panel.panel_config["lvgl_ui"] = False
+    rig.boot()
+    rig.panel.wait_for_log(r"ConfigManager: lvgl_ui is false in config\.json: no longer supported, ignored", timeout=5)
+    rig.panel.wait_for_log(r"LvglUi: LVGL is the UI", timeout=5)
+    from nspm_qemu.proto import nspanel as pb
+    assert rig.status_report(since=0).display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_LVGL
+
+
+def test_lvgl_ui_command_is_ignored(booted):
+    # It switched older firmware to the HMI pages, saved and rebooted. Now it does nothing at all.
+    ignored = r"UpdateManager: The lvgl_ui command is no longer supported; ignored"
+    mark, boots = booted.panel.mark(), booted.panel.boots
+    booted.broker.publish("nspanel/%s/command" % booted.mac, json.dumps({"command": "lvgl_ui", "enable": False}))
+    booted.panel.wait_for_log(ignored, since=mark, timeout=30)
+    time.sleep(5)
+    booted.panel.check_alive()
+    assert booted.panel.boots == boots, "the lvgl_ui command rebooted the panel"
+    assert not booted.panel.log_lines(r"ConfigManager: Saved", since=mark)
 
 
 def test_look_picked_on_the_panel_is_applied_reported_and_confirmed(lvgl_home):

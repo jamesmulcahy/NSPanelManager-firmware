@@ -1,7 +1,6 @@
 #include <Background.hpp>
 #include <BuzzerManager.hpp>
 #include <ConfigManager.hpp>
-#include <GUI_data.hpp>
 #include <InterfaceManager.hpp>
 #include <LoadingPage.hpp>
 #include <MenuPage.hpp>
@@ -45,16 +44,20 @@ static std::string printable_identity() {
 bool LvglUi::init() {
   esp_log_level_set(TAG, ConfigManager::log_level);
   std::string identity = printable_identity();
-  const bool terminal_tft = !Nextion::nspm_flag_received() && NextionTerminal::is_receiver(identity.c_str());
-  if (!ConfigManager::lvgl_ui) {
-    ESP_LOGI(TAG, "lvgl_ui is off: Nextion pages (display: %s).", identity.c_str());
-    LvglUi::_display_mode = terminal_tft ? DisplayMode::TERMINAL_IDLE : DisplayMode::NEXTION;
+  const char *shown_identity = identity.empty() ? "no connect reply" : identity.c_str();
+  // The TFT decides the UI. There are no HMI pages to fall back to: without LVGL the panel shows
+  // no pages at all (InterfaceManager), and keeps working as a switch, a sensor and an update target.
+  if (Nextion::nspm_flag_received()) {
+    // NSPM's own (legacy) TFT: only its boot screen is used, to say that the display needs the GUI update.
+    ESP_LOGW(TAG, "The display runs NSPM's legacy TFT (%s): no UI until the GUI is updated in NSPanel Manager.", shown_identity);
+    LvglUi::_display_mode = DisplayMode::NEXTION;
     return false;
   }
-  if (!terminal_tft) {
-    ESP_LOGI(TAG, "Nextion pages: the display runs %s (%s).", Nextion::nspm_flag_received() ? "NSPM's TFT" : "no terminal TFT",
-             identity.empty() ? "no connect reply" : identity.c_str());
-    LvglUi::_display_mode = DisplayMode::NEXTION;
+  if (!NextionTerminal::is_receiver(identity.c_str())) {
+    // Neither a terminal TFT nor NSPM's: nothing the firmware knows how to write on.
+    ESP_LOGW(TAG, "No UI: the display runs no terminal TFT and sent no NSPM flag (%s).", shown_identity);
+    LvglUi::_display_mode = DisplayMode::TERMINAL_IDLE;
+    Nextion::set_commands_blocked(true);
     return false;
   }
   // The palette before the first screen is built; Background::set() below applies the same one.
@@ -66,6 +69,7 @@ bool LvglUi::init() {
     // The TFT has no Nextion pages either: the display will show its "waiting for connection".
     ESP_LOGE(TAG, "The display runs a terminal TFT, but LVGL did not start: %s.", esp_err_to_name(started));
     LvglUi::_display_mode = DisplayMode::TERMINAL_IDLE;
+    Nextion::set_commands_blocked(true);
     return false;
   }
 

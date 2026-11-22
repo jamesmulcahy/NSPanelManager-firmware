@@ -17,9 +17,11 @@
  * A page with no LVGL version yet shows PlaceholderView (show_placeholder()). Pages do not go through
  * Nextion::go_to_page() in this mode: InterfaceManager::go_to_hmi_page() is a no-op while LVGL is active.
  *
- * The mode follows the TFT: init() turns LVGL on only when the display identifies as a terminal
- * TFT and did not send NSPM's startup flag, so reinstalling NSPM's TFT rolls a panel back, and
- * ConfigManager::lvgl_ui = false keeps the Nextion pages whatever the TFT.
+ * The mode follows the TFT, and LVGL is the only UI: init() turns LVGL on only when the display
+ * identifies as a terminal TFT and did not send NSPM's startup flag. Otherwise there is no UI at all:
+ * InterfaceManager shows no pages, and on NSPM's legacy TFT LoadingPage writes "Display update
+ * needed" on the TFT's boot screen until the manager installs the terminal TFT. The panel's relays,
+ * buttons, sensor, MQTT and updates work in every mode.
  *
  * Also moves into the firmware what NSPM's HMI did by itself: the screensaver timeout (a SLEEP_EVENT
  * after the manager's screensaver_activation_timeout without a touch), waking on a touch (a
@@ -46,9 +48,9 @@ public:
    */
   enum class DisplayMode : uint8_t {
     UNKNOWN = 0,
-    NEXTION = 1,       // NSPM's Nextion pages
+    NEXTION = 1,       // NSPM's legacy TFT: no UI, only "Display update needed" on its boot screen
     LVGL = 2,          // LVGL draws through a terminal TFT
-    TERMINAL_IDLE = 3, // A terminal TFT, but LVGL is off (lvgl_ui) or did not start: the TFT's waiting page
+    TERMINAL_IDLE = 3, // No UI and nothing to write on: no terminal TFT and no NSPM flag, or LVGL did not start
   };
   static DisplayMode display_mode() { return LvglUi::_display_mode; }
 

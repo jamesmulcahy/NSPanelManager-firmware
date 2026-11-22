@@ -16,10 +16,12 @@ firmware_espidf/qemu/run_tests.sh -k touch   # extra args go to pytest
 
 That is the whole local command: nothing else needs setting. The display defaults to the LVGL UI
 (`NSPM_QEMU_TERMINAL=us`), which is what the fleet runs, and the .proto files come from the pin in
-`protobuf.ref`. The legacy Nextion TFT, which CI still covers, is a different leg:
+`protobuf.ref`. NSPM's legacy Nextion TFT, which CI still covers, is a different leg. The firmware has
+no HMI pages, so all a panel shows on it is the legacy screen ("Display update needed",
+`tests/test_legacy_tft.py`) until a GUI update installs the terminal TFT:
 
 ```
-NSPM_QEMU_TERMINAL=nextion firmware_espidf/qemu/run_tests.sh -k boot
+NSPM_QEMU_TERMINAL=nextion firmware_espidf/qemu/run_tests.sh -k "test_legacy_tft or test_gui_update"
 ```
 
 Tests that need an environment the default local run should have (the LVGL UI, a schema with the
@@ -53,7 +55,8 @@ panel. The script prints each command the panel sends the manager. Options: `--h
 `--bind ADDR` (anyone who can reach it can touch the panel), `--rotation 0|90|180|270`, and
 `--weather` for the weather screensaver with a forecast. It takes the same environment variables
 as `run_tests.sh`, and keeps the console log, broker log and screenshots in
-`qemu/build/web_panel/`. `tests/test_web_panel.py` checks it works: it wakes the panel and turns
+`qemu/build/web_panel/`. `tests/test_web_panel.py` checked it on NSPM's HMI pages, which the firmware
+no longer has (it is skipped); it woke the panel and turned
 on the lights, through the viewer alone.
 
 ## How it is wired
@@ -212,14 +215,16 @@ every page and streams the pixels, and `FakeManager` says `is_us_panel` to match
 the receiver's framebuffer, turned upright; `nextion.tap_screen(x, y)` touches a point of the
 screen as a screenshot shows it. `tests/test_lvgl_terminal.py`, `tests/test_timers.py` and the
 screensaver card tests run only in this mode; their touch coordinates are for the US layout.
-The tests of behaviour both UIs share (`test_boot`, `test_touch`, `test_default_room`,
-`test_mqtt_reconnect`, `test_page_transitions`, `test_weather`) have a Nextion variant and an LVGL one
-side by side (`nextion_only` / `lvgl_only` in `tests/shared_behaviour.py`, which also holds the LVGL
-helpers they share): the LVGL variants read the same behaviour from the firmware's log, the screen's
-pixels and the commands a tap sends the manager.
-With `NSPM_QEMU_TERMINAL=nextion` the display is NSPM's Nextion TFT, the Nextion-page tests run
-and the LVGL ones skip (expected there, so they do not abort the session).
-Nextion support is going away, so only CI runs that leg regularly.
+The tests of behaviour any UI has (`test_boot`, `test_touch`, `test_default_room`,
+`test_mqtt_reconnect`, `test_page_transitions`, `test_weather`) have LVGL variants (`lvgl_only` in
+`tests/shared_behaviour.py`, which also holds the LVGL helpers they share): they read the behaviour
+from the firmware's log, the screen's pixels and the commands a tap sends the manager. Their Nextion
+variants (`nextion_only`) drove NSPM's HMI pages, which the firmware no longer has, and are skipped.
+`make_rig(display="eu-on-us")` gives one panel the landscape layout on US hardware whatever
+`NSPM_QEMU_TERMINAL` says.
+With `NSPM_QEMU_TERMINAL=nextion` the display is NSPM's Nextion TFT: `test_legacy_tft` and the GUI
+updates that start there run, and the LVGL tests skip (expected there, so they do not abort the
+session). Only CI runs that leg regularly.
 
 The receiver comes from nextion-tools 0.2.0 or later (pinned in `requirements.txt`).
 

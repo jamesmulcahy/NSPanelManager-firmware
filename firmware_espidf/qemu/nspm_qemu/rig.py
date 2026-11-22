@@ -29,6 +29,8 @@ TERMINAL_RESTART_GRACE = 5
 # What ConfigManager logs when a save ends: written, or skipped as unchanged (DEBUG, which the
 # default config.json logs at).
 CONFIG_SAVE_DONE = r"ConfigManager: (Saved \d+ bytes to /littlefs/config\.json|config\.json unchanged, not written)"
+# What InterfaceManager logs on a display with no UI (NSPM's legacy TFT) once the config and rooms are in.
+LEGACY_SCREEN_READY = r"InterfaceManager: Home page status and base config loaded; no UI on this display"
 
 
 class Rig:
@@ -96,7 +98,8 @@ class Rig:
         self.panel.start()
 
     def boot(self) -> None:
-        """Start the panel and wait until it is registered, configured and idle on its screensaver."""
+        """Start the panel and wait until it is registered, configured and idle on its screensaver (on NSPM's
+        legacy TFT, which has no UI, on the legacy screen)."""
         self.start()
         self.wait_until_booted()
 
@@ -110,7 +113,11 @@ class Rig:
             # The LVGL UI: a terminal session that has drawn something.
             self.panel.wait_for_log(r"NextionTerminal: Receiver ready", timeout=60)
             self.nextion.wait_for_rectangles(1, timeout=60)
-        self.panel.wait_for_log(r"ScreensaverPage: Showing screensaver", timeout=60)
+            self.panel.wait_for_log(r"ScreensaverPage: Showing screensaver", timeout=60)
+        else:
+            # NSPM's legacy TFT: the firmware has no UI for it, only the loading page ("Display update
+            # needed", tests/test_legacy_tft.py), which stays up once the panel has its config.
+            self.panel.wait_for_log(LEGACY_SCREEN_READY, timeout=60)
         # The manager's first config never matches the panel's button timings,
         # so ButtonManager saves from the default loop. Those timings are not
         # in config.json, so with the default config.json the save is skipped

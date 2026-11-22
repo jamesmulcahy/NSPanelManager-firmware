@@ -222,8 +222,10 @@ esp_err_t ConfigManager::load_config() {
     ConfigManager::lvgl_us_layout = config_data["lvgl_us_layout"].get<bool>();
   }
 
-  if (config_data.contains("lvgl_ui") && config_data["lvgl_ui"].is_boolean()) {
-    ConfigManager::lvgl_ui = config_data["lvgl_ui"].get<bool>();
+  // Older firmware's kill switch for the LVGL UI, which kept the HMI pages instead. There are none any
+  // more, so it would only blank the screen: read and ignored, and dropped at the next save.
+  if (config_data.contains("lvgl_ui") && config_data["lvgl_ui"].is_boolean() && !config_data["lvgl_ui"].get<bool>()) {
+    ESP_LOGW("ConfigManager", "lvgl_ui is false in config.json: no longer supported, ignored.");
   }
 
   if (config_data.contains("lvgl_background") && config_data["lvgl_background"].is_string()) {
@@ -334,7 +336,6 @@ void ConfigManager::create_default() {
   ConfigManager::log_level = ESP_LOG_WARN;
   ConfigManager::serial_log = ConfigManager::SerialLogMode::AUTO;
   ConfigManager::lvgl_us_layout = true;
-  ConfigManager::lvgl_ui = true;
   ConfigManager::lvgl_background = "none";
   ConfigManager::lvgl_theme = "auto";
   ConfigManager::lvgl_look_unconfirmed = false;
@@ -347,7 +348,6 @@ std::string ConfigManager::_serialise() {
   json["log_level"] = static_cast<int>(ConfigManager::log_level);
   json["serial_log"] = static_cast<int>(ConfigManager::serial_log);
   json["lvgl_us_layout"] = ConfigManager::lvgl_us_layout;
-  json["lvgl_ui"] = ConfigManager::lvgl_ui;
   json["lvgl_background"] = ConfigManager::lvgl_background;
   json["lvgl_theme"] = ConfigManager::lvgl_theme;
   json["lvgl_look_unconfirmed"] = ConfigManager::lvgl_look_unconfirmed;

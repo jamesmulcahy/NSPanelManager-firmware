@@ -152,13 +152,16 @@ class QemuPanel:
         self.mac = mac
         self.panel_config = panel_config
         # The TFT the display starts with: NSPM_QEMU_TERMINAL's, unless a test asks for "hmi" (NSPM's
-        # own TFT) or "terminal" (the US terminal TFT, or the one NSPM_QEMU_TERMINAL names).
-        if display not in (None, "hmi", "terminal"):
-            raise ValueError("display must be 'hmi' or 'terminal', not %r" % display)
+        # own TFT), "terminal" (the US terminal TFT, or the one NSPM_QEMU_TERMINAL names), or a terminal
+        # receiver by name ("us", "eu-on-us": the landscape layout on US hardware).
+        if display not in (None, "hmi", "terminal", "us", "eu-on-us"):
+            raise ValueError("display must be 'hmi', 'terminal', 'us' or 'eu-on-us', not %r" % display)
         if display == "hmi":
             self.terminal_kind: Optional[str] = None
         elif display == "terminal":
             self.terminal_kind = TERMINAL or "us"
+        elif display is not None:
+            self.terminal_kind = display
         else:
             self.terminal_kind = TERMINAL
         if self.terminal_kind:

@@ -68,10 +68,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # NSPM's own TFT (terminal: nextion; unset would mean the LVGL UI): the suite (the LVGL tests skip themselves), less the update tests.
-          - display: nextion
+          # NSPM's own (legacy) TFT (terminal: nextion; unset would mean the LVGL UI). The firmware has no HMI
+          # pages, so all it shows there is the legacy screen (test_legacy_tft), until a GUI update installs the
+          # terminal TFT: the GUI updates that start on NSPM's TFT (hmi-to-hmi, and hmi-to-terminal, the
+          # migration) run here and in gui-updates. test_gui_data checks the names the firmware uses from the
+          # HMI, the boot screen's among them. Everything else runs on the terminal display, below.
+          - display: legacy-tft
             terminal: nextion
-            tests: "not test_gui_update_faults"
+            tests: "test_legacy_tft or test_gui_data or (test_gui_update and not test_gui_update_faults)"
             marks: ""
             timeout: 60
           # The GUI update tests, also on NSPM's TFT. Each flashes the panel and reboots it, often more
@@ -93,10 +97,17 @@ jobs:
             timeout: 60
           # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
           # receiver. The LVGL tests (the UI, the timers, the screensaver cards) and the LVGL variants of the
-          # tests both UIs share (boot, touch, default room, reconnects, page switches, weather); the rest drive NSPM's Nextion pages.
+          # tests of behaviour any UI has (boot, touch, default room, reconnects, page switches, weather).
           - display: terminal-us
             terminal: us
             tests: "test_lvgl_terminal or test_timers or test_screensaver_cards or test_screensaver_energy or test_screensaver_now_playing or test_boot or test_touch or test_default_room or test_mqtt_reconnect or test_page_transitions or test_weather"
+            marks: ""
+            timeout: 60
+          # The rest, which does not depend on the UI (config.json, metrics, the loop watchdog, the web UI and
+          # firmware updates, the temperature sensor), and the gestures, on the terminal display as well.
+          - display: terminal-us-system
+            terminal: us
+            tests: "test_config_file or test_heap_metrics or test_loop_watchdog or test_web_ui or test_temperature or test_gestures"
             marks: ""
             timeout: 60
     timeout-minutes: ${{ matrix.timeout }}

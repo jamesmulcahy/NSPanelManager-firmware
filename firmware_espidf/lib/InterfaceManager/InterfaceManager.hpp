@@ -25,6 +25,10 @@ public:
    * to the current page's handlers only, and nothing is ever unregistered (see
    * PageHandlers for why unregistering can deadlock the default event loop).
    *
+   * Without a UI (!LvglUi::active()) the loading page is the only page: every other one is refused
+   * (logged as a bug; it does not become current and gets no events), and nothing in InterfaceManager
+   * asks for one. The HMI page code therefore never runs.
+   *
    * @param unshow The page's unshow function. It is skipped if the same page has
    *               been shown again by the time it would run, so that it cannot
    *               reset the state of the newer show().
@@ -52,10 +56,12 @@ public:
   static void show_default_page();
 
   /**
-   * Brings up the HMI page `page` (a GUI_data.hpp name) on the Nextion, for the pages' HMI paths.
-   * When LVGL is the UI there is no HMI page to go to: the page shows its view itself with
+   * Brings up the HMI page `page` (a GUI_data.hpp name) on the Nextion. The only HMI page this
+   * firmware shows is the legacy TFT's boot screen (GUI_LOADING_PAGE, for LoadingPage): any other
+   * page is refused with ESP_ERR_NOT_SUPPORTED and logged as a bug. When LVGL is the UI, or the
+   * display has no HMI pages, there is nothing to go to: the page shows its view itself with
    * LvglUi::show() (or LoadingPage activates the boot screen), so this does nothing and reports
-   * success. Otherwise it is Nextion::go_to_page().
+   * success.
    */
   static esp_err_t go_to_hmi_page(const char *page, uint16_t mutex_timeout);
 
@@ -107,6 +113,10 @@ private:
   };
 
   static void _request_page(PageRequest page);
+
+  // No UI (!LvglUi::active()): the loading page's text, "Display update needed" and what the panel
+  // knows (LoadingPage::legacy_secondary_text()). Written only on NSPM's legacy TFT; not while an update holds the screen.
+  static void _show_legacy_screen();
 
   // Show the entity page for _requested_entity_page_topic. Runs on the page-transition task.
   static void _show_requested_entity_page();

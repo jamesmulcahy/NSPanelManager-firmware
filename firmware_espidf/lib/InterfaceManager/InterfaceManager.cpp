@@ -22,6 +22,7 @@
 #include <UpdateManager_event.hpp>
 #include <WiFiManager.hpp>
 #include <cmath>
+#include <cstring>
 #include <esp_log.h>
 #include <protobuf_nspanel.pb-c.h>
 
@@ -36,7 +37,8 @@ void InterfaceManager::init() {
     ESP_LOGE("InterfaceManager", "Failed to initialize Nextion display. Will not continue with InterfaceManager!");
     return;
   }
-  // On an nspanel-terminal TFT, LVGL draws every page (before the first one is shown).
+  // On an nspanel-terminal TFT, LVGL draws every page (before the first one is shown). On any other
+  // display there is no UI, and no page but the loading page is ever shown (see begin_page()).
   LvglUi::init();
 
   std::string base_topic = "nspanel/";
@@ -100,6 +102,11 @@ void InterfaceManager::init() {
   // Wait for WiFi
   std::string append_string = "";
   while (!WiFiManager::connected()) {
+    if (!LvglUi::active()) {
+      InterfaceManager::_show_legacy_screen();
+      vTaskDelay(pdMS_TO_TICKS(250));
+      continue;
+    }
     std::string connection_text = "Connecting to ";
     connection_text.append(ConfigManager::wifi_ssid);
 
@@ -119,6 +126,11 @@ void InterfaceManager::init() {
   // Wait for MQTT
   append_string.clear();
   while (!MqttManager::connected()) {
+    if (!LvglUi::active()) {
+      InterfaceManager::_show_legacy_screen();
+      vTaskDelay(pdMS_TO_TICKS(250));
+      continue;
+    }
     std::string connection_text = "Connecting to MQTT";
     char ip_address_str[IP4ADDR_STRLEN_MAX];
     esp_netif_ip_info_t ip_info = WiFiManager::ip_info();
@@ -137,7 +149,11 @@ void InterfaceManager::init() {
     vTaskDelay(pdMS_TO_TICKS(250));
   }
 
-  LoadingPage::set_loading_text("Loading config and status");
+  if (LvglUi::active()) {
+    LoadingPage::set_loading_text("Loading config and status");
+  } else {
+    InterfaceManager::_show_legacy_screen();
+  }
   // Listen for commands on nspanel/<mac>/command (reboot, updates, look, ...) before registering: the
   // manager may send one as soon as it accepts the panel, and a command is never replayed. The display
   // and the loading page are up by now, which the reboot and update commands use.
@@ -152,6 +168,14 @@ void InterfaceManager::init() {
 }
 
 std::shared_ptr<PageHandlers> InterfaceManager::begin_page(void (*unshow)()) {
+  if (!LvglUi::active() && unshow != LoadingPage::unshow) [[unlikely]] {
+    // Every way to a page is closed without a UI (show_default_page(), _task_page_transitions(), the
+    // display's events); reaching this is a bug. The page does not become current, so no event reaches it.
+    ESP_LOGE("InterfaceManager", "BUG: a page was shown with no UI; it gets no events.");
+    std::shared_ptr<PageHandlers> handlers = std::make_shared<PageHandlers>();
+    handlers->retire();
+    return handlers;
+  }
   ShownPage next;
   next.unshow = unshow;
   next.handlers = std::make_shared<PageHandlers>();
@@ -228,6 +252,11 @@ void InterfaceManager::show_default_page() {
     ESP_LOGD("InterfaceManager", "An update holds the screen; staying on the loading page.");
     return;
   }
+  if (!LvglUi::active()) {
+    // No UI: the loading page is the only page, and on the legacy TFT it says so.
+    InterfaceManager::_show_legacy_screen();
+    return;
+  }
   std::shared_ptr<NSPanelConfig> config;
   if (NSPM_ConfigManager::get_config(&config) == ESP_OK) [[likely]] {
     switch (config->default_page) {
@@ -258,10 +287,29 @@ void InterfaceManager::show_default_page() {
 }
 
 esp_err_t InterfaceManager::go_to_hmi_page(const char *page, uint16_t mutex_timeout) {
-  if (LvglUi::active()) {
-    return ESP_OK;
+  if (LvglUi::active() || LvglUi::display_mode() != LvglUi::DisplayMode::NEXTION) {
+    return ESP_OK; // No HMI pages on this display.
+  }
+  if (strcmp(page, GUI_LOADING_PAGE::page_name) != 0) [[unlikely]] {
+    // The legacy TFT's boot screen is the only HMI page this firmware shows.
+    ESP_LOGE("InterfaceManager", "BUG: HMI page %s requested; only %s is shown.", page, GUI_LOADING_PAGE::page_name);
+    return ESP_ERR_NOT_SUPPORTED;
   }
   return Nextion::go_to_page(page, mutex_timeout);
+}
+
+void InterfaceManager::_show_legacy_screen() {
+  if (InterfaceManager::_update_holds_screen) {
+    return; // "Updating firmware.", "Rebooting" and the like stay.
+  }
+  std::string name;
+  std::shared_ptr<NSPanelConfig> config;
+  if (InterfaceManager::_nspm_config_loaded && NSPM_ConfigManager::get_config(&config) == ESP_OK && config && config->name != nullptr) {
+    name = config->name;
+  }
+  std::string ip = WiFiManager::connected() ? WiFiManager::ip_string() : "";
+  LoadingPage::set_loading_text(LoadingPage::LEGACY_TEXT);
+  LoadingPage::set_secondary_text(LoadingPage::legacy_secondary_text(name, ip));
 }
 
 void InterfaceManager::request_show_home_page() {
@@ -330,6 +378,19 @@ void InterfaceManager::_task_page_transitions(void *param) {
     }
     if (requested & PAGE_TRANSITION_SHOW_PAGE && InterfaceManager::_update_holds_screen) {
       ESP_LOGD("InterfaceManager", "An update holds the screen; dropping page request %d.", static_cast<int>(InterfaceManager::_requested_page.exchange(PageRequest::NONE)));
+    } else if (requested & PAGE_TRANSITION_SHOW_PAGE && !LvglUi::active()) {
+      // No UI, so no pages to show. Screen on (also after the display restarted) brings the loading page back.
+      PageRequest request = InterfaceManager::_requested_page.exchange(PageRequest::NONE);
+      if (request == PageRequest::SCREEN_ON) {
+        std::shared_ptr<NSPanelConfig> config;
+        if (NSPM_ConfigManager::get_config(&config) == ESP_OK) {
+          Nextion::set_brightness_level(config->screen_dim_level, 1000);
+        }
+        LoadingPage::redraw();
+        InterfaceManager::show_default_page();
+      } else if (request != PageRequest::NONE) {
+        ESP_LOGD("InterfaceManager", "No UI; dropping page request %d.", static_cast<int>(request));
+      }
     } else if (requested & PAGE_TRANSITION_SHOW_PAGE) {
       switch (InterfaceManager::_requested_page.exchange(PageRequest::NONE)) {
       case PageRequest::HOME:
@@ -385,7 +446,12 @@ void InterfaceManager::_associate_with_manager_if_ready() {
   // loading page for the default page. Re-checked here because several
   // notifications can be coalesced into one wake-up.
   if (InterfaceManager::_home_page_status_loaded && InterfaceManager::_nspm_config_loaded && LoadingPage::showing() && !InterfaceManager::_has_been_associated_with_manager) {
-    if (!ConfigManager::has_updated) [[likely]] {
+    if (!ConfigManager::has_updated && !LvglUi::active()) {
+      // No UI: the panel keeps the loading page; the screensaver, its tasks and the rooms' pages never start.
+      ESP_LOGI("InterfaceManager", "Home page status and base config loaded; no UI on this display.");
+      InterfaceManager::show_default_page();
+      InterfaceManager::_has_been_associated_with_manager = true;
+    } else if (!ConfigManager::has_updated) [[likely]] {
       ESP_LOGI("InterfaceManager", "Home page status and base config loaded.");
       RoomManager::go_to_default_room();
       RoomManager::go_to_first_entities_page(); // Also select the first entities page for default room as this is the first time and no room is currently selected.
@@ -414,6 +480,11 @@ void InterfaceManager::_task_unshow_page(void *param) {
 }
 
 void InterfaceManager::_nextion_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+  if (!LvglUi::active() && (event_id == nextion_event_t::SLEEP_EVENT || event_id == nextion_event_t::WAKE_EVENT)) {
+    // Only the legacy TFT's own code sends these, and there is no screensaver or page to go to.
+    ESP_LOGD("InterfaceManager", "No UI; ignoring the display's %s event.", event_id == nextion_event_t::SLEEP_EVENT ? "sleep" : "wake");
+    return;
+  }
   switch (event_id) {
   case nextion_event_t::SLEEP_EVENT: {
     if (InterfaceManager::_alarm_blocks_screensaver) {
@@ -510,12 +581,9 @@ void InterfaceManager::_nspm_configmanager_event_handler(void *arg, esp_event_ba
 
     std::shared_ptr<NSPanelConfig> config;
     if (NSPM_ConfigManager::get_config(&config) == ESP_OK) [[likely]] {
-      // With LVGL as the UI there is no HMI timer: LvglUi reads the timeout from the config itself.
-      if (!LvglUi::active() &&
-          (InterfaceManager::_nspm_cur_config == nullptr || InterfaceManager::_nspm_cur_config->screensaver_activation_timeout != config->screensaver_activation_timeout)) {
-        if (Nextion::set_timer_value(GUI_HOME_PAGE::timer_screensaver_name, config->screensaver_activation_timeout, pdMS_TO_TICKS(250)) != ESP_OK) {
-          ESP_LOGE("InterfaceManager", "Failed to update timer value for screensaver timeout.");
-        }
+      // LvglUi keeps the screensaver timeout itself, from the config.
+      if (!LvglUi::active()) {
+        InterfaceManager::show_default_page(); // The legacy screen, with the panel's name now known.
       }
 
       if (!ScreensaverPage::showing()) {
@@ -572,6 +640,8 @@ void InterfaceManager::_nspm_configmanager_event_handler(void *arg, esp_event_ba
   case nspm_configmanager_event::MANAGER_STATE_CHANGE: {
     if (InterfaceManager::_update_holds_screen) {
       ESP_LOGD("InterfaceManager", "Manager state changed during an update; the update keeps the screen.");
+    } else if (!LvglUi::active()) {
+      InterfaceManager::show_default_page(); // No UI: the loading page stays, whatever the manager does.
     } else if (NSPM_ConfigManager::get_manager_online()) {
       // Manager became online again after being offline.
       InterfaceManager::_screensaver_blocked = false;
@@ -685,8 +755,9 @@ void InterfaceManager::_mqtt_message_handler(const mqtt::Message &message, void 
       ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
     }
   } else if (topic_string.compare(InterfaceManager::_screen_raw_commands) == 0) {
-    ESP_LOGD("InterfaceManager", "Writing raw Nextion command to display. Command: %s", data.c_str());
-    Nextion::send_raw_command(data.c_str(), 5000); // Try writing raw command data to the Nextion display.
+    // Raw commands drove NSPM's HMI pages, which this firmware no longer has (with LVGL as the UI they
+    // were already dropped). Sent to the legacy TFT they could only bring up a page nothing controls.
+    ESP_LOGW("InterfaceManager", "screen_raw_command is no longer supported; ignored.");
   }
 }
 
