@@ -212,6 +212,11 @@ every page and streams the pixels, and `FakeManager` says `is_us_panel` to match
 the receiver's framebuffer, turned upright; `nextion.tap_screen(x, y)` touches a point of the
 screen as a screenshot shows it. `tests/test_lvgl_terminal.py`, `tests/test_timers.py` and the
 screensaver card tests run only in this mode; their touch coordinates are for the US layout.
+The tests of behaviour both UIs share (`test_boot`, `test_touch`, `test_default_room`,
+`test_mqtt_reconnect`, `test_page_transitions`, `test_weather`) have a Nextion variant and an LVGL one
+side by side (`nextion_only` / `lvgl_only` in `tests/shared_behaviour.py`, which also holds the LVGL
+helpers they share): the LVGL variants read the same behaviour from the firmware's log, the screen's
+pixels and the commands a tap sends the manager.
 With `NSPM_QEMU_TERMINAL=nextion` the display is NSPM's Nextion TFT, the Nextion-page tests run
 and the LVGL ones skip (expected there, so they do not abort the session).
 Nextion support is going away, so only CI runs that leg regularly.
