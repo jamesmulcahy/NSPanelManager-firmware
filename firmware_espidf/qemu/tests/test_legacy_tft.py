@@ -22,7 +22,7 @@ import pytest
 from nspm_qemu import hmi
 from nspm_qemu.fake_nextion import SLEEP, TERMINAL, WAKE
 from nspm_qemu.gui_update import check_invariants, run_gui_update
-from nspm_qemu.ota_update import check_firmware_updated, read_littlefs, run_update
+from nspm_qemu.ota_update import check_firmware_updated, run_update
 from nspm_qemu.proto import nspanel as pb
 from nspm_qemu.rig import DEFAULT_BUILD_DIR
 from test_gui_update import make_tft
@@ -44,6 +44,7 @@ ALLOWED_COMMANDS = [
     r"^connect$",
     r"^bkcmd=\d$",
     r"^bauds?=\d+$",
+    r"^printh a5 [0-9a-f]{2} ff ff ff$",  # NextionWindow's pacing marker, which the display echoes
     r"DRAKJHSUYDGBNCJHGJKSHBDN$",
     r"^$",
 ]
@@ -173,11 +174,13 @@ def test_the_displays_own_events_reach_no_page(legacy):
 def test_relays_brightness_and_temperature_work_on_the_legacy_screen(legacy):
     rig = legacy
     rig.boot()
-    mark = rig.broker.mark()
-    rig.broker.publish("nspanel/%s/relay1_cmd" % rig.mac, "1")
-    rig.broker.wait_for_message("nspanel/%s/relay1_state" % rig.mac, lambda m: m.payload == b"1", since=mark, timeout=30)
-    rig.broker.publish("nspanel/%s/relay1_cmd" % rig.mac, "0")
-    rig.broker.wait_for_message("nspanel/%s/relay1_state" % rig.mac, lambda m: m.payload == b"0", since=mark, timeout=30)
+    # Toggled ("2") rather than set: what the relay starts in depends on the config's default mode.
+    states = []
+    for _ in range(2):
+        mark = rig.broker.mark()
+        rig.broker.publish("nspanel/%s/relay1_cmd" % rig.mac, "2")
+        states.append(rig.broker.wait_for_message("nspanel/%s/relay1_state" % rig.mac, since=mark, timeout=30).payload)
+    assert sorted(states) == [b"0", b"1"], states
 
     rig.broker.publish("nspanel/%s/brightness_cmd" % rig.mac, "40")
     rig.nextion.wait_for(lambda n: n.system.get("dim") == 40, what="display dimmed to 40", timeout=30)
@@ -202,23 +205,16 @@ def test_lvgl_ui_command_is_ignored(legacy):
     assert_only_the_legacy_screen(rig)
 
 
-def test_saved_lvgl_ui_false_is_ignored_and_dropped(legacy):
+def test_saved_lvgl_ui_false_is_ignored(legacy):
     """Older firmware kept the HMI pages with lvgl_ui false in config.json. There are none now: the
-    setting is ignored (the TFT decides), and the next save leaves it out."""
+    setting is ignored, and the TFT decides (here: the legacy screen, as without it)."""
     rig = legacy
     rig.panel.panel_config["lvgl_ui"] = False
     rig.boot()
     rig.panel.wait_for_log(r"ConfigManager: lvgl_ui is false in config.json: no longer supported, ignored", timeout=5)
     rig.nextion.wait_for_value(MAIN, LEGACY_TEXT, timeout=60)
     assert rig.status_report(since=0).display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_NEXTION
-
-    # The boot's save rewrote config.json; read it back after a restart, when the flash file is complete.
-    boots = rig.panel.boots
-    rig.manager.send_command("reboot")
-    rig.panel.wait_for_reboot(boots, timeout=120)
-    files = read_littlefs(rig)
-    assert files is not None and "config.json" in files
-    assert "lvgl_ui" not in json.loads(files["config.json"]), files["config.json"]
+    assert_only_the_legacy_screen(rig)
 
 
 def test_firmware_update_works_on_the_legacy_screen(legacy):

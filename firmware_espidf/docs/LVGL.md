@@ -67,7 +67,7 @@ On `nspanel/<MAC>/command`:
 
 | Command | Effect |
 |---|---|
-| `{"command": "lvgl_ui", "enable": false}` | No longer supported: logged and ignored (it kept the HMI pages, which are gone). A saved `lvgl_ui: false` in `config.json` is ignored too, and dropped at the next save |
+| `{"command": "lvgl_ui", "enable": false}` | No longer supported: logged and ignored (it kept the HMI pages, which are gone). A saved `lvgl_ui: false` in `config.json` is ignored too (and left out whenever the file is next written) |
 | `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported, see "The look") |
 | `{"command": "lvgl_theme", "theme": "grey"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `grey`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported). `light` is taken as `grey`: the white palette it named was too bright from above. A tile or menu item that is on takes the palette's accent, mixed into its card |
 | `{"command": "loop_watchdog", "enable": true}` | Turn the event-loop watchdog (`EventLoopWatchdog`) on or off: when the default event loop stops dispatching for 15 s it logs every task's backtrace. Off by default (it costs a task and its stack). Saved in `config.json` and applied at once, with no reboot; a repeat of the current state does nothing. Without `enable` it logs the current state. Not LVGL-specific, listed here with the other panel commands |

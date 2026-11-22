@@ -223,7 +223,7 @@ esp_err_t ConfigManager::load_config() {
   }
 
   // Older firmware's kill switch for the LVGL UI, which kept the HMI pages instead. There are none any
-  // more, so it would only blank the screen: read and ignored, and dropped at the next save.
+  // more, so it would only blank the screen: read and ignored (it is not written back once config.json is next saved).
   if (config_data.contains("lvgl_ui") && config_data["lvgl_ui"].is_boolean() && !config_data["lvgl_ui"].get<bool>()) {
     ESP_LOGW("ConfigManager", "lvgl_ui is false in config.json: no longer supported, ignored.");
   }
