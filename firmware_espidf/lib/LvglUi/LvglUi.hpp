@@ -14,7 +14,8 @@
  * Such a TFT has no Nextion pages, so on it every page is drawn by LVGL and streamed through
  * NextionTerminal. NSPM's page classes (lib/Pages) stay in charge of what is shown and of talking
  * to the manager; where they would drive the Nextion they hand a view's state to show() instead.
- * A page with no LVGL version yet shows PlaceholderView (Nextion::go_to_page() lands here).
+ * A page with no LVGL version yet shows PlaceholderView (show_placeholder()). Pages do not go through
+ * Nextion::go_to_page() in this mode: InterfaceManager::go_to_hmi_page() is a no-op while LVGL is active.
  *
  * The mode follows the TFT: init() turns LVGL on only when the display identifies as a terminal
  * TFT and did not send NSPM's startup flag, so reinstalling NSPM's TFT rolls a panel back, and

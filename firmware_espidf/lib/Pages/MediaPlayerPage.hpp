@@ -226,6 +226,8 @@ private:
   // their presses ignored.
   static bool _action_enabled(_action action, const NSPanelEntityState__MediaPlayer *media_player, bool controlling_source);
   static void _set_button_enabled(const char *button_name, bool enabled);
+  // Does what a touch on a media player button does, for both UIs. name is only for the log.
+  static void _perform(_action action, const char *name);
   static inline std::atomic<bool> _component_ids_resolved = false;
   // What the position bar shows: its value, -1 while hidden, or -2 when unknown because the page has just
   // opened. Updated from the MQTT task and from the position task.

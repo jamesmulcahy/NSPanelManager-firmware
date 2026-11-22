@@ -39,7 +39,7 @@ void HomePage::show() {
     RoomManager::request_room_names();
   }
 
-  Nextion::go_to_page(GUI_HOME_PAGE::page_name, 250);
+  InterfaceManager::go_to_hmi_page(GUI_HOME_PAGE::page_name, 250);
 
   std::shared_ptr<NSPanelConfig> config;
   if (NSPM_ConfigManager::get_config(&config) == ESP_OK) {

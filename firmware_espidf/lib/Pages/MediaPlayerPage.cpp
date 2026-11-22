@@ -315,70 +315,72 @@ void MediaPlayerPage::handle_touch(uint16_t component_id, bool pressed) {
   }
 
   for (const _component_t &component : MediaPlayerPage::_components) {
-    if (component.id != component_id) {
-      continue;
+    if (component.id == component_id) {
+      MediaPlayerPage::_perform(component.action, component.name);
+      return;
     }
+  }
+}
 
-    // The button is greyed out, but the Nextion still reports presses.
-    std::shared_ptr<NSPanelEntityState> state = EntityPage::get_current_state();
-    if (state != nullptr && state->entity_case == NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) {
-      bool controlling_source = MediaPlayerPage::_controlling_source && state->media_player->has_source_volume;
-      if (!MediaPlayerPage::_action_enabled(component.action, state->media_player, controlling_source)) {
-        ESP_LOGD("MediaPlayerPage", "Ignoring a press on %s, which the media player can't do now.", component.name);
-        return;
-      }
+void MediaPlayerPage::_perform(_action action, const char *name) {
+  // The button is greyed out, but the Nextion still reports presses.
+  std::shared_ptr<NSPanelEntityState> state = EntityPage::get_current_state();
+  if (state != nullptr && state->entity_case == NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) {
+    bool controlling_source = MediaPlayerPage::_controlling_source && state->media_player->has_source_volume;
+    if (!MediaPlayerPage::_action_enabled(action, state->media_player, controlling_source)) {
+      ESP_LOGD("MediaPlayerPage", "Ignoring a press on %s, which the media player can't do now.", name);
+      return;
     }
+  }
 
-    switch (component.action) {
-    case _action::BACK:
-      ESP_LOGD("MediaPlayerPage", "Received touch event to go back.");
-      EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
-      break;
+  switch (action) {
+  case _action::BACK:
+    ESP_LOGD("MediaPlayerPage", "Received touch event to go back.");
+    EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
+    break;
 
-    case _action::PLAY_PAUSE:
-      MediaPlayerPage::_play_pause();
-      break;
+  case _action::PLAY_PAUSE:
+    MediaPlayerPage::_play_pause();
+    break;
 
-    case _action::PREVIOUS_TRACK:
-      MediaPlayerPage::_previous_track();
-      break;
+  case _action::PREVIOUS_TRACK:
+    MediaPlayerPage::_previous_track();
+    break;
 
-    case _action::NEXT_TRACK:
-      MediaPlayerPage::_next_track();
-      break;
+  case _action::NEXT_TRACK:
+    MediaPlayerPage::_next_track();
+    break;
 
-    case _action::MUTE:
-      MediaPlayerPage::_toggle_mute();
-      break;
+  case _action::MUTE:
+    MediaPlayerPage::_toggle_mute();
+    break;
 
-    case _action::SOURCE_SWITCH:
-      MediaPlayerPage::_toggle_source();
-      break;
+  case _action::SOURCE_SWITCH:
+    MediaPlayerPage::_toggle_source();
+    break;
 
-    case _action::VOLUME_UP:
-      MediaPlayerPage::_step_volume(1);
-      break;
+  case _action::VOLUME_UP:
+    MediaPlayerPage::_step_volume(1);
+    break;
 
-    case _action::VOLUME_DOWN:
-      MediaPlayerPage::_step_volume(-1);
-      break;
+  case _action::VOLUME_DOWN:
+    MediaPlayerPage::_step_volume(-1);
+    break;
 
-    case _action::ALBUM_ART: {
-      if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) [[unlikely]] {
-        break;
-      }
-      // The source list follows the source switch, like the volume buttons.
-      bool source_player = MediaPlayerPage::_controlling_source && state->media_player->has_source_volume;
-      const NSPanelEntityState__MediaPlayer__SourceSelection *sources = MediaPlayerPage::_selectable_sources(state->media_player, source_player);
-      if (sources == NULL) {
-        ESP_LOGD("MediaPlayerPage", "No %s sources to select from.", source_player ? "source player" : "player");
-        break;
-      }
-      MediaSourcePage::show(EntityPage::get_current_state_topic(), source_player, sources);
+  case _action::ALBUM_ART: {
+    if (state == nullptr || state->entity_case != NSPANEL_ENTITY_STATE__ENTITY_MEDIA_PLAYER) [[unlikely]] {
       break;
     }
+    // The source list follows the source switch, like the volume buttons.
+    bool source_player = MediaPlayerPage::_controlling_source && state->media_player->has_source_volume;
+    const NSPanelEntityState__MediaPlayer__SourceSelection *sources = MediaPlayerPage::_selectable_sources(state->media_player, source_player);
+    if (sources == NULL) {
+      ESP_LOGD("MediaPlayerPage", "No %s sources to select from.", source_player ? "source player" : "player");
+      break;
     }
-    return;
+    MediaSourcePage::show(EntityPage::get_current_state_topic(), source_player, sources);
+    break;
+  }
   }
 }
 
@@ -687,11 +689,6 @@ void MediaPlayerPage::_lvgl_action(int action) {
   case MediaPlayerView::Action::SOURCE_SWITCH: wanted = _action::SOURCE_SWITCH; break;
   default: return;
   }
-  // The same path as a release of the Nextion component (enabled check included).
-  for (const _component_t &component : MediaPlayerPage::_components) {
-    if (component.action == wanted) {
-      MediaPlayerPage::handle_touch(component.id, false);
-      return;
-    }
-  }
+  // The same handler a release of the Nextion component reaches (enabled check included).
+  MediaPlayerPage::_perform(wanted, "an LVGL button");
 }

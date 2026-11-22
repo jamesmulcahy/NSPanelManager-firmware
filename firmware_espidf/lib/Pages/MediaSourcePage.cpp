@@ -69,13 +69,13 @@ void MediaSourcePage::_update_display() {
   }
   switch (MediaSourcePage::_page_type) {
   case 4:
-    Nextion::go_to_page(GUI_ITEMS4_PAGE::page_name, 1000);
+    InterfaceManager::go_to_hmi_page(GUI_ITEMS4_PAGE::page_name, 1000);
     break;
   case 8:
-    Nextion::go_to_page(GUI_ITEMS8_PAGE::page_name, 1000);
+    InterfaceManager::go_to_hmi_page(GUI_ITEMS8_PAGE::page_name, 1000);
     break;
   case 12:
-    Nextion::go_to_page(GUI_ITEMS12_PAGE::page_name, 1000);
+    InterfaceManager::go_to_hmi_page(GUI_ITEMS12_PAGE::page_name, 1000);
     break;
   default:
     return;

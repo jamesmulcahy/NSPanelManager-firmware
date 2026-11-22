@@ -117,7 +117,7 @@ void EntitiesPage::_update_display(const std::shared_ptr<NSPanelRoomEntitiesPage
   switch (page->page_type) {
   case 4: {
     if (EntitiesPage::_currently_showing_page_type != 4) {
-      Nextion::go_to_page(GUI_ITEMS4_PAGE::page_name, 1000);
+      InterfaceManager::go_to_hmi_page(GUI_ITEMS4_PAGE::page_name, 1000);
       EntitiesPage::_currently_showing_page_type = 4;
       EntitiesPage::_currently_showing_header_text.set("");
     }
@@ -126,7 +126,7 @@ void EntitiesPage::_update_display(const std::shared_ptr<NSPanelRoomEntitiesPage
 
   case 8: {
     if (EntitiesPage::_currently_showing_page_type != 8) {
-      Nextion::go_to_page(GUI_ITEMS8_PAGE::page_name, 1000);
+      InterfaceManager::go_to_hmi_page(GUI_ITEMS8_PAGE::page_name, 1000);
       EntitiesPage::_currently_showing_page_type = 8;
       EntitiesPage::_currently_showing_header_text.set("");
     }
@@ -135,7 +135,7 @@ void EntitiesPage::_update_display(const std::shared_ptr<NSPanelRoomEntitiesPage
 
   case 12: {
     if (EntitiesPage::_currently_showing_page_type != 12) {
-      Nextion::go_to_page(GUI_ITEMS12_PAGE::page_name, 1000);
+      InterfaceManager::go_to_hmi_page(GUI_ITEMS12_PAGE::page_name, 1000);
       EntitiesPage::_currently_showing_page_type = 12;
       EntitiesPage::_currently_showing_header_text.set("");
     }
