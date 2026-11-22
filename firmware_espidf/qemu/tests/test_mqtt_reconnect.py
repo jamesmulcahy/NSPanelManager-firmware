@@ -4,15 +4,13 @@ import re
 import time
 
 from nspm_qemu import gui
-import pytest
-from nspm_qemu.fake_nextion import TERMINAL
-
-pytestmark = pytest.mark.skipif(TERMINAL is not None, reason="NSPM's TFT only (NSPM_QEMU_TERMINAL=nextion)")
+from shared_behaviour import awake, lvgl_only, lvgl_us_only, nextion_only, tap_ceiling, wake_to_home  # noqa: F401 (awake: a fixture)
 
 # NSPM_ConfigManager::_task_send_register_request re-sends until accepted, this often.
 REGISTER_REQUEST_PERIOD = 5
 
 
+@nextion_only
 def test_resubscribes_and_reregisters_after_connection_drop(home):
     client = home.panel.client_id
     before = set(home.broker.subscriptions(client))
@@ -40,7 +38,8 @@ def test_resubscribes_and_reregisters_after_connection_drop(home):
     home.manager.wait_for_command(lambda c: c.WhichOneof("CommandData") == "first_page_turn_on", since=mark)
 
 
-def test_last_will_marks_panel_offline(home):
+def test_last_will_marks_panel_offline(awake):
+    home = awake
     mark = home.broker.mark()
 
     home.broker.drop_client(home.panel.client_id)
@@ -50,7 +49,7 @@ def test_last_will_marks_panel_offline(home):
     assert will.retain  # MqttManager sets last_will.retain
 
 
-def test_reregisters_after_rename_and_reconnect(home):
+def test_reregisters_after_rename_and_reconnect(awake):
     """A panel renamed in the manager must still complete registration after a reconnect.
 
     The manager sends register_accept on nspanel/<friendly_name>/command and on
@@ -59,6 +58,7 @@ def test_reregisters_after_rename_and_reconnect(home):
     name's topic. It must take the accept from the MAC topic, which a rename can't
     change.
     """
+    home = awake
     client = home.panel.client_id
     home.manager.config.name = "Renamed Panel"
     home.manager.publish_config()
@@ -77,3 +77,31 @@ def test_reregisters_after_rename_and_reconnect(home):
     home.panel.wait_for_log(r"Subscribed to '%s'" % re.escape(home.manager.config_topic()), since=log_mark, timeout=30)
     time.sleep(2 * REGISTER_REQUEST_PERIOD + 1)  # long enough for two more, if it were still sending
     assert home.manager.registration_mark() - settled <= 1, "panel kept sending register_request after being accepted"
+
+
+@lvgl_us_only
+@lvgl_only
+def test_resubscribes_and_reregisters_after_connection_drop_on_lvgl(awake):
+    home = awake
+    client = home.panel.client_id
+    before = set(home.broker.subscriptions(client))
+    assert home.manager.config_topic() in before
+
+    reg_mark = home.manager.registration_mark()
+    events = home.broker.event_mark()
+    log_mark = home.panel.mark()
+    assert home.broker.drop_client(client) == 1
+
+    home.broker.wait_for_event("connect", client, since=events, timeout=120)
+    home.manager.wait_for_registration(since=reg_mark, timeout=60)
+    home.panel.wait_until(lambda: before <= set(home.broker.subscriptions(client)), timeout=60,
+                          what="all subscriptions restored (missing: %s)" % (before - set(home.broker.subscriptions(client))))
+
+    # Losing the broker means losing the manager, so the panel shows "Lost connection to manager."
+    # and, once the manager is back, its screensaver: the page the firmware logs as shown again.
+    home.panel.wait_for_log(r"ScreensaverPage: Showing screensaver page", since=log_mark, timeout=60)
+    assert not home.nextion.terminal.faults
+
+    # Still usable afterwards: the display is up again, a tap wakes it, and the next one reaches the manager.
+    wake_to_home(home)
+    assert tap_ceiling(home).selected_room == 1
