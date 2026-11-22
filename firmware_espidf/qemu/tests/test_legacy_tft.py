@@ -14,6 +14,7 @@ these run in CI's Nextion leg, like the other tests of NSPM's TFT (NSPM_QEMU_TER
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -174,12 +175,15 @@ def test_the_displays_own_events_reach_no_page(legacy):
 def test_relays_brightness_and_temperature_work_on_the_legacy_screen(legacy):
     rig = legacy
     rig.boot()
-    # Toggled ("2") rather than set: what the relay starts in depends on the config's default mode.
+    # Toggled ("2") rather than set: the config's default relay mode may have switched it at boot, and
+    # ButtonManager ignores a change within 250 ms of the last one, so give that time to pass first.
+    time.sleep(3)
     states = []
     for _ in range(2):
         mark = rig.broker.mark()
         rig.broker.publish("nspanel/%s/relay1_cmd" % rig.mac, "2")
         states.append(rig.broker.wait_for_message("nspanel/%s/relay1_state" % rig.mac, since=mark, timeout=30).payload)
+        time.sleep(1)
     assert sorted(states) == [b"0", b"1"], states
 
     rig.broker.publish("nspanel/%s/brightness_cmd" % rig.mac, "40")
