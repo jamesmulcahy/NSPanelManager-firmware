@@ -158,7 +158,7 @@ def test_the_displays_own_events_reach_no_page(legacy):
     rig.nextion.send_touch_event(3, False, page="bootscreen")
     rig.nextion.send_string("hello")
     rig.broker.publish("nspanel/%s/screen_raw_command" % rig.mac, "page home")
-    rig.panel.wait_for_log(r"screen_raw_command is no longer supported", since=mark, timeout=30)
+    # Nothing subscribes to it any more (it used to log "no longer supported"); the checks below show it reached the display as nothing.
     # The screen on and off over MQTT: off has no screensaver to go to, on brings the boot screen up again.
     rig.broker.publish("nspanel/%s/screen_cmd" % rig.mac, "0")
     rig.panel.wait_for_log(r"InterfaceManager: No UI; dropping page request", since=mark, timeout=30)
