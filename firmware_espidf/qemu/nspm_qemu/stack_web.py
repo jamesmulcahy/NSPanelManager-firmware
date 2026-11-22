@@ -14,6 +14,7 @@ own token and sends it as both:
   POST   /rest/nspanel/<id>/accept   {"room_id": 1}
   DELETE /rest/nspanel/<id>
   GET    /rest/rooms
+  POST   /rest/settings        {"settings": {"default_nspanel_type": "us"}}
 """
 
 import json
@@ -179,6 +180,10 @@ class StackWeb:
 
     def delete_entity(self, entity_id: int) -> None:
         self._request("DELETE", "/rest/entities/%d" % entity_id)
+
+    def set_setting(self, name: str, value: str) -> None:
+        """Change a manager setting, as the settings page does. MQTTManager reloads its settings."""
+        self._request("POST", "/rest/settings", {"settings": {name: value}})
 
     def restart_manager(self) -> None:
         self._request("GET", "/api/restart_mqtt_manager")

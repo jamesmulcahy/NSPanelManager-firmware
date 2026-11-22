@@ -8,9 +8,9 @@ Unlike the other tests, nothing here scripts the manager's side. Each panel join
 new panel, is accepted through the web UI's API, and every assertion is on what the real
 MQTTManager sent, so a protocol change on either side shows up.
 
-The panel runs the LVGL UI on the terminal TFT (NSPM_QEMU_TERMINAL=us, the default). A new panel is a
-US one unless the stack's default panel type says otherwise, so the manager's config asks for the US
-layout and taps land where test_lvgl_terminal.py's do.
+The panel runs the LVGL UI on the terminal TFT (NSPM_QEMU_TERMINAL=us, the default). The stack's
+default panel type is set to US before each test, so the manager's config asks for the US layout
+and taps land where test_lvgl_terminal.py's do.
 """
 
 import uuid
@@ -29,6 +29,16 @@ pytestmark = [
 ]
 
 Cmd = pb.NSPanelMQTTManagerCommand
+
+
+@pytest.fixture(autouse=True)
+def us_panels():
+    """New panels are US ones, as the terminal receiver is: the manager's default panel type is EU,
+    and its config would then make the panel lay out for a landscape screen the receiver does not have.
+    Set before the panel registers; it takes the setting when the manager first sees it."""
+    stack = Stack.from_env()
+    if stack is not None:
+        StackWeb(stack.web_url).set_setting("default_nspanel_type", "us")
 
 
 @pytest.fixture
