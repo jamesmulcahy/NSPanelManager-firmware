@@ -53,11 +53,6 @@ private:
   static void _handle_roommanager_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
 
   /**
-   * Handle events from Nextion, such as touch events:
-   */
-  static void _handle_nextion_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
-
-  /**
    * Handle event for a new config from MQTTManager:
    */
   static void _handle_config_update(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
@@ -66,13 +61,13 @@ private:
    * Handle "Master ceiling lights" button events
    * @param pressed: Is this a touch down or touch released event
    */
-  static void _handle_nextion_event_master_ceiling_lights_button(bool pressed);
+  static void _handle_master_ceiling_lights_button(bool pressed);
 
   /**
    * Handle "Master table lights" button events
    * @param pressed: Is this a touch down or touch released event
    */
-  static void _handle_nextion_event_master_table_lights_button(bool pressed);
+  static void _handle_master_table_lights_button(bool pressed);
 
   /**
    * Handle touch event on "Ceiling master button"
@@ -95,16 +90,6 @@ private:
   static void _handle_color_temperature_slider_event();
 
   /**
-   * Update the cached value for the "Brightness"-slider
-   */
-  static void _update_brightness_slider_cache();
-
-  /**
-   * Update the cached value for the "Color temperature"-slider
-   */
-  static void _update_color_temperature_slider_cache();
-
-  /**
    * Function that will be called once the "Special mode" (ie. hold on table or ceiling lights buttons) timer triggers
    */
   static void _special_mode_timer_callback(void *arg);
@@ -121,7 +106,7 @@ private:
 
   /**
    * A HomeView action (HomeView::Action as int, keeping LVGL out of this header) on LvglUi's
-   * task: what the Nextion touch handler does for the matching component.
+   * task: what a touch on the matching control does.
    */
   static void _lvgl_action(int action, int32_t value);
 
@@ -136,12 +121,6 @@ private:
 
   // The cached value for the "Color temperature"-slider
   static inline std::atomic<int32_t> _cache_color_temperature_slider;
-
-  // The cached value for the "Ceiling lights" brightness label
-  static inline std::atomic<int32_t> _cache_ceiling_light_brightness;
-
-  // The cached value for the "Table lights" brightness label
-  static inline std::atomic<int32_t> _cache_table_light_brightness;
 
   // Should we ignore the next release of the ceiling button? This is used to
   // ignore the touch up that happens after special mode is activated

@@ -51,7 +51,6 @@ void InterfaceManager::init() {
   InterfaceManager::_screensaver_brightness_state_topic = base_topic;
   InterfaceManager::_screensaver_mode_command_topic = base_topic;
   InterfaceManager::_screensaver_mode_state_topic = base_topic;
-  InterfaceManager::_screen_raw_commands = base_topic;
 
   InterfaceManager::_screen_on_off_command_topic.append("/screen_cmd");
   InterfaceManager::_screen_on_off_state_topic.append("/screen_state");
@@ -61,7 +60,6 @@ void InterfaceManager::init() {
   InterfaceManager::_screensaver_brightness_state_topic.append("/brightness_screensaver_state");
   InterfaceManager::_screensaver_mode_command_topic.append("/screensaver_mode_cmd");
   InterfaceManager::_screensaver_mode_state_topic.append("/screensaver_mode_state");
-  InterfaceManager::_screen_raw_commands.append("/screen_raw_command");
 
   InterfaceManager::_subscribe_to_relevant_mqtt_topics();
 
@@ -754,17 +752,13 @@ void InterfaceManager::_mqtt_message_handler(const mqtt::Message &message, void 
     } else {
       ESP_LOGE("InterfaceManager", "Failed to get mutable config while trying to process config update data from MQTT topic %s.", topic_string.c_str());
     }
-  } else if (topic_string.compare(InterfaceManager::_screen_raw_commands) == 0) {
-    // Raw commands drove NSPM's HMI pages, which this firmware no longer has (with LVGL as the UI they
-    // were already dropped). Sent to the legacy TFT they could only bring up a page nothing controls.
-    ESP_LOGW("InterfaceManager", "screen_raw_command is no longer supported; ignored.");
   }
 }
 
 void InterfaceManager::_subscribe_to_relevant_mqtt_topics() {
   // All commands: each is delivered once, in order, and never replayed. One hold per topic, replaced if init runs again.
   const std::string *topics[] = {&InterfaceManager::_screen_on_off_command_topic, &InterfaceManager::_screen_brightness_command_topic, &InterfaceManager::_screensaver_brightness_command_topic,
-                                 &InterfaceManager::_screensaver_mode_command_topic, &InterfaceManager::_screen_raw_commands};
+                                 &InterfaceManager::_screensaver_mode_command_topic};
   static_assert(std::size(topics) == std::size(InterfaceManager::_command_subscriptions));
   for (size_t i = 0; i < std::size(topics); i++) {
     InterfaceManager::_command_subscriptions[i] = mqtt::subscribe(*topics[i], mqtt::Kind::COMMAND, &InterfaceManager::_mqtt_message_handler, NULL, PanelMetrics::HANDLER_INTERFACE_MANAGER);

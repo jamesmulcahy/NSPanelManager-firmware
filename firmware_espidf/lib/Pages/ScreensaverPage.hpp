@@ -76,19 +76,14 @@ private:
   static void _update_displayed_temperature();
 
   /**
-   * Update the display with new weather forecast and current data
-   */
-  static void _task_update_displayed_weather_data(void *param);
-
-  /**
    * Set the relevant screensaver brightness
    */
   static void _update_display_brightness();
 
   /**
-   * Go to the correct Nextion page and show/hide the background depending on user settings.
+   * Load the screensaver mode from the config, set the brightness and draw the screensaver.
    */
-  static void _go_to_nextion_page();
+  static void _load_screensaver_mode();
 
   /**
    * With LVGL as the UI (LvglUi), and the screensaver shown: draw it, from everything this page
