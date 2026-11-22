@@ -134,6 +134,9 @@ def test_survives_a_manager_restart(ceiling_light, home):
     home.panel.wait_for_log(r"Manager is offline!", since=log_mark, timeout=60)
     home.panel.wait_for_log(r"Manager is online!", since=log_mark, timeout=120)
 
+    # Coming back online shows the screensaver again; wake it to the home page as a user would.
+    home.panel.wait_for_log(r"ScreensaverPage: Showing screensaver", since=log_mark, timeout=60)
+    wake_to_home(home)
     mark = home.manager.command_mark()
     press_ceiling_tile(home)
     home.manager.wait_for_command(lambda c: c.WhichOneof("CommandData") == "first_page_turn_on", since=mark)
