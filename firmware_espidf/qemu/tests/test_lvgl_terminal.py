@@ -321,8 +321,8 @@ def test_screenshot_rejects_an_unknown_format(booted):
 
 # On the US screen (test/host/lvgl_sim: us-17-menu, us-19-look).
 US_MENU_LOOK = (238, 267)
-US_LOOKS = {"ocean": (82, 127), "dusk": (238, 127), "aurora": (82, 267), "peaks": (238, 267),
-            "dark": (82, 407), "grey": (238, 407)}
+US_LOOKS = {"ocean": (82, 107), "dusk": (238, 107), "aurora": (82, 213), "peaks": (238, 213),
+            "vesuvius": (82, 318), "parthenon": (238, 318), "dark": (82, 424), "grey": (238, 424)}
 
 
 def swipe_down(rig) -> None:

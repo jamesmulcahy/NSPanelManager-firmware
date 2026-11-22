@@ -13,9 +13,9 @@
 // runs of one colour per row, merged down the screen. Nothing is stored in flash.
 // Portrait (US) screens only; on a landscape screen nothing is drawn.
 namespace Background {
-enum class Preset : uint8_t { NONE, OCEAN, DUSK, AURORA, PEAKS };
+enum class Preset : uint8_t { NONE, OCEAN, DUSK, AURORA, PEAKS, VESUVIUS, PARTHENON };
 
-// "none", "ocean", "dusk", "aurora", "peaks"; unknown names are NONE.
+// "none", "ocean", "dusk", "aurora", "peaks", "vesuvius", "parthenon"; unknown names are NONE.
 Preset from_name(const char *name);
 const char *name(Preset preset);
 

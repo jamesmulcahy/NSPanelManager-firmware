@@ -179,7 +179,7 @@ static void run(bool landscape, const char *out) {
   // Every page, plain; on a portrait screen over each background preset, on a landscape one over one.
   std::vector<Background::Preset> presets = {Background::Preset::NONE, Background::Preset::OCEAN};
   if (!landscape) {
-    presets.insert(presets.end(), {Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS});
+    presets.insert(presets.end(), {Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS, Background::Preset::VESUVIUS, Background::Preset::PARTHENON});
   }
   for (Background::Preset preset : presets) {
     Background::set(preset, theme);

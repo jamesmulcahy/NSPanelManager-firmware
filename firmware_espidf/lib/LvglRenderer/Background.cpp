@@ -153,6 +153,114 @@ void peaks(int y, uint16_t *row) {
   }
 }
 
+
+Rgb mix(Rgb a, Rgb b, float t) {
+  return lerp(a, b, t);
+}
+
+// A bay at sunset: the sun low on the left, Vesuvius's twin peaks dark against the glow, the sea
+// below with the sun's reflection, and a marble column at each edge.
+void vesuvius(int y, uint16_t *row) {
+  constexpr int horizon = 355;
+  static const Stop sky[] = {{0, {27, 23, 48}}, {0.45f, {92, 46, 82}}, {0.72f, {217, 112, 74}}, {1, {242, 179, 94}}};
+  static const Stop sea[] = {{0, {122, 58, 74}}, {1, {27, 23, 48}}};
+  static const float volcano[][2] = {{0, 355}, {70, 331}, {128, 288}, {150, 259}, {173, 273}, {192, 245}, {208, 273}, {269, 321}, {320, 341}};
+  const Rgb marble = {234, 219, 196};
+  Rgb base;
+  if (y < horizon) {
+    base = ramp(sky, 4, (float)y / horizon);
+    for (int x = 0; x < W; x++) {
+      Rgb c = base;
+      int d2 = (x - 62) * (x - 62) + (y - 332) * (y - 332);
+      if (d2 < 30 * 30) {
+        c = mix(base, {255, 217, 138}, 0.9f);
+      } else if (d2 < 46 * 46) {
+        c = mix(base, {255, 217, 138}, 0.15f);
+      }
+      if (y >= poly(volcano, 9, x)) {
+        c = {42, 26, 51};
+      }
+      row[x] = to565(c);
+    }
+  } else {
+    base = ramp(sea, 2, (float)(y - horizon) / (H - horizon));
+    std::fill(row, row + W, to565(base));
+    // The sun's reflection: two short glints.
+    for (int x = 0; x < W; x++) {
+      if (((y == 359 || y == 360) && x >= 40 && x <= 104) || ((y == 367 || y == 368) && x >= 48 && x <= 92)) {
+        row[x] = to565(mix(base, {255, 217, 138}, 0.5f));
+      }
+    }
+  }
+  // The columns: shaft 16 px wide from y 48, capital 24 px wide on it, both the marble at 16-22%.
+  for (int left : {11, 293}) {
+    if (y >= 48) {
+      for (int x = left; x < left + 16; x++) {
+        row[x] = to565(mix(base, marble, 0.16f));
+      }
+    } else if (y >= 40) {
+      for (int x = left - 4; x < left + 20; x++) {
+        row[x] = to565(mix(base, marble, 0.22f));
+      }
+    }
+  }
+}
+
+// The floodlit Parthenon seen from its steps: its gold front across the screen under a starry navy
+// sky and a pale moon, four steps down to a dark forecourt.
+void parthenon(int y, uint16_t *row) {
+  constexpr float baseY = 384, pw = 294, cx = 160, x0 = cx - pw / 2;
+  constexpr int columns = 6;
+  constexpr float colW = pw / columns, colH = pw * 0.2f, top = baseY - colH - 10, ped = top - 5, apex = ped - pw * 0.07f;
+  static const Stop sky[] = {{0, {5, 10, 24}}, {1, {28, 40, 80}}};
+  static const Rgb steps[] = {{58, 58, 82}, {46, 46, 70}, {36, 36, 58}, {26, 26, 46}};
+  const Rgb gold = {242, 200, 103};
+  Rgb bg = ramp(sky, 2, (float)y / H);
+  std::fill(row, row + W, to565(bg));
+  // 34 stars, in the top 55%, from a small LCG.
+  uint32_t seed = 11;
+  for (int i = 0; i < 34; i++) {
+    seed = (seed * 1103515245u + 12345u) & 0x7FFFFFFF;
+    if ((int)((seed >> 9) % (H * 55 / 100)) == y) {
+      row[seed % W] = to565(mix(bg, {255, 255, 255}, 0.6f));
+    }
+  }
+  // The moon, with two faint rings of glow.
+  for (int x = 0; x < W; x++) {
+    int d2 = (x - 256) * (x - 256) + (y - 125) * (y - 125);
+    if (d2 < 34 * 34) {
+      row[x] = to565(mix(bg, {244, 235, 210}, 0.9f));
+    } else if (d2 < 48 * 48) {
+      row[x] = to565(mix(bg, {244, 235, 210}, 0.14f));
+    } else if (d2 < 62 * 62) {
+      row[x] = to565(mix(bg, {244, 235, 210}, 0.07f));
+    }
+  }
+  const uint16_t temple = to565(mix(bg, gold, 0.55f));
+  if (y >= apex && y < ped) { // The pediment: a triangle.
+    float half = (pw / 2 + 3) * (y - apex) / (ped - apex);
+    for (int x = (int)(cx - half); x <= (int)(cx + half); x++) {
+      row[x] = temple;
+    }
+  } else if (y >= ped && y < top) { // The entablature.
+    std::fill(row + (int)(x0 - 3), row + (int)(x0 + pw + 3), temple);
+  } else if (y >= top && y < baseY - 10) { // The columns.
+    for (int i = 0; i < columns; i++) {
+      std::fill(row + (int)(x0 + colW * i + colW * 0.2f), row + (int)(x0 + colW * i + colW * 0.8f), temple);
+    }
+  } else if (y >= baseY - 10 && y < baseY) { // Three thin courses of the platform.
+    int grow = y < baseY - 6.5f ? 5 : (y < baseY - 3 ? 8 : 11);
+    std::fill(row + (int)(x0 - grow), row + (int)(x0 + pw + grow), temple);
+  } else if (y >= baseY && y < baseY + 77) { // Four steps, each a little wider and darker.
+    int i = (y - (int)baseY) / 19;
+    std::fill(row + std::max(0, 6 - i * 3), row + std::min(W, 314 + i * 3), to565(steps[i]));
+    std::fill(row, row + std::max(0, 6 - i * 3), to565(bg));
+    std::fill(row + std::min(W, 314 + i * 3), row + W, to565(bg));
+  } else if (y >= baseY + 77) {
+    std::fill(row, row + W, to565({10, 15, 30}));
+  }
+}
+
 struct Rect {
   uint16_t x, y, w, h;
   uint16_t color;
@@ -172,6 +280,8 @@ const struct {
     {Background::Preset::DUSK, "dusk", dusk, 217, &Theme::DUSK},
     {Background::Preset::AURORA, "aurora", aurora, 230, &Theme::AURORA},
     {Background::Preset::PEAKS, "peaks", peaks, 179, &Theme::PEAKS},
+    {Background::Preset::VESUVIUS, "vesuvius", vesuvius, 217, &Theme::VESUVIUS},
+    {Background::Preset::PARTHENON, "parthenon", parthenon, 200, &Theme::PARTHENON},
 };
 
 Background::Preset current_preset = Background::Preset::NONE;

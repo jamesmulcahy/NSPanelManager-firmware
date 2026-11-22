@@ -649,8 +649,8 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
       }
     } else if (command_string.compare("lvgl_theme") == 0) {
       // {"command": "lvgl_theme", "theme": "grey"}: the colours with LVGL as the UI: "auto" (the
-      // background preset's own, dark without one), "dark", "grey" ("light" too), "ocean", "dusk", "aurora" or
-      // "peaks". Saved, applied at once and reported (LvglLook); a repeat does nothing.
+      // background preset's own, dark without one), "dark", "grey" ("light" too), "ocean", "dusk", "aurora",
+      // "peaks", "vesuvius" or "parthenon". Saved, applied at once and reported (LvglLook); a repeat does nothing.
       if (json.contains("theme") && json["theme"].is_string()) {
         LvglLook::command_theme(json["theme"].get<std::string>());
       }
