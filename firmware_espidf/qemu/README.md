@@ -297,6 +297,12 @@ then checks that:
 - I3: the update ends (reboot) instead of hanging;
 - I4: every chunk is 4096 bytes except the last, and nothing is sent past the end.
 
+Each case names the TFT the display starts with and the one the update installs: `hmi-to-hmi` and
+`hmi-to-terminal` (the migration) need `NSPM_QEMU_TERMINAL=nextion`; `terminal-to-terminal` runs on
+the default terminal display. `rig.set_tft(data, installs="terminal")` makes a completed upload of
+that image turn the display into the terminal one at its next power cycle (`FakeNextion.installs`),
+and `make_rig(display="hmi"|"terminal")` picks the TFT a panel's display starts with.
+
 A failure says where the image goes wrong and where the wrong bytes came from in the file
 (for example "chunk 14 of 49 holds the file's bytes from offset 53248", which is what the #45
 bug looked like).

@@ -83,6 +83,14 @@ jobs:
             tests: "test_gui_update_faults"
             marks: "not xfail"
             timeout: 45
+          # The same updates on the terminal TFT (terminal-to-terminal): the happy path and every fault.
+          # The migration from NSPM's TFT to the terminal one (hmi-to-terminal) runs in the two legs
+          # above, whose display starts on NSPM's TFT.
+          - display: gui-updates-terminal
+            terminal: us
+            tests: "test_gui_update"
+            marks: "not xfail"
+            timeout: 60
           # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
           # receiver. Only the LVGL tests (the UI, and the timers); the rest drive NSPM's Nextion pages.
           - display: terminal-us

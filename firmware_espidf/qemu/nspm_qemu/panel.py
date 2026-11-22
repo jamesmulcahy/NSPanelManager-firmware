@@ -144,15 +144,26 @@ class PanelCrashed(AssertionError):
 
 
 class QemuPanel:
-    def __init__(self, workdir: str, build_dir: str, project_dir: str, mac: str, panel_config: Optional[dict]):
+    def __init__(self, workdir: str, build_dir: str, project_dir: str, mac: str, panel_config: Optional[dict],
+                 display: Optional[str] = None):
         self.workdir = workdir
         self.build_dir = build_dir
         self.project_dir = project_dir
         self.mac = mac
         self.panel_config = panel_config
-        if TERMINAL:
-            self.nextion = FakeNextion(terminal=TERMINAL)
-            if TERMINAL != "us" and self.panel_config is not None:
+        # The TFT the display starts with: NSPM_QEMU_TERMINAL's, unless a test asks for "hmi" (NSPM's
+        # own TFT) or "terminal" (the US terminal TFT, or the one NSPM_QEMU_TERMINAL names).
+        if display not in (None, "hmi", "terminal"):
+            raise ValueError("display must be 'hmi' or 'terminal', not %r" % display)
+        if display == "hmi":
+            self.terminal_kind: Optional[str] = None
+        elif display == "terminal":
+            self.terminal_kind = TERMINAL or "us"
+        else:
+            self.terminal_kind = TERMINAL
+        if self.terminal_kind:
+            self.nextion = FakeNextion(terminal=self.terminal_kind)
+            if self.terminal_kind != "us" and self.panel_config is not None:
                 # LvglUi picks the receiver from config.json: the EU one unless lvgl_us_layout.
                 self.panel_config = dict(self.panel_config, lvgl_us_layout=False)
         else:

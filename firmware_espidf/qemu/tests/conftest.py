@@ -98,7 +98,7 @@ def make_rig(request):
             pytest.skip("no dev stack; set NSPM_STACK_MQTT=host:port")
     rigs: List[Rig] = []
 
-    def make() -> Rig:
+    def make(display=None) -> Rig:
         workdir = os.path.join(LOG_ROOT, name, str(len(rigs))) if rigs else os.path.join(LOG_ROOT, name)
         kwargs = {}
         if stack is not None:
@@ -106,6 +106,9 @@ def make_rig(request):
             suffix = [random.randrange(256) for _ in range(3)]
             kwargs["mac"] = "C0:49:EF:" + ":".join("%02X" % b for b in suffix)
             kwargs["hostname"] = "qemu-" + "".join("%02x" % b for b in suffix)
+        if display is not None:
+            # "hmi" or "terminal": the TFT the display starts with, in place of NSPM_QEMU_TERMINAL's.
+            kwargs["display"] = display
         rigs.append(Rig(workdir, stack=stack, **kwargs))
         return rigs[-1]
 
