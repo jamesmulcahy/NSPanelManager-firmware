@@ -14,7 +14,7 @@ struct Look {
 };
 
 namespace Looks {
-constexpr int COUNT = 6;
+constexpr int COUNT = 8;
 extern const Look ALL[COUNT];
 // The look that `background` and `theme` draw (compared as drawn: the preset, and the palette after
 // "auto" and "light" are resolved), or -1 for a combination none of them is (set from the manager).
@@ -36,7 +36,7 @@ public:
 
   // Each preview's size on a portrait screen, where it shows the background's art.
   static constexpr int32_t PREVIEW_W = 132;
-  static constexpr int32_t PREVIEW_H = 96;
+  static constexpr int32_t PREVIEW_H = 60;
 
 private:
   static inline lv_obj_t *_tiles[Looks::COUNT] = {};

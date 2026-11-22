@@ -28,7 +28,7 @@ struct Palette {
   uint32_t lip;       // The edge under what can be pressed (bottom_lip())
 };
 // The default; a mid grey; and one per background preset (Background.hpp), tinted to sit on its art.
-extern const Palette DARK, GREY, OCEAN, DUSK, AURORA, PEAKS;
+extern const Palette DARK, GREY, OCEAN, DUSK, AURORA, PEAKS, VESUVIUS, PARTHENON;
 
 namespace detail {
 extern const Palette *palette;
@@ -36,7 +36,7 @@ extern const Palette *palette;
 inline const Palette &palette() { return *detail::palette; }
 // GUI task (or before LVGL starts). Views built before keep their colours: rebuild them.
 void set_palette(const Palette &palette);
-// "dark", "grey" (or "light"), "ocean", "dusk", "aurora", "peaks"; nullptr for anything else ("auto").
+// "dark", "grey" (or "light"), "ocean", "dusk", "aurora", "peaks", "vesuvius", "parthenon"; nullptr for anything else ("auto").
 const Palette *palette_from_name(const char *name);
 
 inline lv_color_t background() { return lv_color_hex(palette().background); }

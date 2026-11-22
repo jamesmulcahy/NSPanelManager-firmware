@@ -28,6 +28,10 @@ const Palette DUSK   = {"dusk",   false, 0x181428, 0x282038, 0xF8F0F0, 0xA090A8,
 const Palette AURORA = {"aurora", false, 0x081418, 0x102828, 0xF0F8F8, 0x80A8A8, 0x40D0A8, 0x184040, 0x285050, 0x507070, 0xF85048, 0xF0F8F8, 0x283C38, 0x001010};
 // Slate blue, with a sky accent.
 const Palette PEAKS  = {"peaks",  false, 0x101828, 0x182840, 0xF0F4F8, 0x8898B0, 0x70B0F0, 0x283C58, 0x304868, 0x586880, 0xF85048, 0xF0F4F8, 0x283C50, 0x081018};
+// Violet dusk over the bay of Naples, with a terracotta-gold accent.
+const Palette VESUVIUS  = {"vesuvius",  false, 0x181828, 0x282440, 0xF8ECE0, 0xB8A8B8, 0xE8A058, 0x403858, 0x504870, 0x686080, 0xF85048, 0xF8ECE0, 0x383850, 0x101018};
+// Navy night, with the floodlit Parthenon's gold.
+const Palette PARTHENON = {"parthenon", false, 0x081020, 0x101C30, 0xF0ECE0, 0x90A0B8, 0xE8B448, 0x202C48, 0x303C60, 0x586888, 0xF85048, 0xF0ECE0, 0x283040, 0x000C10};
 // clang-format on
 // Highlight and lip are the card mixed 10% towards white and 55% towards black, rounded to RGB565.
 
@@ -39,7 +43,7 @@ const Palette *palette_from_name(const char *name) {
   if (name != nullptr && strcmp(name, "light") == 0) {
     return &GREY; // "light" was a white palette, too bright from above; a saved setting gets grey
   }
-  for (const Palette *p : {&DARK, &GREY, &OCEAN, &DUSK, &AURORA, &PEAKS}) {
+  for (const Palette *p : {&DARK, &GREY, &OCEAN, &DUSK, &AURORA, &PEAKS, &VESUVIUS, &PARTHENON}) {
     if (name != nullptr && strcmp(name, p->name) == 0) {
       return p;
     }

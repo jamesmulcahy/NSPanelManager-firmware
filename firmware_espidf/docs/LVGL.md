@@ -67,8 +67,8 @@ On `nspanel/<MAC>/command`:
 | Command | Effect |
 |---|---|
 | `{"command": "lvgl_ui", "enable": false}` | Keep the Nextion pages whatever the TFT (saved; reboots). A kill switch that needs no TFT reinstall; on a terminal TFT the display then shows the TFT's own "waiting" page, but the panel still takes MQTT, firmware and TFT updates |
-| `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once; reported, see "The look") |
-| `{"command": "lvgl_theme", "theme": "grey"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `grey`, `ocean`, `dusk`, `aurora`, `peaks` (saved; applied at once; reported). `light` is taken as `grey`: the white palette it named was too bright from above. A tile or menu item that is on takes the palette's accent, mixed into its card |
+| `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported, see "The look") |
+| `{"command": "lvgl_theme", "theme": "grey"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `grey`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported). `light` is taken as `grey`: the white palette it named was too bright from above. A tile or menu item that is on takes the palette's accent, mixed into its card |
 | `{"command": "loop_watchdog", "enable": true}` | Turn the event-loop watchdog (`EventLoopWatchdog`) on or off: when the default event loop stops dispatching for 15 s it logs every task's backtrace. Off by default (it costs a task and its stack). Saved in `config.json` and applied at once, with no reboot; a repeat of the current state does nothing. Without `enable` it logs the current state. Not LVGL-specific, listed here with the other panel commands |
 | `{"command": "lvgl_tap", "x": 160, "y": 20, "hold_ms": 100}` | A touch through the LVGL path, for testing without a finger; `x2`/`y2` make it a swipe |
 
@@ -84,7 +84,7 @@ through `LvglLook` (`lib/LvglUi/LvglLook.cpp`):
 |---|---|---|
 | The manager's config | `NSPanelConfig.lvgl_theme` (49) / `lvgl_background` (50), on every config. Empty: not managed, keep the panel's own. Applied only when it differs | No: the manager knows it |
 | The commands above | Applied at once | Yes |
-| The person at the panel | Swipe down, **Look**: a page of six looks (`LookView`, `Looks::ALL`): Ocean, Dusk, Aurora and Peaks (that background with `auto`, its own palette), Dark and Grey (no background). The look in use has the amber outline; a tap applies, saves and reports, and the page stays | Yes |
+| The person at the panel | Swipe down, **Look**: a page of eight looks (`LookView`, `Looks::ALL`): Ocean, Dusk, Aurora, Peaks, Vesuvius and Parthenon (that background with `auto`, its own palette), Dark and Grey (no background). The look in use has the amber outline; a tap applies, saves and reports, and the page stays | Yes |
 
 ![The look picker](look-picker.png)
 

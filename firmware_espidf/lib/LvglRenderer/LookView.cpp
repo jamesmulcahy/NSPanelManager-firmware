@@ -11,6 +11,8 @@ const Look Looks::ALL[Looks::COUNT] = {
     {"Dusk",   "dusk",   "auto"},
     {"Aurora", "aurora", "auto"},
     {"Peaks",  "peaks",  "auto"},
+    {"Vesuvius", "vesuvius", "auto"},
+    {"Parthenon", "parthenon", "auto"},
     {"Dark",   "none",   "dark"},
     {"Grey",   "none",   "grey"},
 };
@@ -121,20 +123,20 @@ static lv_obj_t *preview(lv_obj_t *tile, const Look &look, bool landscape) {
   lv_obj_set_style_border_width(card, Theme::HIGHLIGHT_WIDTH, 0);
   lv_obj_set_style_border_color(card, lv_color_hex(p.highlight), 0);
   lv_obj_set_style_border_opa(card, LV_OPA_COVER, 0);
-  lv_obj_set_size(card, lv_pct(76), 34);
-  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 10);
+  lv_obj_set_size(card, lv_pct(76), 26);
+  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 6);
 
   lv_obj_t *dot = lv_obj_create(card);
   lv_obj_remove_style_all(dot);
-  lv_obj_set_size(dot, 16, 16);
+  lv_obj_set_size(dot, 12, 12);
   lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(dot, lv_color_hex(p.accent), 0);
-  lv_obj_align(dot, LV_ALIGN_LEFT_MID, 9, 0);
+  lv_obj_align(dot, LV_ALIGN_LEFT_MID, 7, 0);
   static const struct {
     int32_t y, w;
     bool muted;
-  } lines[] = {{-5, 50, false}, {5, 34, true}};
+  } lines[] = {{-4, 50, false}, {4, 34, true}};
   for (const auto &l : lines) {
     lv_obj_t *line = lv_obj_create(card);
     lv_obj_remove_style_all(line);
@@ -142,7 +144,7 @@ static lv_obj_t *preview(lv_obj_t *tile, const Look &look, bool landscape) {
     lv_obj_set_style_radius(line, 2, 0);
     lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(line, lv_color_hex(l.muted ? p.muted : p.text), 0);
-    lv_obj_align(line, LV_ALIGN_LEFT_MID, 33, l.y);
+    lv_obj_align(line, LV_ALIGN_LEFT_MID, 26, l.y);
   }
   return screen;
 }
@@ -152,12 +154,12 @@ void LookView::build(lv_obj_t *parent, bool landscape) {
   Ui::set_text(header.title, "Look");
   lv_obj_add_event_cb(header.back, look_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
 
-  // 2 x 3 on a portrait screen, 3 x 2 on a landscape one, as the menu.
+  // 2 x 4 on a portrait screen, 4 x 2 on a landscape one.
   lv_obj_t *grid = Ui::fill(parent, LV_FLEX_FLOW_ROW);
   static const int32_t two[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  static const int32_t three[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  lv_obj_set_grid_dsc_array(grid, landscape ? three : two, landscape ? two : three);
-  int columns = landscape ? 3 : 2;
+  static const int32_t four[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  lv_obj_set_grid_dsc_array(grid, landscape ? four : two, landscape ? two : four);
+  int columns = landscape ? 4 : 2;
   for (int i = 0; i < Looks::COUNT; i++) {
     // A tile (card, lip, pressed colour) whose icon is replaced by the preview.
     lv_obj_t *tile = Ui::tile(grid, NULL, 24, Looks::ALL[i].name, false);
