@@ -357,8 +357,10 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   // What this firmware does that a manager may rely on. "lvgl_look": it applies the look in
   // NSPanelConfig (lvgl_theme, lvgl_background) and reports a look chosen on the panel as an
   // NSPanelMQTTManagerCommand (lvgl_look, LvglLook), so the manager need not send the lvgl_theme and
-  // lvgl_background commands. Older managers ignore keys they do not know.
-  json["features"] = nlohmann::json::array({"lvgl_look"});
+  // lvgl_background commands. "no_hmi": it has no Nextion HMI pages, so on NSPM's legacy TFT it shows only a
+  // "Display update needed" screen (display_mode DISPLAY_MODE_NEXTION) until the terminal TFT is installed.
+  // Older managers ignore keys they do not know.
+  json["features"] = nlohmann::json::array({"lvgl_look", "no_hmi"});
   // WebManager serves GET /metrics (Prometheus text) on this port. The manager lists only panels
   // that send this in its Prometheus service discovery.
   json["metrics_port"] = WebManager::HTTP_PORT;

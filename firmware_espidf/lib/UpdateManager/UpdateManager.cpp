@@ -655,16 +655,9 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
         LvglLook::command_theme(json["theme"].get<std::string>());
       }
     } else if (command_string.compare("lvgl_ui") == 0) {
-      // {"command": "lvgl_ui", "enable": false}: keep the Nextion pages whatever TFT the display runs
-      // (true: LVGL on a terminal TFT, the default). Saved, then the panel reboots to apply it.
-      if (json.contains("enable") && json["enable"].is_boolean()) {
-        ConfigManager::lvgl_ui = json["enable"].get<bool>();
-        ESP_LOGI("UpdateManager", "lvgl_ui set to %s; rebooting.", ConfigManager::lvgl_ui ? "true" : "false");
-        ConfigManager::save_config(CONFIG_SAVE_BY_COMMAND);
-        xTaskCreatePinnedToCore(UpdateManager::_task_reboot, "reboot", 4096, NULL, 2, NULL, 1);
-      } else {
-        ESP_LOGI("UpdateManager", "lvgl_ui is %s; LVGL is %sthe UI.", ConfigManager::lvgl_ui ? "true" : "false", LvglUi::active() ? "" : "not ");
-      }
+      // {"command": "lvgl_ui", "enable": false} switched older firmware to the HMI pages. There are none any
+      // more, so it would only blank the screen: the TFT alone decides the UI (LvglUi::init()).
+      ESP_LOGW("UpdateManager", "The lvgl_ui command is no longer supported; ignored.");
     } else if (command_string.compare("loop_watchdog") == 0) {
       // {"command": "loop_watchdog", "enable": true}: log every task's backtrace if the default event loop
       // stops dispatching (EventLoopWatchdog). Off by default. Saved and applied at once, no reboot; a repeat

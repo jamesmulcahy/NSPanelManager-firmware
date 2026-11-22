@@ -2,14 +2,15 @@
 
 On a panel whose display runs an [nspanel-terminal](https://github.com/ptaru/nspanel-terminal) TFT,
 the firmware draws every page itself with [LVGL](https://lvgl.io) 9.6 and streams the pixels to the
-display at 4 Mbaud. On NSPanel Manager's own TFT nothing changes: the Nextion pages run as before.
-NSPM's pages, data, navigation and manager protocol are unchanged; only the drawing moves.
+display at 4 Mbaud. LVGL is the only UI: on NSPanel Manager's own (legacy) TFT the firmware shows
+no pages, only "Display update needed" on the TFT's boot screen, until a GUI update installs the
+terminal TFT. NSPM's pages, data, navigation and manager protocol are unchanged; only the drawing moves.
 
 ## How it fits together
 
 | Part | Where | Does |
 |---|---|---|
-| Mode | `lib/LvglUi/LvglUi.cpp` (`init()`) | LVGL is the UI when the display reports a terminal TFT (`NextionTerminal::is_receiver()`), sent no NSPM startup flag, and `lvgl_ui` is on |
+| Mode | `lib/LvglUi/LvglUi.cpp` (`init()`) | LVGL is the UI when the display reports a terminal TFT (`NextionTerminal::is_receiver()`) and sent no NSPM startup flag. Otherwise there is no UI (`InterfaceManager` shows no page but `LoadingPage`): on NSPM's TFT the legacy screen (`DISPLAY_MODE_NEXTION`, register_request feature `no_hmi`), on anything else nothing (`DISPLAY_MODE_TERMINAL_IDLE`) |
 | Page adapters | `lib/Pages/*` (`LvglUi::active()` branches) | Where a page would drive the Nextion, it hands a view's state to `LvglUi::show()`; view actions call the same handlers the Nextion touch events did |
 | Host | `lib/LvglUi/` | Screensaver timeout and wake, gestures (below), touch sound, backlight, album art fetch (`LvglArt`), Latin-1 text (`LvglText`) |
 | Views | `lib/LvglRenderer/*View.cpp`, `Theme`, `Ui`, `Background` | The screens, free of ESP-IDF (the host simulator builds them) |
@@ -66,7 +67,7 @@ On `nspanel/<MAC>/command`:
 
 | Command | Effect |
 |---|---|
-| `{"command": "lvgl_ui", "enable": false}` | Keep the Nextion pages whatever the TFT (saved; reboots). A kill switch that needs no TFT reinstall; on a terminal TFT the display then shows the TFT's own "waiting" page, but the panel still takes MQTT, firmware and TFT updates |
+| `{"command": "lvgl_ui", "enable": false}` | No longer supported: logged and ignored (it kept the HMI pages, which are gone). A saved `lvgl_ui: false` in `config.json` is ignored too (and left out whenever the file is next written) |
 | `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported, see "The look") |
 | `{"command": "lvgl_theme", "theme": "grey"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `grey`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported). `light` is taken as `grey`: the white palette it named was too bright from above. A tile or menu item that is on takes the palette's accent, mixed into its card |
 | `{"command": "loop_watchdog", "enable": true}` | Turn the event-loop watchdog (`EventLoopWatchdog`) on or off: when the default event loop stops dispatching for 15 s it logs every task's backtrace. Off by default (it costs a task and its stack). Saved in `config.json` and applied at once, with no reboot; a repeat of the current state does nothing. Without `enable` it logs the current state. Not LVGL-specific, listed here with the other panel commands |

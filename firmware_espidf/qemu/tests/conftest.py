@@ -107,7 +107,7 @@ def make_rig(request):
             kwargs["mac"] = "C0:49:EF:" + ":".join("%02X" % b for b in suffix)
             kwargs["hostname"] = "qemu-" + "".join("%02x" % b for b in suffix)
         if display is not None:
-            # "hmi" or "terminal": the TFT the display starts with, in place of NSPM_QEMU_TERMINAL's.
+            # "hmi", "terminal", "us" or "eu-on-us": the TFT the display starts with, in place of NSPM_QEMU_TERMINAL's.
             kwargs["display"] = display
         rigs.append(Rig(workdir, stack=stack, **kwargs))
         return rigs[-1]

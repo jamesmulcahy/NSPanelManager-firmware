@@ -173,9 +173,6 @@ public:
   // Whether the LVGL screens are laid out for a US (portrait) panel. Taken from the manager's
   // config (is_us_panel) and kept here, so the first screen after a boot has the right shape.
   static inline bool lvgl_us_layout = true;
-  // LVGL as the panel's whole UI when the display runs an nspanel-terminal TFT (LvglUi). false keeps
-  // the Nextion pages whatever the TFT: a kill switch that needs no TFT reinstall.
-  static inline bool lvgl_ui = true;
   // The page background preset with LVGL as the UI (Background.hpp): "none", "ocean", "dusk", "aurora", "peaks", "vesuvius" or "parthenon".
   static inline std::string lvgl_background = "none";
   // The LVGL screens' palette (Theme.hpp): "auto" (the background preset's own, dark without one),

@@ -12,7 +12,7 @@ enum ConfigSaveCaller {
   CONFIG_SAVE_BY_TIMERS,          // TimerManager: countdown timers started, changed or ended.
   CONFIG_SAVE_BY_FIRMWARE_UPDATE, // UpdateManager: firmware checksums around a firmware update.
   CONFIG_SAVE_BY_GUI_UPDATE,      // UpdateManager: the TFT checksum after a GUI update.
-  CONFIG_SAVE_BY_COMMAND,         // UpdateManager: a setting changed by a command (lvgl_ui, loop_watchdog).
+  CONFIG_SAVE_BY_COMMAND,         // UpdateManager: a setting changed by a command (loop_watchdog).
   CONFIG_SAVE_BY_WEB_UI,          // WebManager: the panel's own setup page.
   CONFIG_SAVE_CALLER_COUNT
 };
