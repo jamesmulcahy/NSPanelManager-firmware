@@ -1,8 +1,5 @@
 #pragma once
-#include <GUI_data.hpp>
-#include <Nextion_event.hpp>
 #include <cstddef>
-#include <esp_event.h>
 #include <protobuf_nspanel_entity.pb-c.h>
 #include <string>
 #include <vector>
@@ -39,25 +36,9 @@ private:
   static void _lvgl_action(int action, int32_t slot);
 
   /**
-   * Go to the items page that fits the sources and draw the ones on the current page.
+   * Draw the sources on the current page.
    */
   static void _update_display();
-
-  /**
-   * Draw the source with the given index in a slot of the items page, or blank the slot if there is
-   * no such source.
-   */
-  static void _update_displayed_source_in_slot(size_t source_index, const GUI_ITEMS_PAGE_ITEM_DATA page_slot);
-
-  /**
-   * Handle Nextion events, such as touch.
-   */
-  static void _handle_nextion_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data);
-
-  /**
-   * Handle a touch on the items page showing the sources.
-   */
-  static void _handle_touch_event(nextion_event_touch_t *touch_data, uint8_t button_back_id, uint8_t button_previous_page_id, uint8_t button_next_page_id, const GUI_ITEMS_PAGE_ITEM_DATA *item_slots);
 
   /**
    * Select the source with the given index and return to the media player.
