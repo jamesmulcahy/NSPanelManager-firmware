@@ -125,8 +125,20 @@ void LvglRenderer::inject_touch(bool down, uint16_t x, uint16_t y) {
   if (!LvglRenderer::_active || LvglRenderer::_touches == NULL) {
     return;
   }
+  // was_down changes only when an edge is actually queued, so it always matches what LVGL will see.
   static bool was_down = false;
+  static bool release_owed = false; // a release was dropped; LVGL still holds the press
   static uint16_t last_x = UINT16_MAX, last_y = UINT16_MAX;
+  if (release_owed) {
+    // Settle the lost release first, at the point where the finger was, so the new touch starts clean.
+    Touch release = {last_x, last_y, false};
+    if (xQueueSend(LvglRenderer::_touches, &release, TOUCH_EDGE_WAIT) != pdTRUE) {
+      return; // Still no room; keep owing it and drop this touch rather than glue it onto the old press.
+    }
+    release_owed = false;
+    was_down = false;
+    LvglRenderer::notify();
+  }
   bool edge = down != was_down;
   if (!edge) {
     // The touch controller reports a move every few milliseconds while a finger is down, most of them
@@ -141,14 +153,18 @@ void LvglRenderer::inject_touch(bool down, uint16_t x, uint16_t y) {
     }
   }
   Touch touch = {x, y, down};
-  if (xQueueSend(LvglRenderer::_touches, &touch, 0) != pdTRUE) {
+  // Presses and releases wait a little for room (the GUI task may be mid-redraw); moves never do.
+  if (xQueueSend(LvglRenderer::_touches, &touch, edge ? TOUCH_EDGE_WAIT : 0) != pdTRUE) {
     if (edge) {
       ESP_LOGW(TAG, "Touch queue full, dropped a %s.", down ? "press" : "release");
+      if (!down) {
+        release_owed = true; // was_down stays true: LVGL is still pressed
+      }
     }
-  } else {
-    last_x = x;
-    last_y = y;
+    return;
   }
+  last_x = x;
+  last_y = y;
   was_down = down;
   LvglRenderer::notify();
 }

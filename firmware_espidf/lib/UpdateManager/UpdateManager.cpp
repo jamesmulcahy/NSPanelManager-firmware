@@ -622,7 +622,9 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
       int x = json.contains("x") && json["x"].is_number_integer() ? json["x"].get<int>() : -1;
       int y = json.contains("y") && json["y"].is_number_integer() ? json["y"].get<int>() : -1;
       int hold = json.contains("hold_ms") && json["hold_ms"].is_number_integer() ? json["hold_ms"].get<int>() : 100;
-      if (x >= 0 && y >= 0 && x < LvglRenderer::width() && y < LvglRenderer::height()) {
+      if (!LvglRenderer::is_active()) {
+        ESP_LOGW("UpdateManager", "lvgl_tap ignored: LVGL is not the active UI.");
+      } else if (x >= 0 && y >= 0 && x < LvglRenderer::width() && y < LvglRenderer::height()) {
         ESP_LOGI("UpdateManager", "Tap at %d,%d for %d ms.", x, y, hold);
         // "x2", "y2": a swipe to there instead, in ten moves over hold_ms.
         int x2 = json.contains("x2") && json["x2"].is_number_integer() ? json["x2"].get<int>() : x;
