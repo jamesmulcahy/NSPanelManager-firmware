@@ -16,7 +16,7 @@ terminal TFT. NSPM's pages, data, navigation and manager protocol are unchanged;
 | Views | `lib/LvglRenderer/*View.cpp`, `Theme`, `Ui`, `Background` | The screens, free of ESP-IDF (the host simulator builds them) |
 | Renderer | `lib/LvglRenderer/LvglRenderer.cpp` | LVGL's task, draw buffer, touch input, boot screen |
 | Transport | `lib/NextionTerminal/` | The terminal session; see its README |
-| Nextion | `lib/Nextion/` | In LVGL mode: commands and queries dropped (`set_commands_blocked`), pages redirected to LVGL, brightness to the receiver |
+| Nextion | `lib/Nextion/` | In LVGL mode: brightness goes to the receiver; nothing else is sent on the display. On the legacy TFT: the boot screen's page and texts |
 
 Threads: LVGL runs on its own task (core 1) and nothing else calls it; other tasks `post()` work to
 it. View actions run there too, so they `LvglUi::defer()` anything that publishes or changes pages.

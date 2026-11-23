@@ -1,15 +1,11 @@
 """Boot, registration and the steady state a configured panel settles into."""
 
 import json
-import urllib.error
-import urllib.request
-
-import pytest
 
 from nspm_qemu.fake_manager import QEMU_HOST_ADDRESS
 from nspm_qemu.proto import nspanel as pb
 from nspm_qemu.rig import BOOT_TIMEOUT
-from shared_behaviour import lvgl_only, nextion_only
+from shared_behaviour import lvgl_only
 
 
 def test_registers_with_manager(rig):
@@ -20,16 +16,6 @@ def test_registers_with_manager(rig):
     assert request["friendly_name"] == rig.hostname
     assert request["model"] == "sonoff"
     assert request["address"] == "10.0.2.15"  # QEMU user-mode DHCP lease, via the Ethernet path
-
-
-@nextion_only
-def test_receives_config_and_shows_screensaver(booted):
-    booted.panel.wait_for_log(r"Received new config data from MQTT, will trigger event")
-    booted.broker.wait_for_subscription(booted.panel.client_id, booted.manager.config_topic())
-    booted.broker.wait_for_subscription(booted.panel.client_id, "nspanel/mqttmanager_%s/room/1/state" % QEMU_HOST_ADDRESS)
-    # NO_SCREENSAVER blanks the display rather than showing a clock.
-    booted.nextion.wait_for_page("screensaver2")
-    booted.nextion.wait_for(lambda n: n.system.get("dim") == 0, what="display dimmed to 0")
 
 
 @lvgl_only
@@ -68,16 +54,6 @@ def test_web_ui_is_served(booted):
     status, data = booted.http_get("/status_data")
     assert status == 200
     assert data.get("wifi_status")  # esp_wifi_get_mode() must not crash a panel that never initialised Wi-Fi
-
-
-@nextion_only
-def test_screenshot_is_409_on_nspm_tft(booted):
-    # The Nextion draws NSPM's pages itself: there is nothing on the ESP32 to capture.
-    with pytest.raises(urllib.error.HTTPError) as e:
-        urllib.request.urlopen("http://127.0.0.1:%d/screenshot" % booted.panel.web_port, timeout=30)
-    assert e.value.code == 409
-    assert e.value.headers.get_content_type() == "text/plain"
-    assert b"LVGL" in e.value.read()
 
 
 @lvgl_only

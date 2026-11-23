@@ -5,7 +5,7 @@ viewer shows the display: click and drag on it to touch the panel.
     qemu/web_panel.sh [--http 8080] [--bind 127.0.0.1] [--rotation 0|90|180|270] [--weather]
                       [--terminal us|eu-on-us]
 
---terminal runs the LVGL UI: the display is nspanel-terminal's TFT (see fake_nextion.py).
+--terminal picks the receiver of the LVGL UI's display: nspanel-terminal's TFT (see fake_nextion.py).
 
 It prints the viewer's URL once the panel is up, then each command the panel sends the manager
 as it arrives. Ctrl-C stops everything. The console log, broker log and screenshots are kept in
@@ -32,8 +32,8 @@ def main(argv=None) -> int:
                         help="the viewer's address (default 127.0.0.1; anyone who can reach it can touch the panel)")
     parser.add_argument("--rotation", type=int, choices=(0, 90, 180, 270),
                         help="turn the screen this many degrees clockwise (default: upright)")
-    parser.add_argument("--terminal", choices=("us", "eu-on-us", "nextion"),
-                        help="the display for this receiver: the LVGL UI (default us), or NSPM's Nextion TFT")
+    parser.add_argument("--terminal", choices=("us", "eu-on-us"),
+                        help="the display for this receiver of the LVGL UI (default us)")
     parser.add_argument("--weather", action="store_true", help="the weather screensaver, with a forecast")
     parser.add_argument("--workdir", default=os.path.join(QEMU_DIR, "build", "web_panel"))
     args = parser.parse_args(argv)
@@ -41,7 +41,7 @@ def main(argv=None) -> int:
     if args.terminal:
         os.environ["NSPM_QEMU_TERMINAL"] = args.terminal
         from . import fake_nextion, panel
-        fake_nextion.TERMINAL = panel.TERMINAL = None if args.terminal == "nextion" else args.terminal
+        fake_nextion.TERMINAL = panel.TERMINAL = args.terminal
     rig = Rig(args.workdir)
     if args.rotation is not None:
         rig.nextion.rotation = args.rotation

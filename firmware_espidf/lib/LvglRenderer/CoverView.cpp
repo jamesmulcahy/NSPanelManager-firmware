@@ -95,7 +95,7 @@ void CoverView::show(const CoverState &state) {
   char text[8];
   snprintf(text, sizeof(text), "%d%%", state.position);
   Ui::set_text(CoverView::_value, text);
-  // Hidden, not greyed, when the cover can't do it (CoverPage.md).
+  // Hidden, not greyed, when the cover can't do it.
   Ui::set_visible(CoverView::_open, state.can_open);
   Ui::set_visible(CoverView::_stop, state.can_stop);
   Ui::set_visible(CoverView::_close, state.can_close);

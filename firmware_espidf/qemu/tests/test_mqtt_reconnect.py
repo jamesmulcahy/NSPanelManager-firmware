@@ -3,39 +3,10 @@
 import re
 import time
 
-from nspm_qemu import gui
-from shared_behaviour import awake, lvgl_only, lvgl_us_only, nextion_only, tap_ceiling, wake_to_home  # noqa: F401 (awake: a fixture)
+from shared_behaviour import awake, lvgl_only, lvgl_us_only, tap_ceiling, wake_to_home  # noqa: F401 (awake: a fixture)
 
 # NSPM_ConfigManager::_task_send_register_request re-sends until accepted, this often.
 REGISTER_REQUEST_PERIOD = 5
-
-
-@nextion_only
-def test_resubscribes_and_reregisters_after_connection_drop(home):
-    client = home.panel.client_id
-    before = set(home.broker.subscriptions(client))
-    assert home.manager.config_topic() in before
-
-    reg_mark = home.manager.registration_mark()
-    events = home.broker.event_mark()
-    page_mark = len(home.nextion.page_history)
-    assert home.broker.drop_client(client) == 1
-
-    home.broker.wait_for_event("connect", client, since=events, timeout=120)
-    home.manager.wait_for_registration(since=reg_mark, timeout=60)
-    home.panel.wait_until(lambda: before <= set(home.broker.subscriptions(client)), timeout=60,
-                          what="all subscriptions restored (missing: %s)" % (before - set(home.broker.subscriptions(client))))
-
-    # Losing the broker means losing the manager, so the panel shows "Lost
-    # connection to manager." and, once the manager is back, its screensaver.
-    home.nextion.wait_for(lambda n: "screensaver2" in n.page_history[page_mark:], timeout=60,
-                          what="screensaver shown again")
-
-    # Still usable afterwards.
-    home.wake_to_home()
-    mark = home.manager.command_mark()
-    home.nextion.press(gui.HOME_CEILING)
-    home.manager.wait_for_command(lambda c: c.WhichOneof("CommandData") == "first_page_turn_on", since=mark)
 
 
 def test_last_will_marks_panel_offline(awake):

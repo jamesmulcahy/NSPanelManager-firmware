@@ -1,17 +1,17 @@
 """Fake device: the Nextion display on the emulated ESP32's UART2. It is nextion-tools' emulated
-Display running NSPanelManager's TFT, plus the calls tests use to touch it and read it back.
-
-nextion_tools.emu models the display and runs the TFT's own code from gui.HMI (see
-https://github.com/jamesmulcahy/nextion-tools; requirements.txt pins it).
-So the "NSPM" banner, the 0x92 sleep frame and the 0x93 wake frame all come from the HMI's code,
-as on a real panel: the banner from page0's load, sleep from each page's sleep_display timer, and
-wake from the screensaver's touch capture. What is left here is how a test asks for them.
+Display, in one of two forms, plus the calls tests use to touch it and read it back.
 
 By default (NSPM_QEMU_TERMINAL unset, or us, or eu-on-us) the display runs nspanel-terminal's TFT: no
 pages and no NSPM banner, a `connect` reply with native version 94, so the firmware's LvglUi
 starts a NextionTerminal session and streams LVGL's pixels (nextion-tools' terminal receiver,
 protocol 8). The screen is then the receiver's framebuffer, shown turned as the firmware turns it
 for the panel (NextionTerminal::options_for()), and touches become terminal touch samples.
+
+With NSPM_QEMU_TERMINAL=nextion, or a rig started with display="hmi", it is NSPM's legacy TFT, as far
+as the firmware cares about it: the "NSPM" banner it prints when it starts, and a boot screen that
+takes the `page bootscreen` and `t_loading.txt=` / `t_ip.txt=` writes (the emulator records the page
+and every text assigned). It has no other pages, no code and no touch model: the firmware shows
+only the boot screen on it (tests/test_legacy_tft.py), and installs the terminal TFT over UART.
 """
 
 import logging
@@ -26,12 +26,11 @@ from nextion_tools.emu import terminal as _terminal
 
 log = logging.getLogger("fake_nextion")
 
-# Frames the NSPanel Manager TFT's code sends (lib/Nextion/Nextion_constans.hpp).
+# Frames the legacy NSPanel Manager TFT's code sends (lib/Nextion/Nextion_constans.hpp): the
+# firmware ignores them, which test_legacy_tft.py checks.
 SLEEP = 0x92
 WAKE = 0x93
 STRING_DATA = 0x99
-
-SCREENSAVER_PAGES = ("screensaver", "screensaver2")
 
 # The terminal receiver the display runs: "us" (320x480, which the firmware draws turned 180
 # degrees; the default) or "eu-on-us" (454x320 on a US panel: turned 90, touch offset 26).
@@ -51,15 +50,29 @@ TERMINAL_ROTATION = {"us": 180, "eu-on-us": 90, "eu": 0}
 _terminal.WATCHDOG_S = 60.0
 
 
+LEGACY_PAGE = "bootscreen"
+LEGACY_TEXTS = ("t_loading", "t_ip")
+
+
+def _legacy_names(key: str) -> bool:
+    """Which names the legacy TFT's firmware-facing part has: the boot screen and its two texts
+    (qualified by the page, so a write before `page bootscreen` is rejected, as the HMI rejects a
+    component of another page), and the system variables (dim, sleep, bkcmd, baud, ...)."""
+    if "." not in key:
+        return True
+    return key in ["%s.%s.txt" % (LEGACY_PAGE, name) for name in LEGACY_TEXTS]
+
+
 class FakeNextion(Display):
     def __init__(self, **kwargs):
         terminal = kwargs.get("terminal")
         if terminal is not None:
             # nspanel-terminal's TFT prints no banner: the firmware must not see NSPM's flag.
             kwargs.setdefault("rotation", TERMINAL_ROTATION.get(str(terminal), 0))
-        elif kwargs.get("hmi") is None or not kwargs.get("scripts", True):
-            # Without the HMI's code nothing else prints it.
+        else:
+            # NSPM's legacy TFT: its startup flag.
             kwargs.setdefault("banner", b"NSPM\xff\xff\xff")
+            kwargs.setdefault("resolver", _legacy_names)
         super().__init__(TcpServer(), **kwargs)
         # Where screenshot() saves, and where every page wait_for_page() sees is saved. None
         # saves nothing.
@@ -120,15 +133,16 @@ class FakeNextion(Display):
     def _become(self, kind: str) -> None:
         """The display now runs another TFT. Called with _cond held, from a power cycle."""
         if kind == "hmi":
-            raise ValueError("a display cannot be turned from a terminal TFT into NSPM's HMI TFT here")
+            raise ValueError("a display cannot be turned from a terminal TFT into NSPM's legacy TFT here")
         if self.terminal_profile is not None and self.terminal_profile is _terminal.profile(kind):
             return
         log.info("the display now runs the %s terminal TFT", kind)
+        self.resolver = None
         self.terminal_profile = _terminal.profile(kind)
         self.framebuffer = _terminal.Framebuffer(*self.terminal_profile.size)
         self.comok = _terminal.terminal_comok(self.device.comok)
         self.rotation = TERMINAL_ROTATION.get(str(kind), 0)
-        # No pages, no code and no NSPM banner: the terminal TFT prints none.
+        # No pages and no NSPM banner: the terminal TFT prints none.
         self.screen = None
         self._code = None
         self.banner = b""
@@ -143,32 +157,10 @@ class FakeNextion(Display):
         """Where QEMU's `-serial tcp:` connects."""
         return self.transport.port
 
-    def sleep(self) -> None:
-        """The screensaver timeout runs out on the page shown."""
-        if not self.runs_scripts:
-            self.send_frame(SLEEP)
-            return
-        self.expire_timer("sleep_display")
-
     def wake(self, wait: float = 10) -> bool:
-        """Someone taps the screensaver, once one is shown (waiting up to `wait` seconds: the
-        firmware logs that it shows the screensaver before its `page` command reaches the
-        display). Returns False, having touched nothing, if none is shown by then, since a tap
-        elsewhere would land on a real button."""
-        if self.terminal_profile is not None:
-            # LVGL's screensaver: a tap anywhere wakes it.
-            self.wait_for_terminal(wait)
-            w, h = self.size
-            self.tap(w // 2, h // 2)
-            return True
-        if not self.runs_scripts:
-            self.send_frame(WAKE)
-            return True
-        with self._cond:
-            self._cond.wait_for(lambda: self.page in SCREENSAVER_PAGES, wait)
-            if self.page not in SCREENSAVER_PAGES:
-                return False
-            w, h = self._current_page().size
+        """Someone taps the LVGL screensaver (once the terminal session is up): a tap anywhere wakes it."""
+        self.wait_for_terminal(wait)
+        w, h = self.size
         self.tap(w // 2, h // 2)
         return True
 

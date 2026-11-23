@@ -19,7 +19,6 @@ import threading
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
-from . import hmi
 from .fake_nextion import TERMINAL, FakeNextion
 from .image import build_efuse_image, build_flash_image
 
@@ -170,7 +169,7 @@ class QemuPanel:
                 # LvglUi picks the receiver from config.json: the EU one unless lvgl_us_layout.
                 self.panel_config = dict(self.panel_config, lvgl_us_layout=False)
         else:
-            self.nextion = FakeNextion(hmi=hmi.load())
+            self.nextion = FakeNextion()
         self.web_port = _free_port()
         # A port of its own, so suites can run side by side with the stub on. `wait` is for a
         # person attaching by hand, so it keeps the well-known :3333.

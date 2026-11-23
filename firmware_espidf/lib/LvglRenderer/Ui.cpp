@@ -164,7 +164,7 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
   lv_obj_set_style_pad_gap(h.bar, 0, 0);
   if (back) {
     h.back = icon_button(h.bar, NSPM_ICON_CHEVRON_LEFT, 24);
-    // A divider between "back" and the page's own navigation, as on the Nextion pages.
+    // A divider between "back" and the page's own navigation.
     lv_obj_t *divider = lv_obj_create(h.bar);
     lv_obj_remove_style_all(divider);
     lv_obj_set_size(divider, 2, 24);
@@ -191,7 +191,7 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
     h.next = icon_button(h.bar, NSPM_ICON_CHEVRON_RIGHT, 24);
   }
   // Fingers land past the buttons' edges (on Kitchen: x 311-316 and y 50-57 for "next" at
-  // 270-310), as the Nextion pages' hotspots reach the screen's edges. Give the buttons a margin
+  // 270-310), as the screen's edge hotspots do. Give the buttons a margin
   // around them. LVGL only looks for a touch among a parent's children inside the parent's area, or
   // its extra drawing area when its overflow is visible: extend the bar's by the same margin.
   lv_obj_add_flag(h.bar, LV_OBJ_FLAG_OVERFLOW_VISIBLE);

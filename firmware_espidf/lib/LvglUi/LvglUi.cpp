@@ -57,7 +57,8 @@ bool LvglUi::init() {
     // Neither a terminal TFT nor NSPM's: nothing the firmware knows how to write on.
     ESP_LOGW(TAG, "No UI: the display runs no terminal TFT and sent no NSPM flag (%s).", shown_identity);
     LvglUi::_display_mode = DisplayMode::TERMINAL_IDLE;
-    Nextion::set_commands_blocked(true);
+    // Nothing may be written to a display the firmware does not know: drop brightness changes too.
+    Nextion::set_brightness_redirect([](uint8_t) {});
     return false;
   }
   // The palette before the first screen is built; Background::set() below applies the same one.
@@ -69,11 +70,11 @@ bool LvglUi::init() {
     // The TFT has no Nextion pages either: the display will show its "waiting for connection".
     ESP_LOGE(TAG, "The display runs a terminal TFT, but LVGL did not start: %s.", esp_err_to_name(started));
     LvglUi::_display_mode = DisplayMode::TERMINAL_IDLE;
-    Nextion::set_commands_blocked(true);
+    // Nothing may be written to a display the firmware does not know: drop brightness changes too.
+    Nextion::set_brightness_redirect([](uint8_t) {});
     return false;
   }
 
-  Nextion::set_commands_blocked(true);
   Nextion::set_brightness_redirect([](uint8_t brightness) { NextionTerminal::set_brightness(brightness); });
   LvglRenderer::touch_filter = LvglUi::_touch;
   LvglRenderer::on_press = LvglUi::_pressed;

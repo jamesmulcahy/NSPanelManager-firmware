@@ -1,11 +1,7 @@
 """What the shared-behaviour tests (boot, touch, default room, reconnects, page switches, weather)
-need to run on both displays: NSPM's own Nextion TFT, and the LVGL UI on a terminal display.
-
-Each of those tests has an LVGL variant (marked `lvgl_only`), asserting the behaviour through what the
-LVGL UI shows: log lines, the screen's pixels, and the commands a tap sends the manager. Their Nextion
-variants (marked `nextion_only`) drove NSPM's HMI pages, which the firmware no longer has (on NSPM's
-TFT it shows only the legacy screen, tests/test_legacy_tft.py): they are skipped, and go with the rest
-of the HMI harness. Not a test module itself: the tests import from it.
+share: they assert the behaviour through what the LVGL UI shows (log lines, the screen's pixels, and
+the commands a tap sends the manager). NSPM's own Nextion TFT is covered by tests/test_legacy_tft.py
+only: the firmware has no HMI pages. Not a test module itself: the tests import from it.
 
 Where things are on the US home page, as the screen shows it (tests/.../screens/*-home.png):
 
@@ -23,8 +19,6 @@ import pytest
 from nspm_qemu.fake_nextion import TERMINAL
 from test_lvgl_terminal import region, settle, wake_to_home  # noqa: F401 (re-exported)
 
-# Not an environment skip: there is no environment these run in any more.
-nextion_only = pytest.mark.skip(reason="drives NSPM's HMI pages, which the firmware no longer has (it shows only the legacy screen there)")
 lvgl_only = pytest.mark.skipif(TERMINAL is None, reason="needs the LVGL UI: NSPM_QEMU_TERMINAL=us|eu-on-us (the default)")
 # Touch coordinates below are for the US layout.
 lvgl_us_only = pytest.mark.skipif(TERMINAL not in (None, "us"), reason="touch coordinates are for the US layout")
@@ -100,9 +94,6 @@ def wait_until_quiet(rig, quiet=2.0, timeout=60):
 
 @pytest.fixture
 def awake(booted):
-    """A booted panel woken from its screensaver to the home page, on either display."""
-    if TERMINAL is None:
-        booted.wake_to_home()
-    else:
-        wake_to_home(booted)
+    """A booted panel woken from its screensaver to the home page."""
+    wake_to_home(booted)
     return booted
