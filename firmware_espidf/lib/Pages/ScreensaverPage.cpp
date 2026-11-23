@@ -90,60 +90,6 @@ void ScreensaverPage::show() {
   ScreensaverPage::_update_displayed_temperature();
 
   RoomManager::go_to_default_room(); // Go to default room so that it is the room that is shown when the screensaver is hidden.
-
-  // Test code for album cover follows:
-  // vTaskDelay(pdMS_TO_TICKS(2000)); // Wait for screen to finish refreshing
-
-  // _download_data_store.clear();
-  // std::string album_cover_url = "http://";
-  // album_cover_url.append(NSPM_ConfigManager::get_manager_address());
-  // album_cover_url.append(":");
-  // album_cover_url.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
-  // album_cover_url.append("/api/get_album_cover");
-  // ESP_LOGD("ScreensaverPage", "Downloading data from %s", album_cover_url.c_str());
-
-  // esp_http_client_handle_t client;
-  // esp_http_client_config_t config = {
-  //     .url = album_cover_url.c_str(),
-  //     .event_handler = HttpEventHandler,
-  // };
-
-  // client = esp_http_client_init(&config);
-  // // Perform the actual HTTP request to get data
-  // esp_err_t err = esp_http_client_perform(client);
-  // if (err == ESP_OK) {
-  //   esp_http_client_cleanup(client);
-  // } else {
-  //   ESP_LOGE("ScreensaverPage", "Failed to download data from %s. Got error: %s. HTTP Status code: %d.", album_cover_url, esp_err_to_name(err), esp_http_client_get_status_code(client));
-  //   esp_http_client_cleanup(client);
-  // }
-
-  // cJSON *json = cJSON_ParseWithLength((const char *)_download_data_store.data(), _download_data_store.size());
-  // if (json != NULL) {
-  //   Nextion::go_to_page("0", 5000); // Navigate to empty page
-  //   vTaskDelay(pdMS_TO_TICKS(1000));
-  //   Nextion::send_raw_command("cls BLACK", 5000); // Clear screen
-  //   vTaskDelay(pdMS_TO_TICKS(1000));
-
-  //   // Assume album cover is always 100x100 pixels.
-  //   int x = 0;
-  //   int y = 0;
-  //   const cJSON *pixel = NULL;
-  //   const cJSON *pixels = cJSON_GetObjectItem(json, "pixels");
-  //   ESP_LOGD("ScreensaverPage", "Starting to draw album cover. Total num pixels: %d", cJSON_GetArraySize(pixels));
-  //   cJSON_ArrayForEach(pixel, pixels) {
-  //     Nextion::fill(50 + x, 50 + y, 1, 1, pixel->valueint, 5000);
-
-  //     x++;
-  //     if (x == 100) {
-  //       x = 0;
-  //       y++;
-  //     }
-  //   }
-  // } else {
-  //   ESP_LOGE("ScreensaverPage", "Failed to parse JSON data.");
-  // }
-  // cJSON_Delete(json);
 }
 
 void ScreensaverPage::unshow() {

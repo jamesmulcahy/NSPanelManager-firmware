@@ -52,14 +52,16 @@ _terminal.WATCHDOG_S = 60.0
 
 LEGACY_PAGE = "bootscreen"
 LEGACY_TEXTS = ("t_loading", "t_ip")
+# The system variables the firmware sets on the legacy path (Nextion::init, set_brightness_level).
+LEGACY_SYSTEM = ("dim", "sleep", "bkcmd", "baud", "bauds")
 
 
 def _legacy_names(key: str) -> bool:
     """Which names the legacy TFT's firmware-facing part has: the boot screen and its two texts
     (qualified by the page, so a write before `page bootscreen` is rejected, as the HMI rejects a
-    component of another page), and the system variables (dim, sleep, bkcmd, baud, ...)."""
+    component of another page), and the system variables the firmware sets (LEGACY_SYSTEM)."""
     if "." not in key:
-        return True
+        return key == LEGACY_PAGE or key in LEGACY_SYSTEM
     return key in ["%s.%s.txt" % (LEGACY_PAGE, name) for name in LEGACY_TEXTS]
 
 
