@@ -39,7 +39,7 @@ def test_receives_config_and_shows_screensaver_on_lvgl(booted):
     booted.panel.wait_for_log(r"Received new config data from MQTT, will trigger event")
     booted.broker.wait_for_subscription(booted.panel.client_id, booted.manager.config_topic())
     booted.broker.wait_for_subscription(booted.panel.client_id, "nspanel/mqttmanager_%s/room/1/state" % QEMU_HOST_ADDRESS)
-    booted.panel.wait_for_log(r"ScreensaverPage: Showing screensaver: no screensaver")
+    booted.panel.wait_for_log(r"ScreensaverPage: Screensaver mode is 'no_screensaver'")
     assert booted.nextion.showing_terminal
     booted.nextion.wait_for(lambda n: n.system.get("dim") == 0, what="display dimmed to 0")
     assert not booted.nextion.terminal.faults
