@@ -8,8 +8,7 @@
 
 /*
  * The cover page: position and open/stop/close controls for blinds, shutters, curtains and
- * garage doors. The HMI page is named "cover"; its components are listed in
- * GUI_COVER_CONTROL_PAGE.
+ * garage doors.
  *
  * EntityPage follows the cover state topic and holds its state, as for every entity, and
  * switches to this page. This class draws the page from that state and handles its touches.
@@ -22,11 +21,6 @@ public:
    * @param page_just_opened: EntityPage has just switched to the page.
    */
   static void update_display(const NSPanelEntityState__Cover *cover, bool page_just_opened);
-
-  /*
-   * Handle Nextion string event.
-   */
-  static void handle_string_event(const std::shared_ptr<NSPanelEntityState> &state, char *data);
 
   /**
    * The page has closed.

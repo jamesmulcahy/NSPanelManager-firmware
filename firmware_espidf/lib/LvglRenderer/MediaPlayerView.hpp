@@ -29,7 +29,7 @@ struct MediaPlayerState {
 
 class MediaPlayerView {
 public:
-  // The album art's side, as AlbumArt::draw_size and the Nextion page's h_art hotspot.
+  // The album art side, as the manager scales it for the panel.
   static constexpr int ART_SIZE = 180;
   enum class Action { BACK, ART /* opens the sources page */, PREVIOUS, PLAY_PAUSE, NEXT, MUTE, VOLUME_DOWN, VOLUME_UP, SOURCE_SWITCH };
   static inline void (*on_action)(Action action) = nullptr;
