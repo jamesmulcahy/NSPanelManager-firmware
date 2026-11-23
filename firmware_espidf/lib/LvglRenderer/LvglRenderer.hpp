@@ -75,6 +75,11 @@ public:
   static inline bool (*touch_filter)(bool down, uint16_t x, uint16_t y) = nullptr;
 
   /**
+   * GUI task: a press reached LVGL. `target` is the widget it landed on (NULL if none).
+   */
+  static inline void (*on_press)(lv_obj_t *target) = nullptr;
+
+  /**
    * Any task: the press going on is the host's (a swipe-down), not the widget's under the finger.
    * The GUI task then sends that widget PRESS_LOST and ignores the touch until the release, so a
    * header button the swipe started on is not clicked and a slider is not set.

@@ -245,6 +245,7 @@ void EntitiesPage::_lvgl_render(const std::shared_ptr<NSPanelRoomEntitiesPage> &
   std::string header = EntitiesPage::_lvgl_header_override.get();
   state.header = LvglText::utf8(header.empty() ? page->header_text : header.c_str());
   state.size = page->page_type;
+  state.own_sound = EntitiesPage::_display_type != display_type_t::ENTITIES;
   state.save_progress = EntitiesPage::_lvgl_save_progress;
   for (size_t i = 0; i < page->n_entities; i++) {
     const NSPanelRoomEntitiesPage__EntitySlot *entity = page->entities[i];
@@ -309,7 +310,10 @@ void EntitiesPage::_lvgl_action(int action, int32_t slot) {
       break;
     }
     if (scenes) {
-      BuzzerManager::raise_event_for_touch(buzzer_event_t::SCENE_ACTIVATED);
+      // The scene tiles are marked own_sound, so LvglUi played no touch sound for this press.
+      if (!BuzzerManager::raise_event(buzzer_event_t::SCENE_ACTIVATED) && LvglUi::touch_sound) {
+        BuzzerManager::raise_event(buzzer_event_t::TOUCH); // No scene sound configured: the plain touch sound
+      }
       EntitiesPage::_send_entity_toggle_command_to_manager(page->id, slot);
     } else {
       EntitiesPage::_handle_entity_button_pressed(page, slot);

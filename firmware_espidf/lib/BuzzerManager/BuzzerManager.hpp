@@ -57,20 +57,12 @@ public:
   static void stop();
 
   /**
-   * @brief Raise an event that is not tied to a screen touch, ie. a scene being saved after a long press.
-   * Safe to call from any task.
+   * @brief Raise an event that has a sound, ie. a scene being activated or saved. Safe to call from any task.
+   * The generic TOUCH sound is not raised here: LvglUi plays it for a press, except on widgets marked as raising
+   * their own sound (Ui::set_own_sound), which call this instead, so one tap plays one sound.
+   * @return true if the event has a sound, which is now playing
    */
-  static void raise_event(buzzer_event_t event);
-
-  /**
-   * @brief Raise an event for the screen touch being handled, in place of the TOUCH event it would otherwise
-   * raise, so a touch that does something specific can get its own sound instead of the generic touch sound.
-   * If the event has no sound the TOUCH event is raised as usual.
-   * Call from a NEXTION_EVENT handler registered with ESP_EVENT_ANY_ID, ie. a page's touch handler. ESP-IDF runs
-   * those before handlers registered for a specific event id, like BuzzerManager's TOUCH_EVENT handler, which
-   * then skips the TOUCH event for this touch.
-   */
-  static void raise_event_for_touch(buzzer_event_t event);
+  static bool raise_event(buzzer_event_t event);
 
 private:
   /**
@@ -118,10 +110,6 @@ private:
   // new config is loaded, playback keeps its own reference to the steps. Only accessed while holding _sounds_mutex.
   static inline SemaphoreHandle_t _sounds_mutex = NULL;
   static inline std::array<std::shared_ptr<const std::vector<buzzer_tone_step_t>>, static_cast<size_t>(buzzer_event_t::COUNT)> _sounds;
-
-  // Set by raise_event_for_touch() when the touch being handled already raised its own event. Only accessed
-  // from the default event loop task.
-  static inline bool _touch_event_replaced = false;
 
   static inline std::string _raw_command_topic;
   static inline mqtt::Subscription _raw_command_subscription;

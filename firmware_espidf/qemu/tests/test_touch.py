@@ -118,6 +118,19 @@ def test_ceiling_tile_turns_on_ceiling_lights_on_lvgl(awake):
 
 @lvgl_us_only
 @lvgl_only
+def test_a_plain_tap_plays_only_the_touch_sound_on_lvgl(awake):
+    # QEMU has no buzzer, but BuzzerManager logs each event it handles: one tap, one event, and not a
+    # scene's (a tap on a scene raises SCENE_ACTIVATED instead of TOUCH, never both).
+    settle(awake.nextion)
+    mark = awake.panel.mark()
+    tap_ceiling(awake)
+    awake.panel.wait_for_log(r"BuzzerManager: Got TOUCH event", since=mark, timeout=30)
+    settle(awake.nextion)
+    assert len(awake.panel.log_lines(r"BuzzerManager: Got \w+ event", since=mark)) == 1
+
+
+@lvgl_us_only
+@lvgl_only
 def test_brightness_slider_sends_slider_value_on_lvgl(awake):
     settle(awake.nextion)
     mark = awake.manager.command_mark()

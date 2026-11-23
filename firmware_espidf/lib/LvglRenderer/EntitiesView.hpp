@@ -22,6 +22,7 @@ struct EntitiesState {
   EntitySlot slots[MAX_SLOTS];
   bool can_prev = true;         // Header buttons
   bool can_next = true;
+  bool own_sound = false;       // A tap on a slot raises its own sound (scenes), so it gets no touch sound
   int save_progress = -1;       // 0-100 while a scene is held to be saved, else -1
 };
 

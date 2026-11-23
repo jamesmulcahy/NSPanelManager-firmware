@@ -67,6 +67,11 @@ esp_err_t LvglRenderer::start() {
   lv_indev_t *pointer = lv_indev_create();
   lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(pointer, LvglRenderer::_read_pointer);
+  lv_indev_add_event_cb(pointer, [](lv_event_t *event) {
+    if (LvglRenderer::on_press != nullptr) {
+      LvglRenderer::on_press((lv_obj_t *)lv_event_get_param(event));
+    }
+  }, LV_EVENT_PRESSED, NULL);
 
   // The terminal's touches, and a full repaint whenever it (re)starts: the display lost the picture.
   NextionTerminal::on_touch = LvglRenderer::inject_touch;

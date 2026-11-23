@@ -86,6 +86,13 @@ void set_tile_on(lv_obj_t *tile, bool on);
 void set_tile_outlined(lv_obj_t *tile, bool outlined);
 
 /**
+ * Mark a widget (and so its children) as one whose tap raises its own sound, so a press on it does
+ * not play the generic touch sound as well (LvglUi's press hook asks has_own_sound()).
+ */
+void set_own_sound(lv_obj_t *obj, bool own_sound);
+bool has_own_sound(lv_obj_t *obj);
+
+/**
  * A slider in a card, with an icon and the value: a row (icon, slider, value) when `vertical` is
  * false, a column (value, slider, icon) when true. The card grows along its parent's flow.
  */
