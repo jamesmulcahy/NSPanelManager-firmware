@@ -488,11 +488,11 @@ esp_err_t WebManager::_handle_uri_get_available_networks(httpd_req_t *req) {
 esp_err_t WebManager::_handle_uri_screenshot(httpd_req_t *req) {
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   if (!LvglUi::active()) {
-    // On NSPM's TFT the Nextion draws its own pages: the pixels never pass through the ESP32.
+    // No LVGL UI (legacy TFT, or no display answered): the ESP32 has no framebuffer to read back.
     httpd_resp_set_status(req, "409 Conflict");
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_sendstr(req, "No screenshot: this panel shows the Nextion display's own pages, which the firmware cannot read back. "
-                                   "Screenshots need the LVGL UI (an nspanel-terminal TFT).\n");
+    return httpd_resp_sendstr(req, "No screenshot: the LVGL UI is not running on this panel. "
+                                   "Screenshots need the nspanel-terminal TFT; install it with Update GUI.\n");
   }
 
   char query[64];
