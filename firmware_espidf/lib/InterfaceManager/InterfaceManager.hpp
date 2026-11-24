@@ -236,7 +236,6 @@ private:
   static inline std::string _screensaver_brightness_state_topic;
   static inline std::string _screensaver_mode_command_topic;
   static inline std::string _screensaver_mode_state_topic;
-  static inline std::string _screen_raw_commands;
-  // One COMMAND hold per topic above, in that order (screen_cmd, brightness, screensaver brightness, mode, raw).
-  static inline mqtt::Subscription _command_subscriptions[5];
+  // One COMMAND hold per topic above, in that order (screen_cmd, brightness, screensaver brightness, mode).
+  static inline mqtt::Subscription _command_subscriptions[4];
 };

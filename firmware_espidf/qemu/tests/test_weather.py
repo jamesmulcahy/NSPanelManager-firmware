@@ -101,7 +101,6 @@ def test_weather_is_drawn_on_the_screensaver_on_lvgl(weather):
     weather.manager.publish_weather()
 
     n.wait_for(lambda n: drawn(n, FORECAST_BOX, blank_forecast), timeout=60, what="the forecast drawn")
-    weather.panel.wait_for_log(r"ScreensaverPage: Forecast updated\. Successfully updated screensaver page with new weather data", timeout=30)
     settle(n)
     assert drawn(n, WEATHER_BOX, blank_weather)
     n.screenshot("weather")
