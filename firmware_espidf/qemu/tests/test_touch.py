@@ -4,12 +4,14 @@ Touches go through the TFT's own code (nextion_tools.emu runs gui.HMI), so which
 firmware, and when, is whatever the HMI's sendkey settings and scripts decide.
 """
 
+import json
+
 import pytest
 
 from nspm_qemu import gui
 from nspm_qemu.proto import nspanel as pb
-from shared_behaviour import (US_BRIGHTNESS_X0, US_BRIGHTNESS_X1, US_BRIGHTNESS_Y, US_ENTITIES_BUTTON, US_ROOM_FOOTER_BOX,
-                              awake, lvgl_only, lvgl_us_only, nextion_only, pick_room, region, settle, tap_ceiling)  # noqa: F401 (awake: a fixture)
+from shared_behaviour import (US_BRIGHTNESS_X0, US_BRIGHTNESS_X1, US_BRIGHTNESS_Y, US_ENTITIES_BUTTON, US_HOME_GAP, US_ROOM_FOOTER_BOX,
+                              awake, lvgl_only, lvgl_us_only, nextion_only, pick_room, region, settle, tap_ceiling, wait_until_quiet)  # noqa: F401 (awake: a fixture)
 
 Cmd = pb.NSPanelMQTTManagerCommand
 
@@ -171,3 +173,16 @@ def test_room_entities_button_opens_entities_page_on_lvgl(awake):
     settle(awake.nextion)
     awake.nextion.screenshot("entities")
     assert not awake.nextion.terminal.faults
+
+
+@lvgl_us_only
+@lvgl_only
+def test_tap_burst_leaves_no_stuck_press_on_lvgl(awake):
+    """Taps fired back to back (short holds, no pause) must not leave LVGL pressed: the next tap still clicks."""
+    settle(awake.nextion)
+    for _ in range(12):
+        awake.broker.publish("nspanel/%s/command" % awake.mac,
+                             json.dumps({"command": "lvgl_tap", "x": US_HOME_GAP[0], "y": US_HOME_GAP[1], "hold_ms": 20}))
+    wait_until_quiet(awake)
+    turn_on = tap_ceiling(awake)
+    assert turn_on.affect_lights == Cmd.CEILING_LIGHTS

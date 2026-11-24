@@ -34,6 +34,9 @@ public:
   // What activate() draws.
   enum class Screen : uint8_t { BOOT, PAGES };
 
+  // True once the LVGL UI owns the screen (touches reach it).
+  static bool is_active() { return LvglRenderer::_active; }
+
   /**
    * Whether start() succeeded.
    */
@@ -154,6 +157,8 @@ private:
   // kept for presses and releases (inject_touch()).
   static constexpr UBaseType_t TOUCH_QUEUE_LENGTH = 16;
   static constexpr UBaseType_t TOUCH_EDGE_RESERVE = 4;
+  // How long a press or release waits for a free slot before it counts as dropped.
+  static constexpr TickType_t TOUCH_EDGE_WAIT = pdMS_TO_TICKS(100);
   struct Touch {
     uint16_t x, y;
     bool pressed;
