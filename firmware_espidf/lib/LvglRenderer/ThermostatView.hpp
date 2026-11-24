@@ -2,10 +2,10 @@
 #include <lvgl.h>
 #include <string>
 
-// LVGL replacement for the Nextion `thermostat` page (lib/Pages/EntityPage, thermostats): the
+// The thermostat view (lib/Pages/EntityPage, thermostats): the
 // room temperature, the setpoint with down/up, and up to five options (HVAC mode, fan, preset,
 // swing, ...) each showing its current value. Selecting an option points the down/up buttons at
-// it, as the Nextion page does.
+// it.
 
 struct ThermostatOption {
   std::string name;        // "Mode", "Fan", "Preset"

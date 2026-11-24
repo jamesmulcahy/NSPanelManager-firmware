@@ -24,7 +24,8 @@ loop that `nspanel_terminal.cpp` runs in ESPHome's main loop.
 - A TFT's startup code sets the display's baud rate: NSPM's sets 115200, the terminal TFTs leave
   9600. A session tries the link's rate, then 9600 and 115200, for its setup; the receiver then
   moves to 4 Mbaud itself.
-- A terminal TFT has none of NSPM's pages: the panel shows only what LVGL draws.
+- A terminal TFT has none of NSPM's HMI pages: the panel shows only what LVGL draws. On NSPM's own
+  TFT the firmware does not open a session: it shows the legacy "Display update needed" screen.
 
 ## Receivers (`options_for()`)
 

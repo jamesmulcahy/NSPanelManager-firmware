@@ -24,7 +24,8 @@ Manager, which then offers them to its panels as an update.
 ## Testing
 
 `firmware_espidf/qemu/` boots the real firmware in Espressif's QEMU, against a fake NSPanel
-Manager, a real mosquitto and an emulated Nextion display running the NSPanel Manager TFT. Tests
+Manager, a real mosquitto and an emulated Nextion display running the LVGL terminal TFT (or NSPM's legacy
+TFT, for the migration tests). Tests
 touch the screen and check what the panel publishes and draws. You need `mosquitto` installed;
 the script fetches QEMU and the Python packages itself.
 
