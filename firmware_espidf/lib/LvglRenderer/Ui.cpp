@@ -243,6 +243,28 @@ void set_tile_on(lv_obj_t *tile, bool on) {
   set_bg_color(tile, on ? Theme::on_tint() : Theme::card());
 }
 
+static constexpr lv_obj_flag_t OWN_SOUND_FLAG = LV_OBJ_FLAG_USER_1;
+
+void set_own_sound(lv_obj_t *obj, bool own_sound) {
+  if (obj == NULL) {
+    return;
+  }
+  if (own_sound) {
+    lv_obj_add_flag(obj, OWN_SOUND_FLAG);
+  } else {
+    lv_obj_remove_flag(obj, OWN_SOUND_FLAG);
+  }
+}
+
+bool has_own_sound(lv_obj_t *obj) {
+  for (; obj != NULL; obj = lv_obj_get_parent(obj)) {
+    if (lv_obj_has_flag(obj, OWN_SOUND_FLAG)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void set_tile_outlined(lv_obj_t *tile, bool outlined) {
   int32_t width = outlined ? 2 : Theme::LIP_WIDTH;
   if (tile == NULL || lv_obj_get_style_border_width(tile, LV_PART_MAIN) == width) {

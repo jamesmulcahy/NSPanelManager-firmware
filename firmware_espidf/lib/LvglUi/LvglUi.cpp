@@ -76,6 +76,7 @@ bool LvglUi::init() {
   Nextion::set_commands_blocked(true);
   Nextion::set_brightness_redirect([](uint8_t brightness) { NextionTerminal::set_brightness(brightness); });
   LvglRenderer::touch_filter = LvglUi::_touch;
+  LvglRenderer::on_press = LvglUi::_pressed;
   // GUI task, after a region change rebuilt the screens: build the last view again.
   LvglRenderer::on_pages_rebuilt = LvglUi::_rebuild;
   // The page background (Background.hpp), drawn behind the pages screen's children.
@@ -178,6 +179,14 @@ bool LvglUi::suspend(uint32_t timeout_ms) {
   return free;
 }
 
+void LvglUi::_pressed(lv_obj_t *target) {
+  // GUI task. The touch sound, unless the widget pressed raises its own sound when tapped (a scene), so
+  // one tap never plays two. A press LVGL never sees (swallowed, screensaver) plays none, as before.
+  if (LvglUi::touch_sound && !Ui::has_own_sound(target)) {
+    LvglUi::defer([]() { BuzzerManager::raise_event(buzzer_event_t::TOUCH); }); // Not on this task
+  }
+}
+
 bool LvglUi::_touch(bool down, uint16_t x, uint16_t y) {
   // The terminal's task: no waiting here. A press is activity; so is the finger still being down.
   if (down) {
@@ -206,10 +215,6 @@ bool LvglUi::_touch(bool down, uint16_t x, uint16_t y) {
     LvglUi::_press_y = y;
     LvglUi::_press_us = now;
     LvglUi::_swiping = false;
-    if (LvglUi::touch_sound) {
-      // The touch sound, which BuzzerManager plays for the Nextion's touch events. Not on this task.
-      LvglUi::defer([]() { BuzzerManager::raise_event(buzzer_event_t::TOUCH); });
-    }
   }
   // A swipe: mostly one way, 80 px or more (LVGL's own gesture detection missed them on Office).
   const int dx = (int)x - LvglUi::_press_x, dy = (int)y - LvglUi::_press_y;

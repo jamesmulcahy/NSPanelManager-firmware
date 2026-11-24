@@ -107,6 +107,7 @@ private:
   static void _task(void *param);
   static void _tick();
   static bool _touch(bool down, uint16_t x, uint16_t y);
+  static void _pressed(lv_obj_t *target);
   static bool _screensaver_touch(bool down, uint16_t x, uint16_t y);
   static void _start_terminal();
   static void _rebuild(); // GUI task: build the last view again and apply its last state

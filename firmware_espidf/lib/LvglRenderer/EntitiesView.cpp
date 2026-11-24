@@ -138,6 +138,7 @@ void EntitiesView::show(const EntitiesState &state) {
     lv_obj_t *tile = EntitiesView::_tiles[i];
     const EntitySlot &slot = state.slots[i];
     bool shown = i < size && !slot.empty;
+    Ui::set_own_sound(tile, state.own_sound);
     // Empty slots keep their cell (the grid doesn't reflow) but draw nothing.
     Ui::set_visible(tile, shown);
     if (!shown) {

@@ -137,20 +137,12 @@ void BuzzerManager::_set_output(uint32_t frequency_hz) {
   ledc_update_duty(BuzzerManager::_ledc_mode, BuzzerManager::_ledc_channel);
 }
 
-void BuzzerManager::raise_event(buzzer_event_t event) {
+bool BuzzerManager::raise_event(buzzer_event_t event) {
   if (!BuzzerManager::_initialized) [[unlikely]] {
-    return;
+    return false;
   }
 
-  BuzzerManager::_handle_event(event);
-}
-
-void BuzzerManager::raise_event_for_touch(buzzer_event_t event) {
-  if (!BuzzerManager::_initialized) [[unlikely]] {
-    return; // The TOUCH_EVENT handler that clears _touch_event_replaced is not registered
-  }
-
-  BuzzerManager::_touch_event_replaced = BuzzerManager::_handle_event(event);
+  return BuzzerManager::_handle_event(event);
 }
 
 bool BuzzerManager::_handle_event(buzzer_event_t event) {
