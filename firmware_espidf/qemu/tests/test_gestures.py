@@ -47,8 +47,10 @@ def test_swipe_down_below_the_top_edge_does_not_open_the_menu(booted):
 
 def test_swipe_down_from_the_top_edge_opens_the_menu_from_the_entities_page(rig):
     rig.manager.config.default_page = pb.NSPanelConfig.ENTITIES
-    rig.boot()
+    # The page's state subscription can be made while booting, before the wake, so the mark goes
+    # before the boot (a fresh rig's broker starts empty: 0) and an earlier subscribe counts.
     events = rig.broker.event_mark()
+    rig.boot()
     rig.nextion.wake()
     rig.broker.wait_for_subscription(rig.panel.client_id, rig.manager.base + "/entity_pages/11/state", since=events)
     settle(rig.nextion)
