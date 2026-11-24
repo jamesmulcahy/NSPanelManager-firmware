@@ -49,7 +49,6 @@ private:
 
   static void _send_action(NSPanelMQTTManagerCommand__CoverCommand__Action action);
   static void _send_position(uint8_t position);
-  static void _send_tilt_position(uint8_t position);
 
   static const char *_state_text(NSPanelEntityState__Cover__CoverState state);
 
@@ -71,7 +70,5 @@ private:
   // reports that it reached it, or until the request times out.
   static inline std::atomic<int32_t> _pending_position = -1;
   static inline std::atomic<int64_t> _pending_position_requested_at = 0;
-  static inline std::atomic<int32_t> _pending_tilt_position = -1;
-  static inline std::atomic<int64_t> _pending_tilt_position_requested_at = 0;
   static constexpr int64_t _pending_position_timeout_us = 5 * 1000 * 1000;
 };

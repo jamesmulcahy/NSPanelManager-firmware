@@ -22,8 +22,6 @@ esp_err_t Nextion::init() {
   Nextion::_nextion_state_mutex = xSemaphoreCreateMutex();
   Nextion::_uart_write_mutex = xSemaphoreCreateMutex();
   Nextion::_event_wait_mutex = xSemaphoreCreateMutex();
-  Nextion::_event_wait_integer_mutex = xSemaphoreCreateMutex();
-  Nextion::_get_integer_mutex = xSemaphoreCreateMutex();
   // Registered once and never unregistered: unregistering from the default loop
   // while it is busy can deadlock it (see PageHandlers.hpp). The handler only
   // acts while a task is waiting in _wait_for_event().
@@ -47,8 +45,8 @@ esp_err_t Nextion::init() {
   }
 
   // PSRAM STACK, flash audit (the stack is unreachable while the flash cache is off, so nothing here may touch flash).
-  // The only handler on this loop is _uart_data_handler: it copies the frame, takes _event_wait_integer_mutex, notifies a
-  // task, or esp_event_post()s to the default loop (which runs the real handlers on sys_evt, not here), and logs. No
+  // The only handler on this loop is _uart_data_handler: it copies the frame, notifies a task or
+  // esp_event_post()s to the default loop (which runs the real handlers on sys_evt, not here), and logs. No
   // ConfigManager, NVS, LittleFS, OTA or esp_flash call is reachable. No IRAM_ATTR code or ISR runs on this stack
   // (the xtensa port switches to a per-core interrupt stack, port_IntStack).
   if (create_task_psram_stack(&Nextion::_task_uart_frame_loop, "uart_handle_data", NEXTION_UART_EVENT_LOOP_STACK_SIZE, NULL, 8, NULL, 1) != pdPASS) {
@@ -569,57 +567,9 @@ void Nextion::_uart_data_handler(void *arg, esp_event_base_t event_base, int32_t
 
   // ESP_LOGD("Nextion", "Read Nextion data: %.*s, size: %d", data->size(), data->data(), data->size());
 
-  if (data->data()[0] == NEX_RET_NUMBER_HEAD) {
-    // Got numeric data
-    if (data->size() >= 5) [[likely]] {
-      if (xSemaphoreTake(Nextion::_event_wait_integer_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        if (Nextion::_event_wait_integer_result != NULL) {
-          *Nextion::_event_wait_integer_result = data->data()[1];
-          *Nextion::_event_wait_integer_result += data->data()[2] << 8;
-          *Nextion::_event_wait_integer_result += data->data()[3] << 16;
-          *Nextion::_event_wait_integer_result += data->data()[4] << 24;
-        } else {
-          ESP_LOGE("Nextion", "Got integer data but _event_wait_integer_result is NULL. No place to store result!");
-        }
-
-        if (Nextion::_event_wait_integer != NULL) {
-          Nextion::_event_wait_integer_seen = true;
-          xTaskNotifyGive(Nextion::_event_wait_integer);
-        } else {
-          ESP_LOGE("Nextion", "Got integer data but _event_wait_integer is NULL. No task to notify about result!");
-        }
-        xSemaphoreGive(Nextion::_event_wait_integer_mutex);
-      } else {
-        ESP_LOGE("Nextion", "Failed to get _event_wait_integer_mutex while processing integer response.");
-        TaskHandle_t holding_task = xSemaphoreGetMutexHolder(Nextion::_event_wait_integer_mutex);
-        if (holding_task != NULL) {
-          char *task_name = pcTaskGetName(holding_task);
-          ESP_LOGE("Nextion", "Mutex held by: %s", task_name);
-        }
-      }
-    } else {
-      ESP_LOGE("Nextion", "Not enough bytes sent for 0x71 integer response.");
-    }
-  } else if (data->data()[0] == NEX_RET_EVENT_TOUCH_HEAD) {
-    if (data->size() >= 4) [[likely]] {
-      nextion_event_touch_t touch_event;
-      touch_event.page_number = data->data()[1];
-      touch_event.component_id = data->data()[2];
-      touch_event.pressed = data->data()[3];
-      // A touch that cannot be posted is lost for good, so say so rather than leave a press that did nothing.
-      esp_err_t post_result = esp_event_post(NEXTION_EVENT, nextion_event_t::TOUCH_EVENT, &touch_event, sizeof(touch_event), pdMS_TO_TICKS(16));
-      if (post_result != ESP_OK) [[unlikely]] {
-        ESP_LOGW("Nextion", "Dropped touch event for page %d component %d: %s", touch_event.page_number, touch_event.component_id, esp_err_to_name(post_result));
-      }
-    } else {
-      ESP_LOGE("Nextion", "Not enough bytes sent for 0x65 touch event.");
-    }
-  } else if (data->data()[0] == NEX_OUT_STRING_DATA) {
-    data->erase(data->begin());                // Remove first byte that represents the even type:
-    if (data->empty() || data->back() != '\n') [[likely]] { // Add termination char at end of string for proper processing when receiving the event.
-      data->push_back('\0');
-    }
-    esp_event_post(NEXTION_EVENT, nextion_event_t::STRING_EVENT, data->data(), data->size(), pdMS_TO_TICKS(16)); // TODO: Is there a better way than simply sending raw bytes as te length cannot be access when receiving the event
+  if (data->data()[0] == NEX_RET_NUMBER_HEAD || data->data()[0] == NEX_RET_EVENT_TOUCH_HEAD || data->data()[0] == NEX_OUT_STRING_DATA) {
+    // Query replies, touches and strings of the legacy TFT's own pages: nothing here asks or acts on them.
+    ESP_LOGV("Nextion", "Ignored display data 0x%02x (%zu bytes)", (unsigned)(uint8_t)data->data()[0], data->size());
   } else if (data->data()[0] == NEX_OUT_SLEEP) {
     esp_event_post(NEXTION_EVENT, nextion_event_t::SLEEP_EVENT, NULL, 0, pdMS_TO_TICKS(5000));
   } else if (data->data()[0] == NEX_RET_CMD_FINISHED) {
@@ -735,11 +685,7 @@ void Nextion::_write_locked(const std::string &command) {
   NextionWindow::write_locked(command);
 }
 
-esp_err_t Nextion::_send_command(const std::string &command, uint16_t mutex_timeout, bool bulk) {
-  if (Nextion::_commands_blocked) {
-    ESP_LOGV("Nextion", "Dropped (LVGL is the UI): %s", command.c_str());
-    return ESP_ERR_INVALID_STATE;
-  }
+esp_err_t Nextion::_send_command(const std::string &command, uint16_t mutex_timeout) {
   // Verify that the Nextion state is "running" as we don't want to send data that may interrupt other processes such as updating the GUI
   if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
     if (Nextion::_current_nextion_state != nextion_state_t::RUNNING) {
@@ -750,7 +696,7 @@ esp_err_t Nextion::_send_command(const std::string &command, uint16_t mutex_time
   }
 
   // Wait before taking the mutex, so other writers can still queue behind it meanwhile.
-  NextionWindow::wait_for_room(bulk ? NextionWindow::write_class::BULK : NextionWindow::write_class::NORMAL);
+  NextionWindow::wait_for_room();
   if (xSemaphoreTake(Nextion::_uart_write_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
     Nextion::_write_locked(command);
     xSemaphoreGive(Nextion::_uart_write_mutex);
@@ -760,33 +706,11 @@ esp_err_t Nextion::_send_command(const std::string &command, uint16_t mutex_time
 }
 
 esp_err_t Nextion::go_to_page(const char *page, uint16_t mutex_timeout) {
-  if (Nextion::_page_redirect != nullptr) {
-    Nextion::_page_redirect(page);
-    return ESP_OK;
-  }
   if (Nextion::_current_nextion_state == nextion_state_t::TERMINAL) {
     // The terminal owns the display; the page could not be sent, so don't stop what it draws.
     return ESP_ERR_INVALID_STATE;
   }
   return Nextion::_send_command(std::string("page ") + page, mutex_timeout);
-}
-
-esp_err_t Nextion::send_raw_command(const char *command, uint16_t mutex_timeout) {
-  return Nextion::_send_command(command, mutex_timeout);
-}
-
-esp_err_t Nextion::fill(const uint32_t x, const uint32_t y, const uint32_t width, const uint32_t height, const uint16_t color, uint16_t mutex_timeout, bool bulk) {
-  std::string command = "fill ";
-  command.append(std::to_string(x));
-  command.append(",");
-  command.append(std::to_string(y));
-  command.append(",");
-  command.append(std::to_string(width));
-  command.append(",");
-  command.append(std::to_string(height));
-  command.append(",");
-  command.append(std::to_string(color));
-  return Nextion::_send_command(command, mutex_timeout, bulk);
 }
 
 esp_err_t Nextion::set_component_text(const char *component_id, const char *text, uint16_t mutex_timeout) {
@@ -795,118 +719,6 @@ esp_err_t Nextion::set_component_text(const char *component_id, const char *text
   command.append(text);
   command.append("\"");
   return Nextion::_send_command(command, mutex_timeout);
-}
-
-esp_err_t Nextion::set_component_value(const char *component_id, int16_t value, uint16_t mutex_timeout) {
-  return Nextion::_send_command(std::string(component_id) + ".val=" + std::to_string(value), mutex_timeout);
-}
-
-esp_err_t Nextion::set_timer_value(const char *component_id, uint16_t value, uint16_t mutex_timeout) {
-  return Nextion::_send_command(std::string(component_id) + ".tim=" + std::to_string(value), mutex_timeout);
-}
-
-esp_err_t Nextion::set_component_pic(const char *component_id, uint8_t value, uint16_t mutex_timeout) {
-  return Nextion::_send_command(std::string(component_id) + ".pic=" + std::to_string(value), mutex_timeout);
-}
-
-esp_err_t Nextion::set_component_pic1(const char *component_id, uint8_t value, uint16_t mutex_timeout) {
-  return Nextion::_send_command(std::string(component_id) + ".pic1=" + std::to_string(value), mutex_timeout);
-}
-
-esp_err_t Nextion::set_component_pic2(const char *component_id, uint8_t value, uint16_t mutex_timeout) {
-  return Nextion::_send_command(std::string(component_id) + ".pic2=" + std::to_string(value), mutex_timeout);
-}
-
-esp_err_t Nextion::set_component_foreground(const char *component_id, uint16_t color, uint16_t mutex_timeout) {
-  return Nextion::_send_command(std::string(component_id) + ".pco=" + std::to_string(color), mutex_timeout);
-}
-
-esp_err_t Nextion::set_component_pco2(const char *component_id, uint16_t color, uint16_t mutex_timeout) {
-  return Nextion::_send_command(std::string(component_id) + ".pco2=" + std::to_string(color), mutex_timeout);
-}
-
-esp_err_t Nextion::set_component_visibility(const char *component_id, bool visibility, uint16_t mutex_timeout) {
-  // Remove page name from beginning of component_id as it doesn't work with "vis"-command.
-  std::string raw_component_name = component_id;
-  uint16_t dot_position = raw_component_name.find('.');
-  if (dot_position != std::string::npos && dot_position + 1 < raw_component_name.length()) { // A dot was found, remove page name.
-    raw_component_name = raw_component_name.substr(dot_position + 1);
-  }
-  return Nextion::_send_command("vis " + raw_component_name + (visibility ? ",1" : ",0"), mutex_timeout);
-}
-
-esp_err_t Nextion::get_component_integer_value(const char *component_id, int32_t *result, uint16_t timeout, uint16_t mutex_timeout) {
-  return Nextion::get_component_integer_attribute(component_id, "val", result, timeout, mutex_timeout);
-}
-
-esp_err_t Nextion::get_component_integer_attribute(const char *component_id, const char *attribute, int32_t *result, uint16_t timeout, uint16_t mutex_timeout) {
-  std::string expression = component_id;
-  expression.append(".").append(attribute);
-  return Nextion::get_integer_value(expression.c_str(), result, timeout, mutex_timeout);
-}
-
-esp_err_t Nextion::get_integer_value(const char *expression, int32_t *result, uint16_t timeout, uint16_t mutex_timeout) {
-  // Verify that the Nextion state is "running" as we don't want to send data that may interrupt other processes such as updating the GUI
-  if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
-    if (Nextion::_current_nextion_state != nextion_state_t::RUNNING) {
-      xSemaphoreGive(Nextion::_nextion_state_mutex);
-      return ESP_ERR_TIMEOUT;
-    }
-    xSemaphoreGive(Nextion::_nextion_state_mutex);
-  }
-
-  // There is one slot for the task waiting on a value, so a second caller waits its turn instead of failing.
-  if (xSemaphoreTake(Nextion::_get_integer_mutex, pdMS_TO_TICKS(mutex_timeout)) != pdTRUE) {
-    ESP_LOGE("Nextion", "Timed out waiting for another integer fetch to finish.");
-    return ESP_ERR_TIMEOUT;
-  }
-  esp_err_t fetch_result = Nextion::_get_integer_value(expression, result, timeout, mutex_timeout);
-  xSemaphoreGive(Nextion::_get_integer_mutex);
-  return fetch_result;
-}
-
-esp_err_t Nextion::_get_integer_value(const char *expression, int32_t *result, uint16_t timeout, uint16_t mutex_timeout) {
-  if (Nextion::_commands_blocked) {
-    ESP_LOGV("Nextion", "Dropped (LVGL is the UI): get %s", expression);
-    return ESP_ERR_INVALID_STATE;
-  }
-  if (xSemaphoreTake(Nextion::_event_wait_integer_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
-    if (Nextion::_event_wait_integer == NULL) {
-      Nextion::_event_wait_integer = xTaskGetCurrentTaskHandle();
-      Nextion::_event_wait_integer_result = result;
-      Nextion::_event_wait_integer_seen = false;
-      xSemaphoreGive(Nextion::_event_wait_integer_mutex);
-    } else {
-      ESP_LOGE("Nextion", "Got mutex but _event_wait_integer is not NULL while fetching integer, cancel operation.");
-      xSemaphoreGive(Nextion::_event_wait_integer_mutex);
-      return ESP_ERR_TIMEOUT;
-    }
-  } else {
-    ESP_LOGE("Nextion", "Failed to take _event_wait_integer_mutex while fetching integer value.");
-    return ESP_ERR_TIMEOUT;
-  }
-
-  NextionWindow::wait_for_room();
-  if (xSemaphoreTake(Nextion::_uart_write_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
-    Nextion::_write_locked(std::string("get ") + expression);
-    xSemaphoreGive(Nextion::_uart_write_mutex);
-  } else {
-    ESP_LOGE("Nextion", "Failed to take _uart_write_mutex while fetching integer value.");
-    Nextion::_event_wait_integer = NULL;
-    Nextion::_event_wait_integer_result = NULL;
-    return ESP_ERR_TIMEOUT;
-  }
-
-  // Wait for result
-  bool wait_result = Nextion::_wait_for_flag(Nextion::_event_wait_integer_seen, timeout);
-
-  if (xSemaphoreTake(Nextion::_event_wait_integer_mutex, portMAX_DELAY) == pdTRUE) {
-    Nextion::_event_wait_integer = NULL;
-    Nextion::_event_wait_integer_result = NULL;
-    xSemaphoreGive(Nextion::_event_wait_integer_mutex);
-  }
-
-  return wait_result ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 std::string Nextion::identity() {

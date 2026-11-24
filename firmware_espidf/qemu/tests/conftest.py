@@ -95,7 +95,7 @@ def pytest_collection_modifyitems(config, items):
 
 
 def _require_firmware():
-    # Checked when a test needs a panel, so tests that need none (test_gui_data) run without.
+    # Checked when a test needs a panel, so tests that need none run without.
     build_dir = os.environ.get("NSPM_QEMU_BUILD_DIR", DEFAULT_BUILD_DIR)
     if not os.path.exists(os.path.join(build_dir, "firmware.bin")):
         pytest.exit("no firmware in %s; build it with `pio run -e qemu` (or use qemu/run_tests.sh)" % build_dir, 2)
@@ -190,10 +190,3 @@ def booted(rig):
     """A panel that has registered, received config, and is idle on its screensaver."""
     rig.boot()
     return rig
-
-
-@pytest.fixture
-def home(booted):
-    """A panel woken from its screensaver to the home page."""
-    booted.wake_to_home()
-    return booted

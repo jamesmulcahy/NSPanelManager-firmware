@@ -1,6 +1,7 @@
-"""Library: fetches the TFT's Nextion project (gui.HMI) from NSPanelManager, caches it under
-qemu/build/hmi/, and parses it once per run. The fake display (fake_nextion.py) uses it to know
-which pages, components and ids exist, and test_gui_data.py checks the firmware against it.
+"""Library: fetches NSPM's legacy TFT's Nextion project (gui.HMI) from NSPanelManager, caches it under
+qemu/build/hmi/, and parses it once per run. Only test_legacy_tft.py uses it: its boot screen's fonts
+and field sizes, to check that what LoadingPage writes there fits (the fake display itself
+(fake_nextion.py) runs no HMI).
 
 - by default, the HMI at the commit in qemu/nspanelmanager.ref (see upstream.py),
 - NSPM_HMI=<path> uses a local file instead, e.g. an HMI that is not pushed yet,

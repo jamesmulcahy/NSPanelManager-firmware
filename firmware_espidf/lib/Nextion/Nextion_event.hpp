@@ -10,8 +10,6 @@ enum nextion_event_t {
   RECEIVED_DATA,
   CONNECTED,
   RECEIVED_NSPM_FLAG,
-  TOUCH_EVENT,
-  STRING_EVENT,
   SLEEP_EVENT,
   WAKE_EVENT,
   UPDATE_STARTED,
@@ -19,23 +17,4 @@ enum nextion_event_t {
   UPDATE_JUMP_TO_OFFSET,
   UPDATE_FINISHED,
   DISPLAY_RESTARTED, // The display restarted while running and is back on its startup page.
-};
-
-struct nextion_event_data_t {
-  // Numbes of bytes read
-  size_t data_size;
-
-  // Data buffer
-  char *data;
-};
-
-struct nextion_event_touch_t {
-  // What page was pressed
-  uint8_t page_number;
-
-  // What component was pressed
-  uint8_t component_id;
-
-  // Was it a press or release event
-  bool pressed;
 };

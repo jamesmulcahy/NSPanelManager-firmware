@@ -2,7 +2,7 @@
 #include <lvgl.h>
 #include <string>
 
-// LVGL replacement for the `cover` page (lib/Pages/CoverPage, CoverPage.md): state, a position
+// LVGL replacement for the `cover` page (lib/Pages/CoverPage): state, a position
 // slider, and open / stop / close.
 
 struct CoverState {

@@ -71,11 +71,11 @@ jobs:
           # NSPM's own (legacy) TFT (terminal: nextion; unset would mean the LVGL UI). The firmware has no HMI
           # pages, so all it shows there is the legacy screen (test_legacy_tft), until a GUI update installs the
           # terminal TFT: the GUI updates that start on NSPM's TFT (hmi-to-hmi, and hmi-to-terminal, the
-          # migration) run here and in gui-updates. test_gui_data checks the names the firmware uses from the
-          # HMI, the boot screen's among them. Everything else runs on the terminal display, below.
+          # migration) run here and in gui-updates. test_legacy_tft reads the pinned HMI for the boot screen's
+          # fonts and field sizes. Everything else runs on the terminal display, below.
           - display: legacy-tft
             terminal: nextion
-            tests: "test_legacy_tft or test_gui_data or (test_gui_update and not test_gui_update_faults)"
+            tests: "test_legacy_tft or (test_gui_update and not test_gui_update_faults)"
             marks: ""
             timeout: 60
           # The GUI update tests, also on NSPM's TFT. Each flashes the panel and reboots it, often more

@@ -23,7 +23,7 @@ struct HomeState {
   Edit edit = Edit::ALL;
   int brightness = 0;       // The slider: the average, or the edited group's
   int color_temperature = 0; // 0-100, warm to cool
-  bool entities = true;      // The room's entities button (room mode only, as on the Nextion page)
+  bool entities = true;      // The room's entities button (room mode only)
   // What the room's main-page lights have (NSPanelRoomStatus): a control for what it has none of is
   // hidden. All true until known, so that a panel with an older manager shows everything, as before.
   bool has_ceiling = true;          // Ceiling lights: the Ceiling tile

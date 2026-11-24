@@ -483,7 +483,7 @@ void EntityPage::_lvgl_render_light() {
   view.name = LvglText::utf8(light->name);
   view.can_color = light->can_color;
   view.can_temperature = light->can_color_temp;
-  // As the Nextion page: a light that does only one shows that one, whatever mode it reports.
+  // A light that does only one shows that one, whatever mode it reports.
   view.color_mode = light->can_color && (!light->can_color_temp || EntityPage::_current_mode == _entity_page_modes::LIGHT_RGB);
   view.brightness = light->brightness;
   view.color_temperature = light->color_temp;

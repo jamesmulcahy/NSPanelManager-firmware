@@ -15,7 +15,6 @@
 void CoverPage::unshow() {
   CoverPage::_showing = false;
   CoverPage::_pending_position = -1;
-  CoverPage::_pending_tilt_position = -1;
 }
 
 const char *CoverPage::_state_text(NSPanelEntityState__Cover__CoverState state) {
@@ -51,7 +50,6 @@ void CoverPage::update_display(const NSPanelEntityState__Cover *cover, bool page
       };
     }
     CoverPage::_pending_position = -1;
-    CoverPage::_pending_tilt_position = -1;
 
     if (cover->can_set_position) {
       CoverPage::_current_edit_mode = CoverPage::_edit_mode::POSITION;
@@ -135,18 +133,6 @@ void CoverPage::_send_position(uint8_t position) {
   CoverPage::_send_command(&command);
 }
 
-void CoverPage::_send_tilt_position(uint8_t position) {
-  NSPanelMQTTManagerCommand__CoverCommand command = NSPANEL_MQTTMANAGER_COMMAND__COVER_COMMAND__INIT;
-  command.cover_id = CoverPage::_cover_id;
-  command.has_position = false;
-  command.position = 0;
-  command.has_tilt_position = true;
-  command.tilt_position = position;
-  CoverPage::_pending_tilt_position = position;
-  CoverPage::_pending_tilt_position_requested_at = esp_timer_get_time();
-  CoverPage::_send_command(&command);
-}
-
 void CoverPage::_lvgl_action(int action, int32_t value) {
   if (!CoverPage::_showing) {
     return; // Left the page before the action got here.
@@ -161,7 +147,7 @@ void CoverPage::_lvgl_action(int action, int32_t value) {
     EntitiesPage::show(EntitiesPage::display_type_t::ENTITIES);
     return;
   case CoverView::Action::OPEN:
-    // As the Nextion page's open button: a cover that can only be positioned opens to 100.
+    // A cover that can only be positioned opens to 100.
     if (cover->can_open) {
       CoverPage::_send_action(NSPANEL_MQTTMANAGER_COMMAND__COVER_COMMAND__ACTION__OPEN);
     } else if (cover->can_set_position) {
@@ -183,7 +169,7 @@ void CoverPage::_lvgl_action(int action, int32_t value) {
       return;
     }
     CoverPage::_send_position(static_cast<uint8_t>(value));
-    // Show the requested position until the cover reports it, as the Nextion page does.
+    // Show the requested position until the cover reports it.
     CoverPage::update_display(cover, false);
     return;
   }

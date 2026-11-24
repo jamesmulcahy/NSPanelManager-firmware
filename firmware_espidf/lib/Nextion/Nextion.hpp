@@ -42,23 +42,11 @@ public:
   static esp_err_t go_to_page(const char *page, uint16_t mutex_timeout);
 
   /**
-   * When set, go_to_page() sends nothing and hands the page's name to `hook` instead, on the
-   * caller's task: the display has no Nextion pages (LvglUi, on a terminal TFT).
-   */
-  static void set_page_redirect(void (*hook)(const char *page)) { Nextion::_page_redirect = hook; }
-
-  /**
    * When set, set_brightness_level() hands the level to `hook` instead of sending dim= (LvglUi:
-   * the terminal receiver sets the backlight while it owns the display).
+   * the terminal receiver sets the backlight while it owns the display; a no-op where nothing
+   * may be sent to the display at all).
    */
   static void set_brightness_redirect(void (*hook)(uint8_t brightness)) { Nextion::_brightness_redirect = hook; }
-
-  /**
-   * While set, every command (set_component_*, send_raw_command, fills, ...) is dropped at once
-   * with ESP_ERR_INVALID_STATE: the display has no Nextion pages to send them to (LvglUi). The
-   * terminal, the connect sequence and TFT updates write to the UART by other means.
-   */
-  static void set_commands_blocked(bool blocked) { Nextion::_commands_blocked = blocked; }
 
   /**
    * The display's last `connect` reply ("comok 2,30614-0,NX4832F035_011C,94,61744,..."), empty
@@ -72,39 +60,7 @@ public:
   static bool nspm_flag_received() { return Nextion::_has_received_nspm_flag; }
 
   /**
-   * @brief Send command to set Nextion display in "sleep mode"
-   */
-  static void sleep();
-
-  /**
-   * @brief Send command to wake Nextion display from "sleep mode"
-   */
-  static void wake();
-
-  /**
-   * @brief Send raw command data to the Nextion display.
-   * @param command: The raw command to send
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t send_raw_command(const char *command, uint16_t mutex_timeout);
-
-  /**
-   * @brief Send raw command data to the Nextion display.
-   * @param x: Start X of rectangle
-   * @param y: Start Y of rectangle
-   * @param width: The width of the rectangle
-   * @param height: The height of the rectangle
-   * @param color: The 565 color value to fill the rectangle with
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @param bulk: True for one of a long run of fills nobody is waiting on, such as an image drawn
-   *              fill by fill. It then leaves room in the display's buffer for other writes.
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t fill(const uint32_t x, const uint32_t y, const uint32_t width, const uint32_t height, const uint16_t color, uint16_t mutex_timeout, bool bulk = false);
-
-  /**
-   * @brief Set the text on the given component
+   * @brief Set the text on the given component (the legacy TFT's boot screen is all this is used for)
    * @param component_id: The component to change
    * @param text: What text is to be displayed
    * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
@@ -113,115 +69,10 @@ public:
   static esp_err_t set_component_text(const char *component_id, const char *text, uint16_t mutex_timeout);
 
   /**
-   * @brief Set the integer value of the given component
-   * @param component_id: The component to change
-   * @param value: The new value for the component
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_component_value(const char *component_id, int16_t value, uint16_t mutex_timeout);
-
-  /**
-   * @brief Set the timeout value of the given timer, ie. how long should the timer run before triggering
-   * @param timer_id: The timer to change
-   * @param value: The new timeout for the timer
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_timer_value(const char *timer_id, uint16_t value, uint16_t mutex_timeout);
-
-  /**
-   * @brief Set the picture value of the given component (ie. the "pic" field in Nextion editor)
-   * @param component_id: The component to change
-   * @param value: The new value for the component
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_component_pic(const char *component_id, uint8_t value, uint16_t mutex_timeout);
-
-  /**
-   * @brief Set the second picture value of the given component (ie. the "pic1" field in Nextion editor)
-   * @param component_id: The component to change
-   * @param value: The new value for the component
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_component_pic1(const char *component_id, uint8_t value, uint16_t mutex_timeout);
-
-  /**
-   * @brief Set the "pressed" picture value of the given component (ie. the "pic2" field in Nextion editor)
-   * @param component_id: The component to change
-   * @param value: The new value for the component
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_component_pic2(const char *component_id, uint8_t value, uint16_t mutex_timeout);
-
-  /**
-   * @brief Set the component foreground color
-   * @param component_id: The component to change
-   * @param value: The new foreground color
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_component_foreground(const char *component_id, uint16_t value, uint16_t mutex_timeout);
-
-  /**
-   * @brief Set the component pco2 color
-   * @param component_id: The component to change
-   * @param value: The new pco2 color
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_component_pco2(const char *component_id, uint16_t value, uint16_t mutex_timeout);
-
-  /**
-   * @brief Set a component visibility
-   * @param component_id: The component to show or hide
-   * @param visible: "true" for shown, "false" for hidden
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return ESP_OK or ESP_ERR_TIMEOUT
-   */
-  static esp_err_t set_component_visibility(const char *component_id, bool visible, uint16_t mutex_timeout);
-
-  /**
-   * Request the current value of a component on the Nextion display
-   * @param component_id: The ID of the component to request a value from
-   * @param result: Pointer to where to save the value
-   * @param timeout: The amount of time to wait for an answer in ms
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return: Return ESP_ERR_TIMEOUT if no value was returned within the given timeout
-   */
-  static esp_err_t get_component_integer_value(const char *component_id, int32_t *result, uint16_t timeout, uint16_t mutex_timeout);
-
-  /**
-   * Request an integer attribute of a component on the Nextion display, for example "id"
-   * @param component_id: The name of the component to request the attribute from
-   * @param attribute: The attribute to request, without the leading "."
-   * @param result: Pointer to where to save the value
-   * @param timeout: The amount of time to wait for an answer in ms
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return: Return ESP_ERR_TIMEOUT if no value was returned within the given timeout
-   */
-  static esp_err_t get_component_integer_attribute(const char *component_id, const char *attribute, int32_t *result, uint16_t timeout, uint16_t mutex_timeout);
-
-  /**
-   * Request the value of an integer expression on the Nextion display, for example "dp" for the
-   * current page. The display handles commands in order, so the answer also means that everything
-   * sent before it has been processed.
-   * @param expression: What to get, as written after "get "
-   * @param result: Pointer to where to save the value
-   * @param timeout: The amount of time to wait for an answer in ms
-   * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return: Return ESP_ERR_TIMEOUT if no value was returned within the given timeout
-   */
-  static esp_err_t get_integer_value(const char *expression, int32_t *result, uint16_t timeout, uint16_t mutex_timeout);
-
-  /**
-   * Request the current value of a component on the Nextion display
+   * Set the display's brightness (backlight level).
    * @param brightness: The new brightness for the screen
    * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @return: Return ESP_ERR_TIMEOUT if no value was returned within the given timeout
+   * @return ESP_OK or ESP_ERR_TIMEOUT
    */
   static esp_err_t set_brightness_level(uint8_t brightness, uint16_t mutex_timeout);
 
@@ -375,20 +226,14 @@ private:
    * @brief Send one command, if the display is running. Every public command goes through here.
    * @param command: The command, without its 0xFF 0xFF 0xFF terminator.
    * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex
-   * @param bulk: Wait for room as a bulk writer (see NextionWindow::write_class).
    * @return ESP_OK or ESP_ERR_TIMEOUT
    */
-  static esp_err_t _send_command(const std::string &command, uint16_t mutex_timeout, bool bulk = false);
+  static esp_err_t _send_command(const std::string &command, uint16_t mutex_timeout);
 
   /**
    * @brief Write one command and its terminator. The caller holds _uart_write_mutex.
    */
   static void _write_locked(const std::string &command);
-
-  /**
-   * @brief get_integer_value() for one caller at a time. The caller holds _get_integer_mutex.
-   */
-  static esp_err_t _get_integer_value(const char *expression, int32_t *result, uint16_t timeout, uint16_t mutex_timeout);
 
 private:
   // Runs _handle_uart_data_event_loop (created without a task, so this one can have its stack in PSRAM).
@@ -415,21 +260,6 @@ private:
 
   // Set when the event _event_wait_task waits for has arrived (under _event_wait_mutex)
   static inline std::atomic<bool> _event_wait_seen = false;
-
-  // Mutex to only allow one task at the time to access the variables for "event_wait_integer"
-  static inline SemaphoreHandle_t _event_wait_integer_mutex;
-
-  // Held for the whole of an integer fetch, so only one runs at a time
-  static inline SemaphoreHandle_t _get_integer_mutex;
-
-  // The task that requested an integer value from the Nextion display and is currently waiting
-  static inline TaskHandle_t _event_wait_integer;
-
-  // The value that was received from the display
-  static inline int32_t *_event_wait_integer_result;
-
-  // Set when the integer _event_wait_integer waits for has arrived (under _event_wait_integer_mutex)
-  static inline std::atomic<bool> _event_wait_integer_seen = false;
 
   // Waits for this task's notification until `seen` is set or timeout_ms passes. The waits above
   // share the task's one notification slot with whatever else the task waits for (the terminal
@@ -465,7 +295,5 @@ private:
 
   static inline std::atomic<uint32_t> _link_baud = 0;
   static inline std::atomic<link_baud_result_t> _link_baud_result = link_baud_result_t::NOT_REQUESTED;
-  static inline void (*_page_redirect)(const char *page) = nullptr;
-  static inline std::atomic<bool> _commands_blocked = false;
   static inline void (*_brightness_redirect)(uint8_t brightness) = nullptr;
 };

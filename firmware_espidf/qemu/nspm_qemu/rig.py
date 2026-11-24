@@ -143,14 +143,6 @@ class Rig:
             self.nextion.wait_for_terminal(timeout=60)
         self.panel.check_alive()
 
-    def wake_to_home(self) -> None:
-        """Touch the screensaver, as a user would, and wait for the home page to be drawn."""
-        self.nextion.wake()
-        self.nextion.wait_for_page("home")
-        # The room label is the last thing HomePage::_update_display() writes
-        # on first show; once it is there the page is fully rendered.
-        self.nextion.wait_for(lambda n: n.get("home.room.txt") is not None, what="home page rendered")
-
     def set_tft(self, data: bytes, installs: Optional[str] = None) -> None:
         """Stage a TFT on the manager, and have the display accept it as a valid GUI. With
         installs="terminal" it is the terminal TFT: a display running NSPM's HMI runs the terminal
