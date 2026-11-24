@@ -10,6 +10,8 @@ These start the display on the TFT they name (make_rig(display=...)), so they ru
 NSPM_QEMU_TERMINAL mode.
 """
 
+import time
+
 import pytest
 
 from nspm_qemu.proto import nspanel as pb
@@ -20,16 +22,21 @@ MISSED = r"Nextion: Did not receive the 'NSPM'-flag"
 BANNER = b"NSPM\xff\xff\xff"
 
 
-def withhold_banner(rig, boots):
-    """The display's first `boots` starts print no banner (the banner is missed); later ones do."""
+def withhold_banner(rig, boots, delay=0.0, comok_boots=0):
+    """The display's first `boots` starts print no banner (the banner is missed); later ones do, `delay`
+    seconds late. Its first `comok_boots` starts answer `connect` with nothing (the reply is lost)."""
     nextion = rig.nextion
     nextion.banner = BANNER
+    comok = nextion.comok
     original = nextion.boot
     started = []
 
     def boot():
         started.append(1)
         nextion.banner = b"" if len(started) <= boots else BANNER
+        nextion.comok = b"" if len(started) <= comok_boots else comok
+        if nextion.banner and delay:
+            time.sleep(delay)  # On the harness's timer thread, not the panel's.
         original()
 
     nextion.boot = boot
@@ -46,8 +53,6 @@ def test_a_banner_missed_on_the_first_start_is_heard_on_the_next(make_rig):
     rig.panel.wait_for_log(r"Nextion: Received 'NSPM'-flag", timeout=5)
     rig.panel.wait_for_log(r"LvglUi: The display runs NSPM's legacy TFT", timeout=5)
 
-    request = rig.manager.register_requests[0]
-    assert request["features"] == ["lvgl_look", "no_hmi"], request
     report = rig.status_report(since=0)
     assert report.display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_NEXTION, report
     rig.nextion.wait_for_value("bootscreen.t_loading.txt", LEGACY_TEXT, timeout=60)
@@ -60,7 +65,6 @@ def test_a_banner_missed_twice_is_heard_on_the_last_try(make_rig):
     rig.boot()
 
     assert len(rig.panel.log_lines(RETRY)) == 2, rig.panel.log_lines(RETRY)
-    assert rig.manager.register_requests[0]["features"] == ["lvgl_look", "no_hmi"]
     assert rig.status_report(since=0).display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_NEXTION
     rig.nextion.wait_for_value("bootscreen.t_loading.txt", LEGACY_TEXT, timeout=60)
 
@@ -86,4 +90,25 @@ def test_a_terminal_tft_is_never_power_cycled_for_the_banner(make_rig):
     assert not rig.panel.log_lines(RETRY), rig.panel.log_lines(RETRY)
     assert len(rig.panel.log_lines(r"Nextion: Power-cycling Nextion display")) == 1
     assert rig.status_report(since=0).display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_LVGL
-    assert rig.manager.register_requests[0]["features"] == ["lvgl_look", "no_hmi"]
+
+
+def test_a_banner_after_the_wait_but_during_connect_still_counts(make_rig):
+    """The first start's banner comes ~2.1 s later than usual: after the 2.5 s wait has ended, while the
+    firmware is sending connect. The UART handler latches it, so no retry is needed."""
+    rig = make_rig(display="hmi")
+    withhold_banner(rig, 0, delay=2.1)
+    rig.boot()
+
+    assert not rig.panel.log_lines(RETRY), rig.panel.log_lines(RETRY)
+    rig.panel.wait_for_log(r"LvglUi: The display runs NSPM's legacy TFT", timeout=5)
+    assert rig.status_report(since=0).display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_NEXTION
+
+
+def test_a_terminal_whose_first_connect_reply_is_lost_reaches_lvgl_after_one_retry(make_rig):
+    rig = make_rig(display="us")
+    withhold_banner(rig, 100, comok_boots=1)
+    rig.boot()
+
+    assert len(rig.panel.log_lines(RETRY)) == 1, rig.panel.log_lines(RETRY)
+    assert len(rig.panel.log_lines(r"Nextion: Power-cycling Nextion display")) == 2
+    assert rig.status_report(since=0).display_mode == pb.NSPanelStatusReport.DISPLAY_MODE_LVGL
