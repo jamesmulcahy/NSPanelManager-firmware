@@ -4,19 +4,20 @@ On a panel whose display runs an [nspanel-terminal](https://github.com/ptaru/nsp
 the firmware draws every page itself with [LVGL](https://lvgl.io) 9.6 and streams the pixels to the
 display at 4 Mbaud. LVGL is the only UI: on NSPanel Manager's own (legacy) TFT the firmware shows
 no pages, only "Display update needed" on the TFT's boot screen, until a GUI update installs the
-terminal TFT. NSPM's pages, data, navigation and manager protocol are unchanged; only the drawing moves.
+terminal TFT. The pages, data, navigation and manager protocol are those of NSPanel Manager; only
+the drawing is the firmware's own.
 
 ## How it fits together
 
 | Part | Where | Does |
 |---|---|---|
 | Mode | `lib/LvglUi/LvglUi.cpp` (`init()`) | LVGL is the UI when the display reports a terminal TFT (`NextionTerminal::is_receiver()`) and sent no NSPM startup flag. Otherwise there is no UI (`InterfaceManager` shows no page but `LoadingPage`): on NSPM's TFT the legacy screen (`DISPLAY_MODE_NEXTION`, register_request feature `no_hmi`), on anything else nothing (`DISPLAY_MODE_TERMINAL_IDLE`) |
-| Page adapters | `lib/Pages/*` (`LvglUi::active()` branches) | Where a page would drive the Nextion, it hands a view's state to `LvglUi::show()`; view actions call the same handlers the Nextion touch events did |
+| Page controllers | `lib/Pages/*` | Keep the page state, timers and manager commands. Each hands a view's state to `LvglUi::show()`; a view's actions call the controller's handlers. `InterfaceManager` runs no page controller unless `LvglUi::active()` |
 | Host | `lib/LvglUi/` | Screensaver timeout and wake, gestures (below), touch sound, backlight, album art fetch (`LvglArt`), Latin-1 text (`LvglText`) |
 | Views | `lib/LvglRenderer/*View.cpp`, `Theme`, `Ui`, `Background` | The screens, free of ESP-IDF (the host simulator builds them) |
 | Renderer | `lib/LvglRenderer/LvglRenderer.cpp` | LVGL's task, draw buffer, touch input, boot screen |
 | Transport | `lib/NextionTerminal/` | The terminal session; see its README |
-| Nextion | `lib/Nextion/` | In LVGL mode: brightness goes to the receiver; nothing else is sent on the display. On the legacy TFT: the boot screen's page and texts |
+| Nextion serial driver | `lib/Nextion/` | The UART link to the display. In LVGL mode: brightness goes to the receiver; nothing else is sent on the display. On the legacy TFT: the boot screen's page and texts, and the TFT upload (`UpdateManager::update_gui`) |
 
 Threads: LVGL runs on its own task (core 1) and nothing else calls it; other tasks `post()` work to
 it. View actions run there too, so they `LvglUi::defer()` anything that publishes or changes pages.
@@ -56,18 +57,13 @@ nor `color_temperature_lights_known`, and a missing count must not read as 0 (th
 it always has). `average_color_temperature` can't tell either: it is 0 both without such lights and
 in a room turned fully warm.
 
-The Nextion home page is unchanged. Its cards, icons and slider tracks are drawn in the page's
-background picture, and the controls are crops of it (`sta = 0`, `picc` = the background), so
-`vis` would leave the card and its artwork in place with nothing to drag. Hiding them cleanly needs
-new background pictures for every combination, i.e. an HMI change.
-
 ## Commands
 
 On `nspanel/<MAC>/command`:
 
 | Command | Effect |
 |---|---|
-| `{"command": "lvgl_ui", "enable": false}` | No longer supported: logged and ignored (it kept the HMI pages, which are gone). A saved `lvgl_ui: false` in `config.json` is ignored too (and left out whenever the file is next written) |
+| `{"command": "lvgl_ui", "enable": false}` | Removed. Older firmware used it to switch back to the Nextion pages, which no longer exist: it is logged and ignored. A saved `lvgl_ui: false` in `config.json` is ignored too (and left out whenever the file is next written) |
 | `{"command": "lvgl_background", "preset": "ocean"}` | Page background: `none`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported, see "The look") |
 | `{"command": "lvgl_theme", "theme": "grey"}` | Colours (`Theme::Palette`): `auto` (the default: the background's own palette, `dark` without one), `dark`, `grey`, `ocean`, `dusk`, `aurora`, `peaks`, `vesuvius`, `parthenon` (saved; applied at once; reported). `light` is taken as `grey`: the white palette it named was too bright from above. A tile or menu item that is on takes the palette's accent, mixed into its card |
 | `{"command": "loop_watchdog", "enable": true}` | Turn the event-loop watchdog (`EventLoopWatchdog`) on or off: when the default event loop stops dispatching for 15 s it logs every task's backtrace. Off by default (it costs a task and its stack). Saved in `config.json` and applied at once, with no reboot; a repeat of the current state does nothing. Without `enable` it logs the current state. Not LVGL-specific, listed here with the other panel commands |
@@ -128,8 +124,9 @@ answers to anything, so one sent on registration would overtake a report still o
 | Sends config fields and commands but not reports (`feat/lvgl-panel-mode`) | A pick works and survives reboots. It stays unconfirmed: configs with the manager's look are ignored, and the report is sent again (to nobody) with each config, at most every 10 s. A command (a change in the manager's settings, or the look it sends once per manager start) replaces the pick. To keep picks, leave the panel's look on "Keep the panel's own" there |
 | Neither (upstream NSPM) | A pick works and survives reboots; the config's look fields are absent (empty), so nothing replaces it. The report goes to a topic nobody subscribes to: no error on the manager |
 
-The status report also says what the display shows (`display_mode`: `NEXTION`, `LVGL`, or
-`TERMINAL_IDLE` for a terminal TFT with LVGL off or failed to start; `LvglUi::display_mode()`) and,
+The status report also says what the display shows (`display_mode`: `LVGL`; `NEXTION` for NSPM's legacy
+TFT, which has only the "Display update needed" screen; or `TERMINAL_IDLE` when there is no UI and
+nothing to write on, e.g. LVGL failed to start; `LvglUi::display_mode()`) and,
 in LVGL mode, the look in use (`lvgl_theme`, `lvgl_background`).
 
 The protobuf-c files in `lib/ProtoBuf` are copied from NSPanelManager's `protobuf_firmware/` on
@@ -163,7 +160,7 @@ this; `0` while the terminal restarts or after a band failed), `Cache-Control: n
 |---|---|
 | 200 | The image |
 | 400 | `format` is not `png`, `bmp` or `raw` |
-| 409 | The panel shows NSPM's Nextion pages (`LvglUi` not active): the Nextion draws those itself and nothing can be read back |
+| 409 | The panel has no LVGL UI (`LvglUi` not active): on NSPM's legacy TFT the display draws its own boot screen and nothing can be read back |
 | 503 | Another screenshot is under way, no PSRAM for the 300 KB copy, the GUI queue is full, or the GUI task took over 2 s (`Retry-After: 1`) |
 
 How (`LvglRenderer::capture()`, `lib/LvglUi/LvglScreenshot.cpp`, `WebManager`): neither the ESP32 nor
@@ -183,11 +180,16 @@ ms` with the web server task's unused stack.
 
 ## Putting a panel on it
 
-1. Stage firmware with LVGL mode. Panels on NSPM's TFT ignore it.
-2. Build the TFT: nspanel-terminal's tools and base TFTs, then `tools/terminal_us_state2.py` for a
-   US panel (see the NextionTerminal README), and upload it to a TFT slot on the manager.
-3. Point the panel's TFT setting at that slot, then update its GUI. To roll back, point it at NSPM's
-   TFT again and update; the firmware follows the TFT.
+1. Stage the firmware.
+2. Build the terminal TFT: nspanel-terminal's tools and base TFTs, then `tools/terminal_us_state2.py`
+   for a US panel (see the NextionTerminal README), and upload it to the manager as the panel's TFT.
+3. Update the panel's GUI. The TFT decides the UI: at the next boot the firmware finds the terminal
+   TFT and LVGL starts.
+
+A panel still on NSPM's legacy TFT (an HMI) shows only "Display update needed" and its IP on the
+TFT's boot screen. It keeps MQTT, relays, buttons, the temperature sensor and OTA working, reports
+`display_mode: NEXTION` and the `no_hmi` feature, and accepts the `tft_update` command, so a GUI
+update from the manager installs the terminal TFT and brings LVGL up.
 
 ## Performance (Office, US receiver)
 
