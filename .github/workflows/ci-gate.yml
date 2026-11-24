@@ -35,8 +35,12 @@ jobs:
           # Give the other workflows time to queue their check runs.
           sleep 60
           while :; do
+            # A re-run leaves the earlier attempt's check run on the commit, so keep only the
+            # newest run of each check (a queued run has no start time yet and counts as newest).
             runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
-                     --jq ".check_runs[] | select(.name != \"$SELF\") | [.name, .status, (.conclusion // \"\")] | @tsv")
+                     --jq ".check_runs[] | select(.name != \"$SELF\") | [.name, (.started_at // \"9999\"), .status, (.conclusion // \"\")] | @tsv" \
+                   | sort -t$'\t' -k1,1 -k2,2 \
+                   | awk -F'\t' -v OFS='\t' '{ last[$1] = $1 OFS $3 OFS $4 } END { for (n in last) print last[n] }')
             pending=$(awk -F'\t' '$2 != "completed"' <<< "$runs")
             if [ -z "$pending" ]; then break; fi
             echo "Waiting for: $(cut -f1 <<< "$pending" | paste -sd, -)"
