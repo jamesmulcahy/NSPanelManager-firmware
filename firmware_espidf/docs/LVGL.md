@@ -11,7 +11,7 @@ the drawing is the firmware's own.
 
 | Part | Where | Does |
 |---|---|---|
-| Mode | `lib/LvglUi/LvglUi.cpp` (`init()`) | LVGL is the UI when the display reports a terminal TFT (`NextionTerminal::is_receiver()`) and sent no NSPM startup flag. Otherwise there is no UI (`InterfaceManager` shows no page but `LoadingPage`): on NSPM's TFT the legacy screen (`DISPLAY_MODE_NEXTION`, register_request feature `no_hmi`), on anything else nothing (`DISPLAY_MODE_TERMINAL_IDLE`) |
+| Mode | `lib/LvglUi/LvglUi.cpp` (`init()`) | LVGL is the UI when the display reports a terminal TFT (`NextionTerminal::is_receiver()`) and sent no NSPM startup flag. Otherwise there is no UI (`InterfaceManager` shows no page but `LoadingPage`): on NSPM's TFT the legacy screen (`DISPLAY_MODE_NEXTION`, register_request feature `no_hmi`), on anything else nothing (`DISPLAY_MODE_TERMINAL_IDLE`). NSPM's TFT prints its banner only once per start, so `Nextion::init()` power-cycles a display that sent no banner and is not a terminal TFT (up to twice) to hear it again before this decision |
 | Page controllers | `lib/Pages/*` | Keep the page state, timers and manager commands. Each hands a view's state to `LvglUi::show()`; a view's actions call the controller's handlers. `InterfaceManager` runs no page controller unless `LvglUi::active()` |
 | Host | `lib/LvglUi/` | Screensaver timeout and wake, gestures (below), touch sound, backlight, album art fetch (`LvglArt`), Latin-1 text (`LvglText`) |
 | Views | `lib/LvglRenderer/*View.cpp`, `Theme`, `Ui`, `Background` | The screens, free of ESP-IDF (the host simulator builds them) |

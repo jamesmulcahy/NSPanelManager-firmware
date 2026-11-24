@@ -14,7 +14,14 @@
 
 ESP_EVENT_DEFINE_BASE(NEXTION_EVENT);
 
-esp_err_t Nextion::init() {
+// Extra power cycles init() gives a display that sent no banner and is not recognised, each ~3.5 s.
+static constexpr int BANNER_RETRIES = 2;
+// How long the first start and each retry wait for the banner. A TFT whose banner comes later than the
+// first wait is caught by the longer ones (and by the latch, which counts a banner at any time).
+static constexpr uint16_t BANNER_WAIT_MS = 2500;
+static constexpr uint16_t BANNER_RETRY_WAIT_MS = 4000;
+
+esp_err_t Nextion::init(bool (*recognised)(const char *identity)) {
   esp_log_level_set("Nextion", ConfigManager::log_level);
   ESP_LOGI("Nextion", "Initializing Nextion display.");
 
@@ -130,6 +137,17 @@ esp_err_t Nextion::init() {
   gpio_set_direction(NEXTION_ON_OFF_GPIO, GPIO_MODE_OUTPUT);
   Nextion::restart();
   Nextion::_connect_at_default_baud();
+  // The banner is printed once per start, and the first wait can miss it (a display that came up late,
+  // bytes lost while the UART settled). Only a display nobody recognised is power-cycled for another
+  // try, so a terminal TFT that answers connect (no banner, by design) never is; one whose comok was
+  // lost is retried, which is right. The loop ends before any UI is chosen
+  // and before the write window runs, so nothing else uses the display meanwhile.
+  for (int retry = 1; recognised != nullptr && retry <= BANNER_RETRIES && !Nextion::_has_received_nspm_flag && !recognised(Nextion::identity().c_str()); retry++) {
+    ESP_LOGW("Nextion", "No 'NSPM'-flag and the display is not a known terminal TFT (%s). Power-cycling it to listen for the flag again (%d/%d).",
+             Nextion::identity().empty() ? "no connect reply" : Nextion::identity().c_str(), retry, BANNER_RETRIES);
+    Nextion::restart();
+    Nextion::_connect_at_default_baud(BANNER_RETRY_WAIT_MS);
+  }
   Nextion::_switch_to_operating_baud();
 
   Nextion::_current_nextion_state = nextion_state_t::RUNNING;
@@ -147,14 +165,18 @@ esp_err_t Nextion::init() {
   return ESP_OK;
 }
 
-void Nextion::_connect_at_default_baud() {
-  // Wait for 'NSPM' flag, if we receive it.
-  if (Nextion::_wait_for_event(NEXTION_EVENT, nextion_event_t::RECEIVED_NSPM_FLAG, 2500, 250) == ESP_OK) {
-    ESP_LOGI("Nextion", "Received 'NSPM'-flag. You are running the NSPanel Manager GUI/TFT.");
+void Nextion::_connect_at_default_baud(uint16_t banner_wait_ms) {
+  // Wait for 'NSPM' flag, if we receive it. The event can be dropped (its post and its wait have short
+  // mutex timeouts on a busy loop), so the latch _has_received_nspm_flag, set by the UART handler itself,
+  // counts as well. It is sticky: a later wait that hears nothing (a power cycle for the baud fallback,
+  // recover_link()) does not take back a banner heard before.
+  if (Nextion::_wait_for_event(NEXTION_EVENT, nextion_event_t::RECEIVED_NSPM_FLAG, banner_wait_ms, 250) == ESP_OK) {
     Nextion::_has_received_nspm_flag = true;
+  }
+  if (Nextion::_has_received_nspm_flag) {
+    ESP_LOGI("Nextion", "Received 'NSPM'-flag. You are running the NSPanel Manager GUI/TFT.");
   } else {
     ESP_LOGW("Nextion", "Did not receive the 'NSPM'-flag on screen startup. Are you running the NSPanel Manager GUI/TFT?");
-    Nextion::_has_received_nspm_flag = false;
   }
 
   ESP_LOGI("Nextion", "Trying to connect to Nextion display.");
@@ -577,6 +599,8 @@ void Nextion::_uart_data_handler(void *arg, esp_event_base_t event_base, int32_t
   } else if (data->data()[0] == NEX_OUT_WAKE) {
     esp_event_post(NEXTION_EVENT, nextion_event_t::WAKE_EVENT, NULL, 0, pdMS_TO_TICKS(5000));
   } else if (data->size() >= strlen("NSPM") && strncmp(data->data() + data->size() - strlen("NSPM"), "NSPM", strlen("NSPM")) == 0) { // TODO: Compare last bytes of message instead of first as there may be garbage data output from the panel before sending NSPM-flag
+    // Latch first: the event below can be dropped when the default loop is busy, this cannot.
+    Nextion::_has_received_nspm_flag = true;
     esp_event_post(NEXTION_EVENT, nextion_event_t::RECEIVED_NSPM_FLAG, NULL, 0, pdMS_TO_TICKS(16));
   } else if (data->size() >= 5 && strncmp(data->data(), "comok", strlen("comok")) == 0) {
     ESP_LOGD("Nextion", "Connected to Nextion display, comok data: %s", data->data());

@@ -30,8 +30,15 @@ class Nextion {
 public:
   /**
    * Initialize the Nextion display and gather any facts about it.
+   *
+   * NSPM's TFT announces itself with an "NSPM" banner once, when it starts, and nothing says it again:
+   * a banner that is missed would leave the panel treating NSPM's TFT as an unknown display. So when a
+   * display sent no banner and `recognised` (given the `connect` reply, "" if there was none) does not
+   * know it as the TFT the firmware drives, init() power-cycles it, which makes NSPM's TFT print the
+   * banner again, and listens again, up to BANNER_RETRIES more times. A display that is recognised
+   * (the terminal TFT, which prints no banner) is never power-cycled: one that answers `connect` is recognised at once (one whose comok is lost is retried, which is right). Without `recognised` there are no retries.
    */
-  static esp_err_t init();
+  static esp_err_t init(bool (*recognised)(const char *identity) = nullptr);
 
   /**
    * @brief Go to the specified page
@@ -55,7 +62,7 @@ public:
   static std::string identity();
 
   /**
-   * Whether the TFT sent NSPanel Manager's "NSPM" flag when the display last started.
+   * Whether the TFT sent NSPanel Manager's "NSPM" flag since boot. A latch: once seen it stays set.
    */
   static bool nspm_flag_received() { return Nextion::_has_received_nspm_flag; }
 
@@ -199,7 +206,7 @@ private:
   /**
    * @brief Wait for the display to boot after a restart() and connect to it at its default baud rate.
    */
-  static void _connect_at_default_baud();
+  static void _connect_at_default_baud(uint16_t banner_wait_ms = 2500);
 
   /**
    * @brief Move the display and the UART to ConfigManager::operating_baud_rate, if one is set.
