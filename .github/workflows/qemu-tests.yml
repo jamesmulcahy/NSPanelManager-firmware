@@ -79,30 +79,70 @@ jobs:
             marks: ""
             timeout: 60
           # The GUI update tests, also on NSPM's TFT. Each flashes the panel and reboots it, often more
-          # than once, so they take most of the time and are split two ways to run side by side.
+          # than once, so they take most of the time. Each long leg (about 40 min of tests) runs as three
+          # shards side by side (NSPM_QEMU_SHARD, tests/conftest.py), which deal its tests out between them.
           # GUI updates under faults (every fault the tests inject is handled; a new unhandled one goes in as a strict xfail,
           # with its own job for `-m xfail` added back).
-          - display: gui-updates
+          - display: gui-updates-1
             terminal: nextion
             tests: "test_gui_update_faults"
             marks: "not xfail"
-            timeout: 45
+            shard: "1/3"
+            timeout: 30
+          - display: gui-updates-2
+            terminal: nextion
+            tests: "test_gui_update_faults"
+            marks: "not xfail"
+            shard: "2/3"
+            timeout: 30
+          - display: gui-updates-3
+            terminal: nextion
+            tests: "test_gui_update_faults"
+            marks: "not xfail"
+            shard: "3/3"
+            timeout: 30
           # The same updates on the terminal TFT (terminal-to-terminal): the happy path and every fault.
           # The migration from NSPM's TFT to the terminal one (hmi-to-terminal) runs in the two legs
           # above, whose display starts on NSPM's TFT.
-          - display: gui-updates-terminal
+          - display: gui-updates-terminal-1
             terminal: us
             tests: "test_gui_update"
             marks: "not xfail"
-            timeout: 60
+            shard: "1/3"
+            timeout: 30
+          - display: gui-updates-terminal-2
+            terminal: us
+            tests: "test_gui_update"
+            marks: "not xfail"
+            shard: "2/3"
+            timeout: 30
+          - display: gui-updates-terminal-3
+            terminal: us
+            tests: "test_gui_update"
+            marks: "not xfail"
+            shard: "3/3"
+            timeout: 30
           # An nspanel-terminal TFT: the firmware's LVGL UI against nextion-tools' terminal
           # receiver. The LVGL tests (the UI, the timers, the screensaver cards) and the LVGL variants of the
           # tests of behaviour any UI has (boot, touch, default room, reconnects, page switches, weather).
-          - display: terminal-us
+          - display: terminal-us-1
             terminal: us
             tests: "test_lvgl_terminal or test_timers or test_screensaver_cards or test_screensaver_energy or test_screensaver_now_playing or test_boot or test_touch or test_default_room or test_mqtt_reconnect or test_page_transitions or test_weather"
             marks: ""
-            timeout: 60
+            shard: "1/3"
+            timeout: 30
+          - display: terminal-us-2
+            terminal: us
+            tests: "test_lvgl_terminal or test_timers or test_screensaver_cards or test_screensaver_energy or test_screensaver_now_playing or test_boot or test_touch or test_default_room or test_mqtt_reconnect or test_page_transitions or test_weather"
+            marks: ""
+            shard: "2/3"
+            timeout: 30
+          - display: terminal-us-3
+            terminal: us
+            tests: "test_lvgl_terminal or test_timers or test_screensaver_cards or test_screensaver_energy or test_screensaver_now_playing or test_boot or test_touch or test_default_room or test_mqtt_reconnect or test_page_transitions or test_weather"
+            marks: ""
+            shard: "3/3"
+            timeout: 30
           # The rest, which does not depend on the UI (config.json, metrics, the loop watchdog, the web UI and
           # firmware updates, the temperature sensor), and the gestures, on the terminal display as well.
           - display: terminal-us-system
@@ -169,6 +209,8 @@ jobs:
           NSPM_QEMU_TERMINAL: ${{ matrix.terminal }}
           TESTS: ${{ matrix.tests }}
           MARKS: ${{ matrix.marks }}
+          # Empty (no shard) runs every selected test.
+          NSPM_QEMU_SHARD: ${{ matrix.shard }}
         # An empty -k or -m selects everything.
         run: qemu/run_tests.sh -k "$TESTS" -m "$MARKS"
 

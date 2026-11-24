@@ -28,9 +28,42 @@ def pytest_configure(config):
 _MUST_RUN_REASONS = ("needs the LVGL UI", "the schema has no")
 
 
+def _will_skip(item):
+    return any(mark.args and mark.args[0] for mark in item.iter_markers("skipif"))
+
+
+def _shard(config, items):
+    """NSPM_QEMU_SHARD=i/n keeps every n-th selected test, starting with the i-th (1-based).
+
+    Applied after -k and -m. The tests that will run are dealt out in order, so each shard gets the
+    same number; the ones a skipif will skip cost nothing and all go to shard 1, so the shards
+    together report every selected test exactly once.
+    """
+    spec = os.environ.get("NSPM_QEMU_SHARD")
+    if not spec:
+        return
+    m = re.fullmatch(r"(\d+)/(\d+)", spec)
+    if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+        pytest.exit("NSPM_QEMU_SHARD must be i/n with 1 <= i <= n, not %r" % spec, 2)
+    index, count = int(m.group(1)) - 1, int(m.group(2))
+    keep, drop, runnable = [], [], 0
+    for item in items:
+        if _will_skip(item):
+            mine = index == 0
+        else:
+            mine = runnable % count == index
+            runnable += 1
+        (keep if mine else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
+    sys.stderr.write("shard %s: %d of %d selected test(s)\n" % (spec, len(keep), len(keep) + len(drop)))
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
-    """Reports skipif skips up front: the ones local runs should not have abort the session."""
+    """Applies NSPM_QEMU_SHARD, then reports skipif skips up front: the ones local runs should not have abort the session."""
+    _shard(config, items)
     must, expected = {}, {}
     for item in items:
         for mark in item.iter_markers("skipif"):
