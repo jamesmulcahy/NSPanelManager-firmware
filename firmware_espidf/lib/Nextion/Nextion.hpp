@@ -30,8 +30,15 @@ class Nextion {
 public:
   /**
    * Initialize the Nextion display and gather any facts about it.
+   *
+   * NSPM's TFT announces itself with an "NSPM" banner once, when it starts, and nothing says it again:
+   * a banner that is missed would leave the panel treating NSPM's TFT as an unknown display. So when a
+   * display sent no banner and `recognised` (given the `connect` reply, "" if there was none) does not
+   * know it as the TFT the firmware drives, init() power-cycles it, which makes NSPM's TFT print the
+   * banner again, and listens again, up to BANNER_RETRIES more times. A display that does `recognise`
+   * (the terminal TFT, which prints no banner) is never power-cycled. Without `recognised` there are no retries.
    */
-  static esp_err_t init();
+  static esp_err_t init(bool (*recognised)(const char *identity) = nullptr);
 
   /**
    * @brief Go to the specified page

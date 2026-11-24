@@ -14,7 +14,10 @@
 
 ESP_EVENT_DEFINE_BASE(NEXTION_EVENT);
 
-esp_err_t Nextion::init() {
+// Extra power cycles init() gives a display that sent no banner and is not recognised, each ~3.5 s.
+static constexpr int BANNER_RETRIES = 2;
+
+esp_err_t Nextion::init(bool (*recognised)(const char *identity)) {
   esp_log_level_set("Nextion", ConfigManager::log_level);
   ESP_LOGI("Nextion", "Initializing Nextion display.");
 
@@ -130,6 +133,16 @@ esp_err_t Nextion::init() {
   gpio_set_direction(NEXTION_ON_OFF_GPIO, GPIO_MODE_OUTPUT);
   Nextion::restart();
   Nextion::_connect_at_default_baud();
+  // The banner is printed once per start, and the first wait can miss it (a display that came up late,
+  // bytes lost while the UART settled). Only a display nobody recognised is power-cycled for another
+  // try, so a terminal TFT (no banner, by design) never is. The loop ends before any UI is chosen
+  // and before the write window runs, so nothing else uses the display meanwhile.
+  for (int retry = 1; recognised != nullptr && retry <= BANNER_RETRIES && !Nextion::_has_received_nspm_flag && !recognised(Nextion::identity().c_str()); retry++) {
+    ESP_LOGW("Nextion", "No 'NSPM'-flag and the display is not a known terminal TFT (%s). Power-cycling it to listen for the flag again (%d/%d).",
+             Nextion::identity().empty() ? "no connect reply" : Nextion::identity().c_str(), retry, BANNER_RETRIES);
+    Nextion::restart();
+    Nextion::_connect_at_default_baud();
+  }
   Nextion::_switch_to_operating_baud();
 
   Nextion::_current_nextion_state = nextion_state_t::RUNNING;

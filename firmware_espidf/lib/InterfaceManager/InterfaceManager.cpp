@@ -13,6 +13,7 @@
 #include <NSPM_ConfigManager.hpp>
 #include <NSPM_ConfigManager_event.hpp>
 #include <Nextion.hpp>
+#include <NextionTerminal.hpp>
 #include <Nextion_event.hpp>
 #include <RoomManager.hpp>
 #include <RoomManager_event.hpp>
@@ -32,7 +33,7 @@ void InterfaceManager::init() {
   xTaskCreatePinnedToCore(InterfaceManager::_task_unshow_page, "unshow_task", 4096, NULL, 6, NULL, 1);
   // Must exist before any handler below can notify it.
   xTaskCreatePinnedToCore(InterfaceManager::_task_page_transitions, "page_transitions", 8192, NULL, 6, &InterfaceManager::_page_transitions_task, 1);
-  esp_err_t nextion_init_result = Nextion::init();
+  esp_err_t nextion_init_result = Nextion::init(NextionTerminal::is_receiver);
   if (nextion_init_result != ESP_OK) {
     ESP_LOGE("InterfaceManager", "Failed to initialize Nextion display. Will not continue with InterfaceManager!");
     return;
