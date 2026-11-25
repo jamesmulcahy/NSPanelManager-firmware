@@ -643,6 +643,16 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
       } else {
         ESP_LOGW("UpdateManager", "lvgl_tap needs x and y on the screen.");
       }
+    } else if (command_string.compare("lvgl_repaint") == 0) {
+      // {"command": "lvgl_repaint"}: send the whole screen to the display again, rebuilding nothing.
+      // Pixels the display got wrong go away; pixels LVGL draws wrong come back (see the LVGL
+      // screenshot too). Logs "Repainted the whole screen" when done.
+      if (!LvglRenderer::is_active()) {
+        ESP_LOGW("UpdateManager", "lvgl_repaint ignored: LVGL is not the active UI.");
+      } else {
+        ESP_LOGI("UpdateManager", "Repainting the whole screen.");
+        LvglRenderer::repaint();
+      }
     } else if (command_string.compare("lvgl_background") == 0) {
       // {"command": "lvgl_background", "preset": "ocean"}: the page background with LVGL as the UI
       // ("none" for the plain look). Saved, applied at once and reported (LvglLook); a repeat does nothing.

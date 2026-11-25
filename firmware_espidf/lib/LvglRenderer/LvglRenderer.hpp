@@ -108,6 +108,14 @@ public:
   static void notify();
 
   /**
+   * From any task: send the whole screen to the display again, as it is, without rebuilding
+   * anything (the "lvgl_repaint" command). For telling pixels the display got wrong from pixels
+   * LVGL draws wrong: a repaint fixes the first and repeats the second. Logs "Repainted the
+   * whole screen" once the display has it.
+   */
+  static void repaint();
+
+  /**
    * Screen size: 320x480 on a US panel, 480x320 on an EU one.
    */
   static uint16_t width() { return LvglRenderer::_us_layout ? 320 : 480; }
@@ -180,6 +188,8 @@ private:
   static inline lv_obj_t *_pages_screen = NULL;
   // Repaint everything on the next refresh: a new screen, or the receiver (re)started.
   static inline std::atomic<bool> _repaint = false;
+  // repaint() asked for one, still to be done and logged (cleared by the GUI task).
+  static inline std::atomic<bool> _repaint_requested = false;
   // The region the screens are laid out for (GUI task only, after start()).
   static inline bool _us_layout = true;
   // The region the manager's config asks for: -1 nothing new, 0 EU, 1 US.
