@@ -39,3 +39,27 @@ dependencies:
     version: "1.2.1"
     rules:
       - if: "target == esp32p4"
+  # custom_pcb's microphones: esp-sr's audio front end (2-mic BSS, WebRTC noise suppression) and its GSC
+  # beamformer. 2.6.2 builds against ESP-IDF 6.1 (2.5.0 fixed its Kconfig for 6.1) and ships P4 rev 3.x
+  # libraries for IDF 6 (lib/esp32p4). Its dependencies are pinned too: dependencies.lock is
+  # original_sonoff's, so nothing else holds custom_pcb's versions still.
+  espressif/esp-sr:
+    version: "2.6.2"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp-dl:
+    version: "3.3.13"
+    rules:
+      - if: "target == esp32p4"
+  espressif/dl_fft:
+    version: "0.8.0"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_new_jpeg:
+    version: "1.0.2"
+    rules:
+      - if: "target == esp32p4"
+  espressif/cjson:
+    version: "1.7.19~2"
+    rules:
+      - if: "target == esp32p4"
