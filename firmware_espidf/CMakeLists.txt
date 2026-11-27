@@ -8,6 +8,11 @@ get_filename_component(configName "${CMAKE_BINARY_DIR}" NAME)
 # Frees ~152 KB of flash, which LVGL needs.
 idf_build_set_property(COMPILE_DEFINITIONS "FMT_OPTIMIZE_SIZE=2" APPEND)
 
+# One lock file per target: the component manager records IDF_TARGET (and the IDF version) in the
+# lock, so a shared file was rewritten by every build for the other board (original_sonoff is esp32,
+# custom_pcb esp32p4) and left the tree dirty.
+idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_SOURCE_DIR}/dependencies.lock.${IDF_TARGET}")
+
 project(firmware_espidf)
 # LVGL is built for speed, whatever the rest of the firmware is built with: rendering a full
 # 320x480 screen took ~240 ms at -Os (measured on Office over NextionTerminal, 2026-11-13), and
