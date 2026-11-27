@@ -23,6 +23,8 @@ private:
   static esp_err_t _handle_uri_get_available_networks(httpd_req_t *req);
   static esp_err_t _handle_uri_main_css(httpd_req_t *req);
   static esp_err_t _handle_uri_generate_204(httpd_req_t *req);
+  // 404 handler: while the setup AP is active, redirect unknown URIs (captive-portal probes) to the setup page.
+  static esp_err_t _handle_not_found(httpd_req_t *req, httpd_err_code_t err);
   static esp_err_t _handle_uri_screenshot(httpd_req_t *req);
   // Panel metrics in Prometheus text format, see PanelMetrics.hpp.
   static esp_err_t _handle_uri_metrics(httpd_req_t *req);
