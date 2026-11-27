@@ -1,3 +1,4 @@
+#include <Background.hpp>
 #include <BootScreen.hpp>
 #include <ConfigManager.hpp>
 #include <LvglRenderer.hpp>
@@ -96,6 +97,34 @@ esp_err_t LvglRenderer::start() {
 
 #if defined(BOARD_CUSTOM)
   DsiDisplay::on_touch = LvglRenderer::inject_touch;
+  // The HD page background takes a while to draw: on a task of its own, on the other core, at low priority.
+  Background::run_off_gui = [](void (*work)(void *), void (*done)(void *), void *arg) {
+    struct Job {
+      void (*work)(void *);
+      void (*done)(void *);
+      void *arg;
+      int64_t start;
+    };
+    Job *job = new Job{work, done, arg, esp_timer_get_time()};
+    auto run = [](void *param) {
+      Job *job = static_cast<Job *>(param);
+      job->work(job->arg);
+      ESP_LOGI(TAG, "Drew the HD background in %lld ms.", (long long)((esp_timer_get_time() - job->start) / 1000));
+      if (!LvglRenderer::post([job]() {
+            job->done(job->arg);
+            delete job;
+          })) {
+        ESP_LOGW(TAG, "GUI queue full: the HD background is dropped.");
+      }
+      vTaskDelete(NULL);
+    };
+    if (xTaskCreatePinnedToCore(run, "bg_art", 6144, job, 2, NULL, 0) != pdPASS) {
+      ESP_LOGW(TAG, "No task for the HD background: drawing it on the GUI task.");
+      work(arg);
+      done(arg);
+      delete job;
+    }
+  };
 #endif
   // The terminal's touches, and a full repaint whenever it (re)starts: the display lost the picture.
   NextionTerminal::on_touch = LvglRenderer::inject_touch;

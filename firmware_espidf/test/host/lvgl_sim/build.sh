@@ -3,7 +3,7 @@
 # and an EU screen, with what each frame costs on the terminal link. Needs LVGL's source, which
 # `pio run` fetches into managed_components/ (or set LVGL_DIR).
 #
-#   test/host/lvgl_sim/build.sh [OUT_DIR]     # PPMs, and PNGs if Pillow is importable
+#   test/host/lvgl_sim/build.sh [OUT_DIR] [art]     # PPMs, and PNGs if Pillow is importable; "art": only the HD art
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root="$here/../../.."
@@ -14,7 +14,7 @@ out="${1:-$build/out}"
 [ -f "$lvgl/lvgl.h" ] || { echo "no LVGL at $lvgl; run pio run -e qemu first, or set LVGL_DIR" >&2; exit 2; }
 mkdir -p "$build/obj" "$out"
 
-cflags="-O2 -g -DNSPM_HD_FONTS -DLV_CONF_INCLUDE_SIMPLE -I$here -I$lvgl -I$lvgl/src -I$lib -I$root/lib/NextionTerminal"
+cflags="-O2 -g -DNSPM_HD_FONTS -DNSPM_HD_ART -DLV_CONF_INCLUDE_SIMPLE -I$here -I$lvgl -I$lvgl/src -I$lib -I$root/lib/NextionTerminal"
 # LVGL: compiled once, then only what changed (make-style timestamps via find -newer).
 find "$lvgl/src" -name '*.c' | while read -r src; do
   obj="$build/obj/$(echo "$src" | sed "s|$lvgl/||; s|/|_|g").o"
@@ -33,7 +33,7 @@ done
 views=$(ls "$lib"/*.cpp | grep -v '/LvglRenderer.cpp$')
 c++ -std=c++17 $cflags "$here/main.cpp" "$here/Pages.cpp" $views "$build"/nspm_font_*.o "$build"/obj/*.o -lm \
   -o "$build/lvgl_sim" 2>>"$build/lvgl-build.log" || { cat "$build/lvgl-build.log" >&2; exit 1; }
-"$build/lvgl_sim" "$out"
+"$build/lvgl_sim" "$out" ${2:-}
 
 python3 -c "import PIL" 2>/dev/null && python3 - "$out" <<'EOF'
 import glob, os, sys

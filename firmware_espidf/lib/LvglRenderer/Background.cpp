@@ -1,5 +1,8 @@
 #include "Background.hpp"
 #include "Theme.hpp"
+#if defined(NSPM_HD_ART)
+#include "BackgroundHd.hpp"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -339,10 +342,89 @@ void build(void (*render)(int y, uint16_t *row)) {
   }
 }
 
+#if defined(NSPM_HD_ART)
+// The HD art (BackgroundHd), once drawn: SIZE x SIZE RGB565 in LVGL's heap, and the image over it.
+uint16_t *hd_pixels = nullptr;
+lv_image_dsc_t hd_image;
+// Counts set()'s HD requests: a drawing that finishes after another was asked for is thrown away.
+uint32_t hd_generation = 0;
+
+struct HdJob {
+  Background::Preset preset;
+  uint32_t generation;
+  uint16_t *pixels;
+  bool ok;
+};
+
+void hd_free() {
+  lv_free(hd_pixels);
+  hd_pixels = nullptr;
+}
+
+// GUI task: the drawing is done. Show it, if it is still what was asked for.
+void hd_done(void *arg) {
+  HdJob *job = static_cast<HdJob *>(arg);
+  if (job->ok && job->generation == hd_generation) {
+    hd_free();
+    hd_pixels = job->pixels;
+    memset(&hd_image, 0, sizeof(hd_image));
+    hd_image.header.magic = LV_IMAGE_HEADER_MAGIC;
+    hd_image.header.cf = LV_COLOR_FORMAT_RGB565;
+    hd_image.header.w = BackgroundHd::SIZE;
+    hd_image.header.h = BackgroundHd::SIZE;
+    hd_image.header.stride = BackgroundHd::SIZE * 2;
+    hd_image.data_size = (uint32_t)BackgroundHd::SIZE * BackgroundHd::SIZE * 2;
+    hd_image.data = reinterpret_cast<const uint8_t *>(hd_pixels);
+    lv_obj_invalidate(lv_screen_active());
+  } else {
+    lv_free(job->pixels);
+  }
+  delete job;
+}
+
+// GUI task: start drawing `preset`'s HD art; the rectangles stand in until it is ready.
+void hd_start(Background::Preset preset) {
+  hd_generation++;
+  hd_free();
+  if (!Theme::hd() || !BackgroundHd::has(preset)) {
+    return;
+  }
+  // Allocated here, as LVGL's heap belongs to the GUI task; written only by the drawing.
+  uint16_t *pixels = static_cast<uint16_t *>(lv_malloc((size_t)BackgroundHd::SIZE * BackgroundHd::SIZE * 2));
+  if (pixels == nullptr) {
+    LV_LOG_WARN("No memory for the HD background.");
+    return;
+  }
+  HdJob *job = new HdJob{preset, hd_generation, pixels, false};
+  auto work = [](void *arg) {
+    HdJob *job = static_cast<HdJob *>(arg);
+    job->ok = BackgroundHd::render(job->preset, job->pixels);
+  };
+  if (Background::run_off_gui != nullptr) {
+    Background::run_off_gui(work, hd_done, job);
+  } else {
+    work(job);
+    hd_done(job);
+  }
+}
+#endif
+
 void draw(lv_event_t *event) {
   lv_obj_t *screen = (lv_obj_t *)lv_event_get_current_target(event);
   const int32_t screen_w = lv_obj_get_width(screen);
   const int32_t screen_h = lv_obj_get_height(screen);
+#if defined(NSPM_HD_ART)
+  if (hd_pixels != nullptr && screen_w == BackgroundHd::SIZE && screen_h == BackgroundHd::SIZE) {
+    // The HD art, copied under whatever is redrawn (LVGL clips the image to the layer's area).
+    lv_draw_image_dsc_t image;
+    lv_draw_image_dsc_init(&image);
+    image.src = &hd_image;
+    lv_area_t area;
+    lv_obj_get_coords(screen, &area);
+    lv_draw_image(lv_event_get_layer(event), &image, &area);
+    return;
+  }
+#endif
   if (rects == nullptr || screen_w > screen_h) {
     return;
   }
@@ -432,6 +514,9 @@ void Background::set(Preset preset, const Theme::Palette *theme) {
     }
   }
   Theme::set_card_opa(card_opa);
+#if defined(NSPM_HD_ART)
+  hd_start(preset);
+#endif
 }
 
 Background::Preset Background::current() {

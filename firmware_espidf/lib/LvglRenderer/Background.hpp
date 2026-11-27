@@ -35,4 +35,12 @@ Preset current();
 // The art's pixels in row y (0-479) of a 320x480 screen, RGB565, into row[320]. For tests and the
 // simulator; drawing uses the rectangles.
 void render_row(Preset preset, int y, uint16_t *row);
+
+/**
+ * With NSPM_HD_ART, on a 720x720 screen in HD (Theme::hd()): set() also draws the preset's HD art
+ * (BackgroundHd), which replaces the rectangles once it is ready. Drawing it takes a while, so the device
+ * sets this to run `work(arg)` on a task of its own and then `done(arg)` on the GUI task; unset (the
+ * simulator), set() runs both at once.
+ */
+inline void (*run_off_gui)(void (*work)(void *), void (*done)(void *), void *arg) = nullptr;
 } // namespace Background
