@@ -46,12 +46,16 @@ esp_err_t LvglRenderer::start() {
 
   LvglRenderer::_us_layout = ConfigManager::lvgl_us_layout;
 #if defined(BOARD_CUSTOM)
-  // The whole screen, kept between refreshes (direct mode): DsiDisplay scales all of it onto the panel
-  // after each. PSRAM is fast enough on the P4; cache-line aligned for the PPA. Pages fill the square.
+  // LVGL draws straight into the panel's two frame buffers (direct mode): into the one the panel is not
+  // sending, and DsiDisplay::show() swaps them after each refresh; LVGL copies what it redrew into the
+  // other before the next. The pages are laid out portrait at 1.5x (Theme::set_hd()) and fill the screen.
   LvglRenderer::_us_layout = true;
+  Theme::set_hd(true);
   Theme::set_screen_size(LvglRenderer::width(), LvglRenderer::height());
   const size_t buffer_bytes = LvglRenderer::MAX_PIXELS * sizeof(uint16_t);
-  uint8_t *draw_buffer = static_cast<uint8_t *>(heap_caps_aligned_calloc(128, 1, buffer_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  // The panel sends frame buffer 0 first, so LVGL starts in 1.
+  uint8_t *draw_buffer = static_cast<uint8_t *>(DsiDisplay::frame_buffer(1));
+  uint8_t *draw_buffer_2 = static_cast<uint8_t *>(DsiDisplay::frame_buffer(0));
   const lv_display_render_mode_t render_mode = LV_DISPLAY_RENDER_MODE_DIRECT;
 #else
   // The widest the screen can be, so a region change needs no new buffer.
@@ -61,6 +65,7 @@ esp_err_t LvglRenderer::start() {
     ESP_LOGW(TAG, "No internal RAM for the draw buffer; drawing into PSRAM, slower.");
     draw_buffer = static_cast<uint8_t *>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_SPIRAM));
   }
+  uint8_t *draw_buffer_2 = NULL;
   const lv_display_render_mode_t render_mode = LV_DISPLAY_RENDER_MODE_PARTIAL;
 #endif
   LvglRenderer::_text_mutex = xSemaphoreCreateMutex();
@@ -68,7 +73,9 @@ esp_err_t LvglRenderer::start() {
   LvglRenderer::_work = xQueueCreate(32, sizeof(std::function<void()> *));
   if (draw_buffer == NULL || LvglRenderer::_text_mutex == NULL || LvglRenderer::_touches == NULL || LvglRenderer::_work == NULL) {
     ESP_LOGE(TAG, "Failed to allocate LVGL's buffers.");
+#if !defined(BOARD_CUSTOM) // The panel's frame buffers are DsiDisplay's
     heap_caps_free(draw_buffer);
+#endif
     return ESP_ERR_NO_MEM;
   }
 
@@ -76,7 +83,7 @@ esp_err_t LvglRenderer::start() {
   lv_tick_set_cb(LvglRenderer::_tick);
   LvglRenderer::_display = lv_display_create(LvglRenderer::width(), LvglRenderer::height());
   lv_display_set_color_format(LvglRenderer::_display, LV_COLOR_FORMAT_RGB565);
-  lv_display_set_buffers(LvglRenderer::_display, draw_buffer, NULL, buffer_bytes, render_mode);
+  lv_display_set_buffers(LvglRenderer::_display, draw_buffer, draw_buffer_2, buffer_bytes, render_mode);
   lv_display_set_flush_cb(LvglRenderer::_display, LvglRenderer::_flush);
   lv_indev_t *pointer = lv_indev_create();
   lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
@@ -347,7 +354,8 @@ void LvglRenderer::repaint() {
 
 void LvglRenderer::_flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map) {
 #if defined(BOARD_CUSTOM)
-  // Direct mode: px_map is the whole screen, and `area` the part of it LVGL redrew.
+  // Direct mode: px_map is the whole screen (the frame buffer LVGL drew into), and `area` the part of it
+  // LVGL redrew. The frame is shown even while capturing: LVGL swaps the buffers after it whatever this does.
   if (LvglRenderer::_capture != nullptr) {
     const uint16_t *screen = reinterpret_cast<const uint16_t *>(px_map);
     int area_width = lv_area_get_width(area);
@@ -356,7 +364,8 @@ void LvglRenderer::_flush(lv_display_t *display, const lv_area_t *area, uint8_t 
         memcpy(LvglRenderer::_capture + y * LvglRenderer::_capture_width + area->x1, screen + y * LvglRenderer::width() + area->x1, area_width * sizeof(uint16_t));
       }
     }
-  } else if (lv_display_flush_is_last(display) && DsiDisplay::present(reinterpret_cast<const uint16_t *>(px_map)) != ESP_OK) {
+  }
+  if (lv_display_flush_is_last(display) && DsiDisplay::show(px_map) != ESP_OK) {
     LvglRenderer::_repaint = true;
   }
   lv_display_flush_ready(display);

@@ -142,11 +142,11 @@ void MediaPlayerPage::update_display(const NSPanelEntityState__MediaPlayer *medi
         MediaPlayerPage::_lvgl_art.reset();
       }
       if (MediaPlayerPage::_lvgl_art == nullptr && !album_art_url.empty()) {
-        LvglArt::Handle art = LvglArt::lookup(album_art_url, MediaPlayerView::ART_SIZE);
+        LvglArt::Handle art = LvglArt::lookup(album_art_url, MediaPlayerView::art_size());
         if (art) {
           MediaPlayerPage::_lvgl_art = std::make_shared<const LvglArt::Handle>(std::move(art));
         } else {
-          LvglArt::fetch(album_art_url, MediaPlayerView::ART_SIZE, MediaPlayerPage::_lvgl_art_done); // Joins one on its way
+          LvglArt::fetch(album_art_url, MediaPlayerView::art_size(), MediaPlayerPage::_lvgl_art_done); // Joins one on its way
         }
       }
     }

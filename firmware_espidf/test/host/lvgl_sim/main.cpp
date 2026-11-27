@@ -1,6 +1,6 @@
 // Host simulator for the LVGL screens (lib/LvglRenderer): draws every page on a US (320x480) and an
-// EU (480x320) screen, and on the custom PCB's square one (480x480, drawn x1.5 on its 720x720 LCD) in
-// both layouts ("sq" portrait, "sql" landscape), and reports what each frame costs on the terminal link: the bytes of the
+// EU (480x320) screen, and on the custom PCB's 720x720 one ("hd": the portrait layout at 1.5x, with the
+// 1.5x fonts), and reports what each frame costs on the terminal link: the bytes of the
 // protocol-8 records NextionTerminal would send (PackBits, COBS, headers), and the time at 4 Mbaud.
 // Built and run by build.sh.
 //
@@ -136,17 +136,18 @@ static void check_media_hits() {
   expect_hit("below volume-down, near the bottom edge", (d.x1 + d.x2) / 2, H - 3, down);
 }
 
-static void run(bool landscape, const char *out, bool square = false) {
-  const char *region = square ? (landscape ? "sql" : "sq") : landscape ? "eu" : "us";
-  W = square ? 480 : landscape ? 480 : 320;
-  H = square ? 480 : landscape ? 320 : 480;
+static void run(bool landscape, const char *out, bool hd = false) {
+  const char *region = hd ? "hd" : landscape ? "eu" : "us";
+  W = hd ? 720 : landscape ? 480 : 320;
+  H = hd ? 720 : landscape ? 320 : 480;
   frame.assign(W * H, 0);
-  Theme::set_screen_size(square ? W : 0, square ? H : 0);
+  Theme::set_screen_size(hd ? W : 0, hd ? H : 0);
+  Theme::set_hd(hd);
 
   lv_display_t *display = lv_display_create(W, H);
   // 20 lines, as LvglRenderer draws.
   static std::vector<uint8_t> buffer;
-  buffer.assign(480 * 20 * 2, 0);
+  buffer.assign(W * 20 * 2, 0);
   lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
   lv_display_set_buffers(display, buffer.data(), NULL, buffer.size(), LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(display, flush);
@@ -159,7 +160,7 @@ static void run(bool landscape, const char *out, bool square = false) {
   Theme::screen(screen);
   lv_obj_t *root = Theme::group(screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_size(root, lv_pct(100), lv_pct(100));
-  lv_obj_set_style_pad_gap(root, 12, 0);
+  lv_obj_set_style_pad_gap(root, Theme::px(12), 0);
   BootScreen::build(root, landscape);
   BootStatus status;
   status.time = "12:34";
@@ -180,7 +181,7 @@ static void run(bool landscape, const char *out, bool square = false) {
 
   // Every page, plain; on a portrait screen over each background preset, on a landscape one over one.
   std::vector<Background::Preset> presets = {Background::Preset::NONE, Background::Preset::OCEAN};
-  if (!landscape || square) {
+  if (!landscape) {
     presets.insert(presets.end(), {Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS, Background::Preset::VESUVIUS, Background::Preset::PARTHENON});
   }
   for (Background::Preset preset : presets) {
@@ -219,7 +220,6 @@ int main(int argc, char **argv) {
   run(false, out);
   run(true, out);
   run(false, out, true);
-  run(true, out, true);
   FILE *f = fopen((std::string(out) + "/costs.csv").c_str(), "w");
   fprintf(f, "region,frame,wire_bytes,ms_4mbaud\n");
   for (const std::string &row : csv) {

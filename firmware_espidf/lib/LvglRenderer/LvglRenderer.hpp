@@ -16,9 +16,9 @@
  * LVGL on the ESP32, drawn on the display through NextionTerminal (the nspanel-terminal receiver
  * in a patched TFT, at 4 Mbaud). LvglUi starts it when the display runs such a TFT.
  *
- * On the custom PCB (BOARD_CUSTOM) the display is DsiDisplay's instead: LVGL draws a 480x480 screen,
- * laid out portrait, in one screen-sized buffer in PSRAM (direct mode), and each refresh is scaled x1.5
- * onto the 720x720 panel. Touches come from DsiDisplay.
+ * On the custom PCB (BOARD_CUSTOM) the display is DsiDisplay's instead: LVGL draws the 720x720 screen,
+ * laid out portrait at 1.5x the NSPanel's sizes (Theme::set_hd()), straight into the panel's two frame
+ * buffers (direct mode). Touches come from DsiDisplay.
  *
  * LVGL runs on one task of its own, and nothing else calls LVGL: other tasks post() work to it, or
  * hand over state (set_loading_text()) that it applies before each refresh. LVGL draws into a band
@@ -62,7 +62,7 @@ public:
    */
   static lv_obj_t *pages_screen() { return LvglRenderer::_pages_screen; }
 #if defined(BOARD_CUSTOM)
-  static bool landscape() { return false; } // Square: the portrait layout suits it (test/host/lvgl_sim, "sq")
+  static bool landscape() { return false; } // Square: the portrait layout suits it (test/host/lvgl_sim, "hd")
 #else
   static bool landscape() { return !LvglRenderer::_us_layout; }
 #endif
@@ -124,19 +124,19 @@ public:
   static void repaint();
 
   /**
-   * Screen size: 320x480 on a US panel, 480x320 on an EU one; 480x480 on the custom PCB, whatever the
+   * Screen size: 320x480 on a US panel, 480x320 on an EU one; 720x720 on the custom PCB, whatever the
    * region.
    */
 #if defined(BOARD_CUSTOM)
-  static uint16_t width() { return 480; }
-  static uint16_t height() { return 480; }
+  static uint16_t width() { return 720; }
+  static uint16_t height() { return 720; }
 #else
   static uint16_t width() { return LvglRenderer::_us_layout ? 320 : 480; }
   static uint16_t height() { return LvglRenderer::_us_layout ? 480 : 320; }
 #endif
   // The most pixels a screen has, in either layout.
 #if defined(BOARD_CUSTOM)
-  static constexpr size_t MAX_PIXELS = 480 * 480;
+  static constexpr size_t MAX_PIXELS = 720 * 720;
 #else
   static constexpr size_t MAX_PIXELS = 480 * 320;
 #endif

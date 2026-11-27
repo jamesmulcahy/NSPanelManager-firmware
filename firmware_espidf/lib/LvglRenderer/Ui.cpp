@@ -130,7 +130,7 @@ void reach_screen_edges(lv_obj_t *obj, int32_t reach, int32_t margin) {
 lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size) {
   lv_obj_t *button = lv_button_create(parent);
   flat(button);
-  lv_obj_set_size(button, size + 20, size + 12);
+  lv_obj_set_size(button, Theme::px(size + 20), Theme::px(size + 12));
   // Pressed: the glyph turns amber (flat()) on the pressed colour, for one frame; no transition.
   lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_STATE_PRESSED);
   lv_obj_set_style_bg_color(button, Theme::pressed(), LV_STATE_PRESSED);
@@ -157,7 +157,7 @@ void set_enabled(lv_obj_t *button, bool enabled) {
 Header header(lv_obj_t *parent, bool back, bool paging) {
   Header h;
   h.bar = Theme::card(parent);
-  lv_obj_set_size(h.bar, lv_pct(100), 44);
+  lv_obj_set_size(h.bar, lv_pct(100), Theme::px(44));
   lv_obj_set_flex_flow(h.bar, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(h.bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_all(h.bar, Theme::SPACE_XS, 0);
@@ -167,7 +167,7 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
     // A divider between "back" and the page's own navigation.
     lv_obj_t *divider = lv_obj_create(h.bar);
     lv_obj_remove_style_all(divider);
-    lv_obj_set_size(divider, 2, 24);
+    lv_obj_set_size(divider, Theme::px(2), Theme::px(24));
     lv_obj_set_style_bg_color(divider, Theme::track(), 0);
     lv_obj_set_style_bg_opa(divider, LV_OPA_COVER, 0);
   } else {
@@ -176,7 +176,7 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
   if (paging) {
     h.prev = icon_button(h.bar, NSPM_ICON_CHEVRON_LEFT, 24);
   } else if (back) {
-    lv_obj_set_style_pad_column(h.bar, 10, 0);
+    lv_obj_set_style_pad_column(h.bar, Theme::px(10), 0);
   }
   h.title = Theme::label(h.bar, "", Theme::title_font(), Theme::text());
   lv_obj_set_flex_grow(h.title, 1);
@@ -195,11 +195,11 @@ Header header(lv_obj_t *parent, bool back, bool paging) {
   // around them. LVGL only looks for a touch among a parent's children inside the parent's area, or
   // its extra drawing area when its overflow is visible: extend the bar's by the same margin.
   lv_obj_add_flag(h.bar, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-  lv_obj_add_event_cb(h.bar, [](lv_event_t *event) { lv_event_set_ext_draw_size(event, 10); }, LV_EVENT_REFR_EXT_DRAW_SIZE, NULL);
+  lv_obj_add_event_cb(h.bar, [](lv_event_t *event) { lv_event_set_ext_draw_size(event, Theme::px(10)); }, LV_EVENT_REFR_EXT_DRAW_SIZE, NULL);
   lv_obj_refresh_ext_draw_size(h.bar);
   for (lv_obj_t *button : {h.back, h.prev, h.next}) {
     if (button != NULL) {
-      reach_screen_edges(button, 24, 10);
+      reach_screen_edges(button, Theme::px(24), Theme::px(10));
     }
   }
   return h;
@@ -213,7 +213,7 @@ lv_obj_t *tile(lv_obj_t *parent, const char *glyph, int icon_size, const char *t
   lv_obj_set_style_bg_color(card, Theme::card(), 0);
   lv_obj_set_style_bg_color(card, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_set_style_text_color(card, Theme::text(), LV_STATE_PRESSED);
-  lv_obj_set_style_pad_all(card, 6, 0);
+  lv_obj_set_style_pad_all(card, Theme::px(6), 0);
   Theme::bottom_lip(card);
   lv_obj_set_style_pad_gap(card, row ? Theme::SPACE_L : Theme::SPACE_XS, 0);
   lv_obj_set_flex_flow(card, row ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
@@ -266,7 +266,7 @@ bool has_own_sound(lv_obj_t *obj) {
 }
 
 void set_tile_outlined(lv_obj_t *tile, bool outlined) {
-  int32_t width = outlined ? 2 : Theme::LIP_WIDTH;
+  int32_t width = outlined ? Theme::px(2) : Theme::LIP_WIDTH;
   if (tile == NULL || lv_obj_get_style_border_width(tile, LV_PART_MAIN) == width) {
     return;
   }
@@ -290,7 +290,7 @@ static void style_slider(lv_obj_t *slider, bool vertical) {
   lv_obj_set_style_bg_opa(slider, LV_OPA_COVER, LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(slider, Theme::indicator(), LV_PART_INDICATOR);
   // A wide touch area: the slider responds a little outside its track.
-  lv_obj_set_ext_click_area(slider, 8);
+  lv_obj_set_ext_click_area(slider, Theme::px(8));
 }
 
 SliderCard slider_card(lv_obj_t *parent, const char *glyph, bool vertical) {
@@ -299,7 +299,7 @@ SliderCard slider_card(lv_obj_t *parent, const char *glyph, bool vertical) {
   lv_obj_set_flex_grow(s.card, 1);
   lv_obj_set_flex_flow(s.card, vertical ? LV_FLEX_FLOW_COLUMN_REVERSE : LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(s.card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(s.card, 10, 0);
+  lv_obj_set_style_pad_gap(s.card, Theme::px(10), 0);
   lv_flex_flow_t parent_flow = lv_obj_get_style_flex_flow(parent, LV_PART_MAIN);
   if (parent_flow == LV_FLEX_FLOW_ROW || parent_flow == LV_FLEX_FLOW_ROW_REVERSE) {
     lv_obj_set_height(s.card, lv_pct(100));
@@ -312,29 +312,29 @@ SliderCard slider_card(lv_obj_t *parent, const char *glyph, bool vertical) {
   style_slider(s.slider, vertical);
   lv_obj_set_flex_grow(s.slider, 1);
   if (vertical) {
-    lv_obj_set_width(s.slider, 36);
+    lv_obj_set_width(s.slider, Theme::px(36));
   } else {
-    lv_obj_set_height(s.slider, 36);
+    lv_obj_set_height(s.slider, Theme::px(36));
   }
   s.track = s.slider;
 
   s.value = Theme::label(s.card, "", Theme::body_font(), Theme::muted());
-  lv_obj_set_style_min_width(s.value, 36, 0);
+  lv_obj_set_style_min_width(s.value, Theme::px(36), 0);
   lv_obj_set_style_text_align(s.value, LV_TEXT_ALIGN_CENTER, 0);
   return s;
 }
 
 // The knob is the track's height less 6 px (its pad of -3), and LVGL centres it on the value: at 0
 // and 100 half of it would hang past the track's ends, against the card's icon.
-constexpr int32_t KNOB_INSET = (36 - 6) / 2 + 3;
+constexpr Theme::Px KNOB_INSET{(36 - 6) / 2 + 3};
 
 static void ring_knob(lv_obj_t *slider) {
   lv_obj_set_style_bg_opa(slider, LV_OPA_TRANSP, LV_PART_INDICATOR);
   lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
-  lv_obj_set_style_border_width(slider, 4, LV_PART_KNOB);
+  lv_obj_set_style_border_width(slider, Theme::px(4), LV_PART_KNOB);
   lv_obj_set_style_border_color(slider, Theme::text(), LV_PART_KNOB);
   lv_obj_set_style_border_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
-  lv_obj_set_style_pad_all(slider, -3, LV_PART_KNOB);
+  lv_obj_set_style_pad_all(slider, Theme::px(-3), LV_PART_KNOB);
 }
 
 void gradient_slider(SliderCard &card, lv_color_t from, lv_color_t to, bool vertical) {
@@ -348,7 +348,7 @@ void gradient_slider(SliderCard &card, lv_color_t from, lv_color_t to, bool vert
   // out from both ends and is the colour "on" tiles take.
   lv_obj_set_style_border_color(slider, Theme::accent(), LV_PART_KNOB);
   // A dark edge too, for an accent close to the track's colour (dusk's peach on its warm end).
-  lv_obj_set_style_outline_width(slider, 2, LV_PART_KNOB);
+  lv_obj_set_style_outline_width(slider, Theme::px(2), LV_PART_KNOB);
   lv_obj_set_style_outline_color(slider, Theme::background(), LV_PART_KNOB);
   lv_obj_set_style_outline_opa(slider, LV_OPA_COVER, LV_PART_KNOB);
   // Keep the knob on the track at either end: its travel stops a knob's radius short of each.
@@ -371,9 +371,9 @@ void hue_slider(SliderCard &card, bool vertical) {
   lv_obj_set_flex_flow(strip, vertical ? LV_FLEX_FLOW_COLUMN_REVERSE : LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_grow(strip, 1);
   if (vertical) {
-    lv_obj_set_width(strip, 36);
+    lv_obj_set_width(strip, Theme::px(36));
   } else {
-    lv_obj_set_height(strip, 36);
+    lv_obj_set_height(strip, Theme::px(36));
   }
   lv_obj_move_to_index(strip, lv_obj_get_index(card.slider));
   for (int i = 0; i < 6; i++) {

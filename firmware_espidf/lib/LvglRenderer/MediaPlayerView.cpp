@@ -17,7 +17,7 @@ static lv_obj_t *button(lv_obj_t *parent, const char *glyph, int size, MediaPlay
 static lv_obj_t *bar(lv_obj_t *parent, lv_color_t color) {
   lv_obj_t *b = lv_bar_create(parent);
   lv_obj_remove_style_all(b);
-  lv_obj_set_height(b, 6);
+  lv_obj_set_height(b, Theme::px(6));
   lv_obj_set_style_radius(b, Theme::RADIUS_BAR, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, Theme::track(), LV_PART_MAIN);
@@ -40,7 +40,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   MediaPlayerView::_title = header.title;
   lv_obj_add_event_cb(header.back, clicked, LV_EVENT_CLICKED, (void *)(intptr_t)Action::BACK);
   MediaPlayerView::_source = button(header.right, NSPM_ICON_SPEAKER, 24, Action::SOURCE_SWITCH);
-  Ui::reach_screen_edges(MediaPlayerView::_source, 24, 10); // As the header's own buttons
+  Ui::reach_screen_edges(MediaPlayerView::_source, Theme::px(24), Theme::px(10)); // As the header's own buttons
 
   // The art beside everything else on a landscape screen, above it on a portrait one.
   lv_obj_t *body = Ui::fill(parent, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
@@ -50,7 +50,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_t *art = lv_obj_create(body);
   lv_obj_remove_style_all(art);
   lv_obj_remove_flag(art, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(art, ART_SIZE, ART_SIZE);
+  lv_obj_set_size(art, art_size(), art_size());
   lv_obj_set_style_bg_opa(art, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(art, Theme::card(), 0);
   // Rounded as the cards are, behind the placeholder. Art covers the box and stays square: clipping
@@ -102,7 +102,7 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_flex_align(transport, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   MediaPlayerView::_previous = button(transport, NSPM_ICON_SKIP_PREVIOUS, 40, Action::PREVIOUS);
   MediaPlayerView::_play = button(transport, NSPM_ICON_PLAY, 40, Action::PLAY_PAUSE);
-  lv_obj_set_size(MediaPlayerView::_play, 64, 64);
+  lv_obj_set_size(MediaPlayerView::_play, Theme::px(64), Theme::px(64));
   lv_obj_set_style_radius(MediaPlayerView::_play, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_opa(MediaPlayerView::_play, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(MediaPlayerView::_play, Theme::track(), 0);
@@ -118,17 +118,17 @@ void MediaPlayerView::build(lv_obj_t *parent, bool landscape) {
   // filled, as play is, so it reads as a button; it and the +/- buttons reach the screen's edges
   // (Ui::reach_screen_edges, from icon_button) where they are near one.
   MediaPlayerView::_mute = button(volume, NSPM_ICON_VOLUME_HIGH, 24, Action::MUTE);
-  lv_obj_set_size(MediaPlayerView::_mute, 72, 52);
+  lv_obj_set_size(MediaPlayerView::_mute, Theme::px(72), Theme::px(52));
   lv_obj_set_style_bg_opa(MediaPlayerView::_mute, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(MediaPlayerView::_mute, Theme::track(), 0);
   MediaPlayerView::_down = button(volume, NSPM_ICON_MINUS, 24, Action::VOLUME_DOWN);
-  lv_obj_set_size(MediaPlayerView::_down, 56, 52);
+  lv_obj_set_size(MediaPlayerView::_down, Theme::px(56), Theme::px(52));
   // Always shown, unlike the Nextion page's p_volume, which appears for a few seconds on a change
   // (there is room for it here, and a bar that comes and goes costs two redraws per change).
   MediaPlayerView::_volume = bar(volume, Theme::on());
   lv_obj_set_flex_grow(MediaPlayerView::_volume, 1);
   MediaPlayerView::_up = button(volume, NSPM_ICON_PLUS, 24, Action::VOLUME_UP);
-  lv_obj_set_size(MediaPlayerView::_up, 56, 52);
+  lv_obj_set_size(MediaPlayerView::_up, Theme::px(56), Theme::px(52));
 }
 
 void MediaPlayerView::show(const MediaPlayerState &state) {

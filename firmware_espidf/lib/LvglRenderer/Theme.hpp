@@ -62,19 +62,45 @@ inline lv_color_t on() { return lv_color_hex(0xF8C000); }
 // Behind the screensaver and the clean screen when they have no background: black, or a light
 // palette's background, as its dark text would not show on black.
 inline lv_color_t blank() { return palette().light ? background() : lv_color_black(); }
+/**
+ * Sizes in the NSPanel's pixels, and the screen they are drawn on. The pages were laid out for the NSPanel's
+ * 320x480 and 480x320 screens; the custom PCB's 720x720 LCD is drawn at 1.5x (set_hd()), with fonts made at
+ * that size (NSPM_HD_FONTS). px() takes a length in NSPanel pixels and returns it in screen pixels, rounded
+ * half away from zero (a 1 px hairline is 2, the 3 px lip 5); at 1x it returns it as it is, so the NSPanel's
+ * pages are what they always were. Px is such a length as a constant: it converts to screen pixels where it
+ * is used, so the constants below need no px() of their own.
+ */
+namespace detail {
+inline bool hd = false;
+}
+// Before the first page is built (and LVGL started); the simulator switches between runs.
+inline void set_hd(bool hd) { detail::hd = hd; }
+inline bool hd() { return detail::hd; }
+inline int32_t px(int32_t v) {
+  if (!detail::hd) {
+    return v;
+  }
+  return v >= 0 ? (v * 3 + 1) / 2 : -((-v * 3 + 1) / 2);
+}
+struct Px {
+  int32_t v;
+  constexpr explicit Px(int32_t v) : v(v) {}
+  operator int32_t() const { return px(v); }
+};
+
 // Corner radii: containers (cards, tiles, the room list), the controls in them (buttons, sliders),
 // a control inset in a container's padding (outer radius minus padding), and thin bars.
-constexpr int32_t RADIUS_CARD = 12;
-constexpr int32_t RADIUS_CONTROL = 10;
-constexpr int32_t RADIUS_INSET = 8;
-constexpr int32_t RADIUS_BAR = 3;
+inline constexpr Px RADIUS_CARD{12};
+inline constexpr Px RADIUS_CONTROL{10};
+inline constexpr Px RADIUS_INSET{8};
+inline constexpr Px RADIUS_BAR{3};
 // Gaps and padding: a 4 px scale and a hairline. Odd values that place one thing (a label's
 // indent, a list's row pitch) stay where they are used.
-constexpr int32_t SPACE_XS = 2;
-constexpr int32_t SPACE_S = 4;
-constexpr int32_t SPACE_M = 8;
-constexpr int32_t SPACE_L = 12;
-constexpr int32_t SPACE_XL = 16;
+inline constexpr Px SPACE_XS{2};
+inline constexpr Px SPACE_S{4};
+inline constexpr Px SPACE_M{8};
+inline constexpr Px SPACE_L{12};
+inline constexpr Px SPACE_XL{16};
 
 // How opaque cards and tiles are: solid, or see-through over a page background (Background.hpp).
 // Read when a card is built.
@@ -82,7 +108,7 @@ lv_opa_t card_opa();
 void set_card_opa(lv_opa_t opa);
 
 /**
- * A screen that is neither of the NSPanel's (the custom PCB's 480x480, drawn x1.5 on its 720x720 LCD):
+ * A screen that is neither of the NSPanel's (the custom PCB's 720x720, in screen pixels):
  * pages use all of it. 0 x 0 (the default): the NSPanel's, by `landscape` below. Set before the first
  * page is built.
  */
@@ -108,8 +134,8 @@ const lv_font_t *title_font();
 const lv_font_t *body_font();
 // Montserrat 32, digits and what temperatures need ("72°F", "-3.5°C", "45%").
 const lv_font_t *large_font();
-// Material Design Icons (nspm_icons.h) at 24, 40 or 64 px; 40 and 64 hold only the icons drawn
-// that big (tools/gen_fonts.sh).
+// Material Design Icons (nspm_icons.h) at 24, 40 or 64 px (NSPanel pixels, as every size here); 40 and
+// 64 hold only the icons drawn that big (tools/gen_fonts.sh).
 const lv_font_t *icon_font(int size);
 
 /**
@@ -119,8 +145,8 @@ const lv_font_t *icon_font(int size);
  * that much from its content box on that side. Not full borders, outlines or shadows: in the
  * simulator those cost 12-27% more bytes per page.
  */
-constexpr int32_t HIGHLIGHT_WIDTH = 1;
-constexpr int32_t LIP_WIDTH = 3;
+inline constexpr Px HIGHLIGHT_WIDTH{1};
+inline constexpr Px LIP_WIDTH{3};
 void top_highlight(lv_obj_t *obj);
 void bottom_lip(lv_obj_t *obj);
 

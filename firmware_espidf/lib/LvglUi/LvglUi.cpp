@@ -29,13 +29,13 @@ static constexpr int64_t TICK_US = 1000 * 1000;
 // Between attempts to bring the terminal back after it gave up (3 failed sessions in a row).
 static constexpr int64_t RESTART_INTERVAL_US = 10 * 1000 * 1000;
 // A swipe: at least this far, within this long.
-static constexpr int SWIPE_PX = 80;
+static constexpr Theme::Px SWIPE_PX{80}; // NSPanel pixels, as every length here (Theme::px())
 static constexpr int64_t SWIPE_MAX_US = 1000 * 1000;
 // A swipe-down that starts this near the top (the header bar is 8..52) opens the menu, from any page,
 // after EDGE_SWIPE_PX. Only from there: elsewhere a drag may be meant for what is under the finger
 // (a vertical slider on a landscape panel, a list).
-static constexpr int EDGE_ZONE_PX = 72;
-static constexpr int EDGE_SWIPE_PX = 48;
+static constexpr Theme::Px EDGE_ZONE_PX{72};
+static constexpr Theme::Px EDGE_SWIPE_PX{48};
 
 // The display's identity, up to the reply's 0xFF terminator.
 static std::string printable_identity() {

@@ -1,4 +1,5 @@
 #pragma once
+#include "Theme.hpp"
 #include <lvgl.h>
 
 // The look picker, reached from the swipe-down menu: the standard looks as one choice each (a page
@@ -35,8 +36,8 @@ public:
   static void show(const LookState &state);
 
   // Each preview's size on a portrait screen, where it shows the background's art.
-  static constexpr int32_t PREVIEW_W = 132;
-  static constexpr int32_t PREVIEW_H = 60;
+  static constexpr Theme::Px PREVIEW_W{132};
+  static constexpr Theme::Px PREVIEW_H{60};
 
 private:
   static inline lv_obj_t *_tiles[Looks::COUNT] = {};

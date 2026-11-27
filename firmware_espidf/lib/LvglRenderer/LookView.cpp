@@ -123,16 +123,16 @@ static lv_obj_t *preview(lv_obj_t *tile, const Look &look, bool landscape) {
   lv_obj_set_style_border_width(card, Theme::HIGHLIGHT_WIDTH, 0);
   lv_obj_set_style_border_color(card, lv_color_hex(p.highlight), 0);
   lv_obj_set_style_border_opa(card, LV_OPA_COVER, 0);
-  lv_obj_set_size(card, lv_pct(76), 26);
-  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 6);
+  lv_obj_set_size(card, lv_pct(76), Theme::px(26));
+  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, Theme::px(6));
 
   lv_obj_t *dot = lv_obj_create(card);
   lv_obj_remove_style_all(dot);
-  lv_obj_set_size(dot, 12, 12);
+  lv_obj_set_size(dot, Theme::px(12), Theme::px(12));
   lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(dot, lv_color_hex(p.accent), 0);
-  lv_obj_align(dot, LV_ALIGN_LEFT_MID, 7, 0);
+  lv_obj_align(dot, LV_ALIGN_LEFT_MID, Theme::px(7), 0);
   static const struct {
     int32_t y, w;
     bool muted;
@@ -140,11 +140,11 @@ static lv_obj_t *preview(lv_obj_t *tile, const Look &look, bool landscape) {
   for (const auto &l : lines) {
     lv_obj_t *line = lv_obj_create(card);
     lv_obj_remove_style_all(line);
-    lv_obj_set_size(line, lv_pct(l.w), 4);
-    lv_obj_set_style_radius(line, 2, 0);
+    lv_obj_set_size(line, lv_pct(l.w), Theme::px(4));
+    lv_obj_set_style_radius(line, Theme::px(2), 0);
     lv_obj_set_style_bg_opa(line, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(line, lv_color_hex(l.muted ? p.muted : p.text), 0);
-    lv_obj_align(line, LV_ALIGN_LEFT_MID, 26, l.y);
+    lv_obj_align(line, LV_ALIGN_LEFT_MID, Theme::px(26), Theme::px(l.y));
   }
   return screen;
 }

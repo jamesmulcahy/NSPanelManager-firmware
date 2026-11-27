@@ -16,19 +16,25 @@ The manager still knows it as model `custom`. The earlier ESP32-S3 custom PCB is
 
 ## The display
 
-`lib/DsiDisplay` drives it, and LVGL is always the UI (`display_mode: LVGL`). LVGL draws a 480x480
-screen, the size the pages were made for, laid out portrait (the landscape layout stretches tiles and
-sliders on a square: compare `sq-*` and `sql-*` from `test/host/lvgl_sim/build.sh`). It draws into one
-screen-sized buffer in PSRAM (direct mode); after each refresh the PPA scales the whole screen x1.5 into
-whichever of the panel's two frame buffers it is not sending, and the panel switches to it at the next
-frame (no tearing). Touches are scaled back to 480x480. The page backgrounds are drawn scaled to the
-width, their bottoms on the screen's.
+`lib/DsiDisplay` drives it, and LVGL is always the UI (`display_mode: LVGL`). LVGL draws the whole
+720x720 screen, with the pages laid out portrait at 1.5x the NSPanel's sizes. Every length in the views
+is in NSPanel pixels and goes through `Theme::px()` (or is a `Theme::Px` constant). The fonts are a
+second set at 1.5x their size (`nspm_font_hd_*.c`, from `tools/gen_fonts.sh`), compiled only where
+`NSPM_HD_FONTS` is defined, so the NSPanel's flash doesn't carry them. On the NSPanel `px()` returns its
+argument, and its pages are drawn exactly as before.
+
+LVGL draws straight into the panel's two frame buffers (direct mode), into the one the panel is not
+sending. After each refresh `DsiDisplay::show()` hands that one to the panel, which switches to it at
+the next frame (no tearing), and LVGL copies what it redrew into the other before drawing there.
+Touches are in the panel's coordinates. The page backgrounds (320x480 art) are drawn scaled to the
+width, their bottoms on the screen's. `test/host/lvgl_sim/build.sh` draws every page this way too, as
+`hd-*`.
 
 | | |
 |---|---|
 | Panel | `DsiPanel.c`: Waveshare's ID probe and the two controllers' timings (and the JD9365's init table) from their board definition, `waveshare/waveshare_boards` 0.3.7. The boot log says which: `DsiDisplay: Panel controller: ST7703.` |
 | Brightness | The manager's screen and screensaver brightness, 0-100 %, as PWM duty; 0 turns the backlight off. Dark until the first frame is shown |
-| Screenshots | `GET /screenshot` works as on the NSPanel, at 480x480 (what LVGL draws, before scaling) |
+| Screenshots | `GET /screenshot` works as on the NSPanel, at 720x720 |
 | GUI update | Refused: there is no TFT to update |
 
 ## What differs from the Sonoff build

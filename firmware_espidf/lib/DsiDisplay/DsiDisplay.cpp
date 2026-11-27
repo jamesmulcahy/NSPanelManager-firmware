@@ -7,7 +7,6 @@
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <driver/ledc.h>
-#include <driver/ppa.h>
 #include <esp_attr.h>
 #include <esp_cache.h>
 #include <esp_check.h>
@@ -38,7 +37,7 @@ static constexpr gpio_num_t TOUCH_RESET_GPIO = GPIO_NUM_23;
 
 // How often the GT911 is read: its INT line is not wired to the P4.
 static constexpr TickType_t TOUCH_POLL = pdMS_TO_TICKS(15);
-// The longest present() waits for the panel to take the new frame (a frame is ~16 ms).
+// The longest show() waits for the panel to take the new frame (a frame is ~16 ms).
 static constexpr TickType_t FRAME_WAIT = pdMS_TO_TICKS(100);
 
 // End of every frame the DPI DMA sends: the frame buffer it came from may be written again. ISR, IRAM.
@@ -117,12 +116,6 @@ esp_err_t DsiDisplay::_init_panel() {
   if (on != ESP_OK && on != ESP_ERR_NOT_SUPPORTED) {
     ESP_LOGW(TAG, "Display on: %s", esp_err_to_name(on));
   }
-
-  ppa_client_handle_t ppa = nullptr;
-  ppa_client_config_t ppa_config = {};
-  ppa_config.oper_type = PPA_OPERATION_SRM;
-  ESP_RETURN_ON_ERROR(ppa_register_client(&ppa_config, &ppa), TAG, "PPA");
-  DsiDisplay::_ppa = ppa;
   return ESP_OK;
 }
 
@@ -156,40 +149,20 @@ void DsiDisplay::_apply_brightness() {
   ledc_update_duty(LEDC_LOW_SPEED_MODE, BACKLIGHT_CHANNEL);
 }
 
-esp_err_t DsiDisplay::present(const uint16_t *screen) {
+void *DsiDisplay::frame_buffer(int index) { return index == 0 || index == 1 ? DsiDisplay::_fbs[index] : nullptr; }
+
+esp_err_t DsiDisplay::show(const void *frame) {
   if (!DsiDisplay::_ready) {
     return ESP_ERR_INVALID_STATE;
   }
-  const int back = 1 - DsiDisplay::_front;
-  // LVGL wrote `screen` through the cache; the PPA reads memory.
-  esp_cache_msync(const_cast<uint16_t *>(screen), SCREEN_SIZE * SCREEN_SIZE * sizeof(uint16_t), ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
-
-  ppa_srm_oper_config_t srm = {};
-  srm.in.buffer = screen;
-  srm.in.pic_w = SCREEN_SIZE;
-  srm.in.pic_h = SCREEN_SIZE;
-  srm.in.block_w = SCREEN_SIZE;
-  srm.in.block_h = SCREEN_SIZE;
-  srm.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
-  srm.out.buffer = DsiDisplay::_fbs[back];
-  srm.out.buffer_size = DsiDisplay::_fb_size;
-  srm.out.pic_w = PANEL_SIZE;
-  srm.out.pic_h = PANEL_SIZE;
-  srm.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
-  srm.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
-  srm.scale_x = (float)PANEL_SIZE / SCREEN_SIZE;
-  srm.scale_y = (float)PANEL_SIZE / SCREEN_SIZE;
-  srm.mode = PPA_TRANS_MODE_BLOCKING;
-  esp_err_t err = ppa_do_scale_rotate_mirror(static_cast<ppa_client_handle_t>(DsiDisplay::_ppa), &srm);
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "Scaling the frame failed: %s", esp_err_to_name(err));
-    return err;
-  }
-
+  const int back = frame == DsiDisplay::_fbs[0] ? 0 : frame == DsiDisplay::_fbs[1] ? 1 : -1;
+  ESP_RETURN_ON_FALSE(back >= 0, ESP_ERR_INVALID_ARG, TAG, "not one of the panel's frame buffers");
+  // LVGL drew it through the cache; the panel's DMA reads memory.
+  esp_cache_msync(DsiDisplay::_fbs[back], DsiDisplay::_fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
   // The panel's own frame buffer: the driver only switches to it, from the frame after the one it is
   // sending. Then wait for a frame to end: by then the panel sends from `back`, and the old front may be
   // written. (A frame that ended just before the switch only makes this wait one frame more.)
-  err = esp_lcd_panel_draw_bitmap(DsiDisplay::_panel, 0, 0, PANEL_SIZE, PANEL_SIZE, DsiDisplay::_fbs[back]);
+  esp_err_t err = esp_lcd_panel_draw_bitmap(DsiDisplay::_panel, 0, 0, PANEL_SIZE, PANEL_SIZE, DsiDisplay::_fbs[back]);
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "Showing the frame failed: %s", esp_err_to_name(err));
     return err;
@@ -274,11 +247,8 @@ void DsiDisplay::_touch_task(void *param) {
     uint8_t count = 0;
     bool pressed = esp_lcd_touch_get_data(touch, points, &count, 1) == ESP_OK && count > 0;
     if (pressed) {
-      // Panel to screen coordinates.
-      uint32_t x = (uint32_t)points[0].x * SCREEN_SIZE / PANEL_SIZE;
-      uint32_t y = (uint32_t)points[0].y * SCREEN_SIZE / PANEL_SIZE;
-      last_x = x < SCREEN_SIZE ? x : SCREEN_SIZE - 1;
-      last_y = y < SCREEN_SIZE ? y : SCREEN_SIZE - 1;
+      last_x = points[0].x < PANEL_SIZE ? points[0].x : PANEL_SIZE - 1;
+      last_y = points[0].y < PANEL_SIZE ? points[0].y : PANEL_SIZE - 1;
     } else if (!down) {
       continue;
     }

@@ -56,10 +56,10 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   HomeView::_entities = Ui::icon_button(header.bar, NSPM_ICON_DOTS_HORIZONTAL, 24);
   on_click(HomeView::_entities, Action::ENTITIES, LV_EVENT_CLICKED);
   // Into the screen's corners, as the header's own buttons (Ui::header()).
-  Ui::reach_screen_edges(HomeView::_scenes, 24, 10);
-  Ui::reach_screen_edges(HomeView::_entities, 24, 10);
+  Ui::reach_screen_edges(HomeView::_scenes, Theme::px(24), Theme::px(10));
+  Ui::reach_screen_edges(HomeView::_entities, Theme::px(24), Theme::px(10));
   lv_obj_set_style_text_align(HomeView::_time, LV_TEXT_ALIGN_RIGHT, 0);
-  lv_obj_set_style_pad_right(HomeView::_time, 10, 0);
+  lv_obj_set_style_pad_right(HomeView::_time, Theme::px(10), 0);
 
   // Body: the light groups and the sliders, side by side on a landscape screen, stacked on a
   // portrait one; each slider runs along its card's long side.
@@ -126,7 +126,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
 
   // Footer: the room, picked from a list that opens upwards, and the mode, a two-way switch.
   lv_obj_t *footer = Theme::group(parent, LV_FLEX_FLOW_ROW);
-  lv_obj_set_size(footer, lv_pct(100), 48);
+  lv_obj_set_size(footer, lv_pct(100), Theme::px(48));
 
   lv_obj_t *room = lv_dropdown_create(footer);
   HomeView::_room = room;
@@ -147,10 +147,10 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_text_font(room, Theme::body_font(), 0);
   lv_obj_set_style_text_color(room, Theme::text(), 0);
   lv_obj_set_style_pad_left(room, Theme::SPACE_XL, 0);
-  lv_obj_set_style_pad_right(room, 10, 0);
+  lv_obj_set_style_pad_right(room, Theme::px(10), 0);
   lv_obj_set_style_pad_ver(room, 0, 0);
   // The label sits mid-height: LVGL draws the button text from the top padding.
-  lv_obj_set_style_pad_top(room, (48 - lv_font_get_line_height(Theme::body_font())) / 2, 0);
+  lv_obj_set_style_pad_top(room, (Theme::px(48) - lv_font_get_line_height(Theme::body_font())) / 2, 0);
   lv_dropdown_set_dir(room, LV_DIR_TOP);
   lv_dropdown_set_symbol(room, NSPM_ICON_CHEVRON_UP);
   lv_obj_set_style_text_font(room, Theme::icon_font(24), LV_PART_INDICATOR);
@@ -160,7 +160,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_bg_color(list, Theme::card(), 0);
   lv_obj_set_style_bg_opa(list, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(list, Theme::track(), 0);
-  lv_obj_set_style_border_width(list, 1, 0);
+  lv_obj_set_style_border_width(list, Theme::px(1), 0);
   // The border over the row highlights, which span the list's width: without clip_corner (a mask
   // on every pixel the list draws) the highlights take the list's radius instead.
   lv_obj_set_style_border_post(list, true, 0);
@@ -168,10 +168,10 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_text_font(list, Theme::body_font(), 0);
   lv_obj_set_style_text_color(list, Theme::text(), 0);
   // Rows a finger can hit: 14 px text 26 px apart, six rows before the list scrolls.
-  lv_obj_set_style_text_line_space(list, 26, 0);
-  lv_obj_set_style_pad_ver(list, 14, 0);
+  lv_obj_set_style_text_line_space(list, Theme::px(26), 0);
+  lv_obj_set_style_pad_ver(list, Theme::px(14), 0);
   lv_obj_set_style_pad_hor(list, Theme::SPACE_XL, 0);
-  lv_obj_set_style_max_height(list, 6 * (lv_font_get_line_height(Theme::body_font()) + 26) + 2, 0);
+  lv_obj_set_style_max_height(list, 6 * (lv_font_get_line_height(Theme::body_font()) + Theme::px(26)) + Theme::px(2), 0);
   // The selected room's row, and the row under a finger.
   lv_obj_set_style_radius(list, Theme::RADIUS_CARD, LV_PART_SELECTED);
   lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED);
@@ -185,8 +185,8 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_bg_opa(list, LV_OPA_40, LV_PART_SCROLLBAR);
   lv_obj_set_style_bg_opa(list, LV_OPA_COVER, (lv_style_selector_t)LV_PART_SCROLLBAR | (lv_style_selector_t)LV_STATE_SCROLLED);
   lv_obj_set_style_radius(list, LV_RADIUS_CIRCLE, LV_PART_SCROLLBAR);
-  lv_obj_set_style_width(list, 4, LV_PART_SCROLLBAR);
-  lv_obj_set_style_pad_all(list, 6, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(list, Theme::px(4), LV_PART_SCROLLBAR);
+  lv_obj_set_style_pad_all(list, Theme::px(6), LV_PART_SCROLLBAR);
   for (lv_event_code_t code : {LV_EVENT_READY, LV_EVENT_CANCEL, LV_EVENT_VALUE_CHANGED, LV_EVENT_DELETE}) {
     lv_obj_add_event_cb(room, HomeView::_room_event, code, NULL);
   }
@@ -224,7 +224,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
                         LV_EVENT_CLICKED, (void *)(intptr_t)i);
     (i == 0 ? HomeView::_mode_room : HomeView::_mode_all) = half;
     // To the screen edges below and beside, and over the switch's own padding (Ui::reach_screen_edges).
-    Ui::reach_screen_edges(half, 24, Theme::SPACE_S);
+    Ui::reach_screen_edges(half, Theme::px(24), Theme::SPACE_S);
   }
 }
 

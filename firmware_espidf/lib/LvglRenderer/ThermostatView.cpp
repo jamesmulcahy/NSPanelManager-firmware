@@ -68,7 +68,7 @@ void ThermostatView::build(lv_obj_t *parent, bool landscape) {
   for (int i = 0; i < ThermostatState::MAX_OPTIONS; i++) {
     lv_obj_t *option = Ui::tile(options, "", 24, "", false);
     lv_obj_set_flex_grow(option, 1);
-    lv_obj_set_style_pad_ver(option, 6, 0);
+    lv_obj_set_style_pad_ver(option, Theme::px(6), 0);
     lv_obj_set_style_bg_color(option, Theme::track(), LV_STATE_CHECKED);
     lv_obj_set_style_text_color(Ui::tile_label(option), Theme::muted(), 0);
     lv_obj_add_event_cb(option, option_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);

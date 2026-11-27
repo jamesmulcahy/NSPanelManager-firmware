@@ -31,10 +31,17 @@ public:
   // Slots in the cache, and the PSRAM all their pixels may take together. Each slot is allocated at the
   // size of the image it holds, so this fits the media page's 180 px and a screensaver card's ~224 px for
   // the current track, plus the previous track at both sizes.
+  // On the custom PCB's 720x720 screen (drawn at 1.5x) the art is 1.5x the size: 270 px and ~336 px.
   static constexpr int SLOTS = 4;
+#if defined(BOARD_CUSTOM)
+  static constexpr size_t BUDGET_BYTES = 1280 * 1024;
+  // The largest side that may be asked for.
+  static constexpr uint16_t MAX_SIZE = 384;
+#else
   static constexpr size_t BUDGET_BYTES = 512 * 1024;
   // The largest side that may be asked for.
   static constexpr uint16_t MAX_SIZE = 256;
+#endif
 
   /**
    * A hold on a cached image. Copyable (each copy holds too) and movable; the hold ends when the

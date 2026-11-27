@@ -12,6 +12,20 @@ LV_FONT_DECLARE(nspm_font_large);
 LV_FONT_DECLARE(nspm_font_icon_24);
 LV_FONT_DECLARE(nspm_font_icon_40);
 LV_FONT_DECLARE(nspm_font_icon_64);
+#if defined(NSPM_HD_FONTS)
+// The same at 1.5x, for set_hd() (rasterised from the TTFs: tools/gen_fonts.sh).
+LV_FONT_DECLARE(nspm_font_hd_clock);
+LV_FONT_DECLARE(nspm_font_hd_big_clock);
+LV_FONT_DECLARE(nspm_font_hd_title);
+LV_FONT_DECLARE(nspm_font_hd_body);
+LV_FONT_DECLARE(nspm_font_hd_large);
+LV_FONT_DECLARE(nspm_font_hd_icon_36);
+LV_FONT_DECLARE(nspm_font_hd_icon_60);
+LV_FONT_DECLARE(nspm_font_hd_icon_96);
+#define HD_FONT(hd_font, font) (hd() ? &(hd_font) : &(font))
+#else
+#define HD_FONT(hd_font, font) (&(font))
+#endif
 
 namespace Theme {
 
@@ -51,16 +65,16 @@ const Palette *palette_from_name(const char *name) {
   return nullptr;
 }
 
-const lv_font_t *clock_font() { return &nspm_font_clock_48; }
-const lv_font_t *big_clock_font() { return &nspm_font_clock_88; }
-const lv_font_t *title_font() { return &nspm_font_title; }
-const lv_font_t *body_font() { return &nspm_font_body; }
-const lv_font_t *large_font() { return &nspm_font_large; }
+const lv_font_t *clock_font() { return HD_FONT(nspm_font_hd_clock, nspm_font_clock_48); }
+const lv_font_t *big_clock_font() { return HD_FONT(nspm_font_hd_big_clock, nspm_font_clock_88); }
+const lv_font_t *title_font() { return HD_FONT(nspm_font_hd_title, nspm_font_title); }
+const lv_font_t *body_font() { return HD_FONT(nspm_font_hd_body, nspm_font_body); }
+const lv_font_t *large_font() { return HD_FONT(nspm_font_hd_large, nspm_font_large); }
 const lv_font_t *icon_font(int size) {
   if (size >= 64) {
-    return &nspm_font_icon_64;
+    return HD_FONT(nspm_font_hd_icon_96, nspm_font_icon_64);
   }
-  return size >= 40 ? &nspm_font_icon_40 : &nspm_font_icon_24;
+  return size >= 40 ? HD_FONT(nspm_font_hd_icon_60, nspm_font_icon_40) : HD_FONT(nspm_font_hd_icon_36, nspm_font_icon_24);
 }
 
 void screen(lv_obj_t *obj) {
@@ -101,7 +115,7 @@ lv_obj_t *card(lv_obj_t *parent) {
   lv_obj_set_style_radius(card, RADIUS_CARD, 0);
   lv_obj_set_style_pad_all(card, SPACE_L, 0);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(card, 6, 0);
+  lv_obj_set_style_pad_row(card, px(6), 0);
   return card;
 }
 

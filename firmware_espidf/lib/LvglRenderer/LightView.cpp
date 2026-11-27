@@ -28,7 +28,7 @@ void LightView::build(lv_obj_t *parent, bool landscape) {
   LightView::_title = header.title;
   lv_obj_add_event_cb(header.back, clicked, LV_EVENT_CLICKED, (void *)(intptr_t)Action::BACK);
   LightView::_mode = Ui::icon_button(header.right, NSPM_ICON_PALETTE, 24);
-  Ui::reach_screen_edges(LightView::_mode, 24, 10); // As the header's own buttons
+  Ui::reach_screen_edges(LightView::_mode, Theme::px(24), Theme::px(10)); // As the header's own buttons
   lv_obj_add_event_cb(LightView::_mode, clicked, LV_EVENT_CLICKED, (void *)(intptr_t)Action::SWITCH_MODE);
 
   // Three cards along the screen's long side: sliders across a portrait screen, upright on a

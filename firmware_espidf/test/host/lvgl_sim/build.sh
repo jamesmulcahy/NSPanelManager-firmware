@@ -14,7 +14,7 @@ out="${1:-$build/out}"
 [ -f "$lvgl/lvgl.h" ] || { echo "no LVGL at $lvgl; run pio run -e qemu first, or set LVGL_DIR" >&2; exit 2; }
 mkdir -p "$build/obj" "$out"
 
-cflags="-O2 -g -DLV_CONF_INCLUDE_SIMPLE -I$here -I$lvgl -I$lvgl/src -I$lib -I$root/lib/NextionTerminal"
+cflags="-O2 -g -DNSPM_HD_FONTS -DLV_CONF_INCLUDE_SIMPLE -I$here -I$lvgl -I$lvgl/src -I$lib -I$root/lib/NextionTerminal"
 # LVGL: compiled once, then only what changed (make-style timestamps via find -newer).
 find "$lvgl/src" -name '*.c' | while read -r src; do
   obj="$build/obj/$(echo "$src" | sed "s|$lvgl/||; s|/|_|g").o"
