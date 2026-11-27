@@ -10,7 +10,8 @@ fi
 # No LittleFS image: the web UI is in firmware.bin, and a blank spiffs partition is formatted on first boot.
 echo "Building image from existing .bin-files"
 if [ "${BOARD_TYPE}" == "custom" ]; then
-  esptool.py --chip esp32s3 merge_bin -o merged-flash.bin --flash_mode qio --flash_size 16MB 0x0 .pio/build/custom_pcb/bootloader.bin 0x8000 .pio/build/custom_pcb/partitions.bin 0x10000 .pio/build/custom_pcb/firmware.bin
+  # Waveshare ESP32-P4-WIFI6-Touch-LCD-4B: the P4 boots its bootloader from 0x2000.
+  esptool.py --chip esp32p4 merge_bin -o merged-flash.bin --flash_mode qio --flash_size 32MB 0x2000 .pio/build/custom_pcb/bootloader.bin 0x8000 .pio/build/custom_pcb/partitions.bin 0x10000 .pio/build/custom_pcb/firmware.bin
 elif [ "${BOARD_TYPE}" == "sonoff" ]; then
   esptool.py --chip esp32 merge_bin -o merged-flash.bin --flash_mode dio --flash_size 4MB 0x1000 .pio/build/original_sonoff/bootloader.bin 0x8000 .pio/build/original_sonoff/partitions.bin 0x10000 .pio/build/original_sonoff/firmware.bin
 else

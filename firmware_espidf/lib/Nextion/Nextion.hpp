@@ -41,6 +41,20 @@ public:
   static esp_err_t init(bool (*recognised)(const char *identity) = nullptr);
 
   /**
+   * Whether the board has a Nextion display. The custom PCB (Waveshare ESP32-P4-WIFI6-Touch-LCD-4B) has
+   * a MIPI-DSI LCD instead, and its GPIO 14-19 are the ESP32-C6's SDIO bus. Without one, init() only
+   * creates the mutexes and claims no UART or GPIO, the state stays INITIALIZING (so no terminal is ever
+   * started), commands are dropped and a TFT update is refused (ESP_ERR_NOT_SUPPORTED).
+   */
+  static constexpr bool present() {
+#if defined(BOARD_CUSTOM)
+    return false;
+#else
+    return true;
+#endif
+  }
+
+  /**
    * @brief Go to the specified page
    * @param page: The name of the Nextion page to go to.
    * @param mutex_timeout: Timeout (in ms) of how long to wait for UART mutex

@@ -146,9 +146,11 @@ extern "C" void app_main() {
     ESP_LOGE("Main", "Failed to mount LittleFS!");
   }
 
-  ConfigManager::create_default(); // Set default values on all config entities
-
+  // Wi-Fi first: the default hostname is made from the Wi-Fi MAC, which on the custom PCB is the ESP32-C6's,
+  // read over ESP-Hosted once the Wi-Fi driver is up.
   WiFiManager::init();
+
+  ConfigManager::create_default(); // Set default values on all config entities
   esp_err_t config_load_result = ConfigManager::load_config();
   switch (ConfigManager::boot_action(config_load_result)) {
   case ConfigFileState::BootAction::CONNECT:

@@ -16,6 +16,10 @@
  * LVGL on the ESP32, drawn on the display through NextionTerminal (the nspanel-terminal receiver
  * in a patched TFT, at 4 Mbaud). LvglUi starts it when the display runs such a TFT.
  *
+ * On the custom PCB (BOARD_CUSTOM) the display is DsiDisplay's instead: LVGL draws a 480x480 screen,
+ * laid out portrait, in one screen-sized buffer in PSRAM (direct mode), and each refresh is scaled x1.5
+ * onto the 720x720 panel. Touches come from DsiDisplay.
+ *
  * LVGL runs on one task of its own, and nothing else calls LVGL: other tasks post() work to it, or
  * hand over state (set_loading_text()) that it applies before each refresh. LVGL draws into a band
  * of internal RAM; its heap is in PSRAM (lv_mem_core_psram.c).
@@ -57,7 +61,11 @@ public:
    * GUI task only: the screen Screen::PAGES shows, and whether screens are laid out landscape.
    */
   static lv_obj_t *pages_screen() { return LvglRenderer::_pages_screen; }
+#if defined(BOARD_CUSTOM)
+  static bool landscape() { return false; } // Square: the portrait layout suits it (test/host/lvgl_sim, "sq")
+#else
   static bool landscape() { return !LvglRenderer::_us_layout; }
+#endif
 
   /**
    * GUI task: called after the screens were rebuilt for another region, so whatever builds on
@@ -116,10 +124,22 @@ public:
   static void repaint();
 
   /**
-   * Screen size: 320x480 on a US panel, 480x320 on an EU one.
+   * Screen size: 320x480 on a US panel, 480x320 on an EU one; 480x480 on the custom PCB, whatever the
+   * region.
    */
+#if defined(BOARD_CUSTOM)
+  static uint16_t width() { return 480; }
+  static uint16_t height() { return 480; }
+#else
   static uint16_t width() { return LvglRenderer::_us_layout ? 320 : 480; }
   static uint16_t height() { return LvglRenderer::_us_layout ? 480 : 320; }
+#endif
+  // The most pixels a screen has, in either layout.
+#if defined(BOARD_CUSTOM)
+  static constexpr size_t MAX_PIXELS = 480 * 480;
+#else
+  static constexpr size_t MAX_PIXELS = 480 * 320;
+#endif
 
   /**
    * The screen as LVGL draws it, from capture(): upright, in screen coordinates, before the
@@ -165,6 +185,8 @@ private:
   static void _build_screens();
   static void _show_status();
   static uint32_t _tick();
+  // Whether what LVGL draws reaches the display: the terminal streams, or DsiDisplay is up.
+  static bool _display_streaming();
 
   // Touches waiting for the GUI task. Moves may use all but the last TOUCH_EDGE_RESERVE slots, which are
   // kept for presses and releases (inject_touch()).

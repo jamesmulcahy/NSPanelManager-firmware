@@ -13,3 +13,29 @@ dependencies:
   espp/task: "1.3.3"
   espp/thread_pool: "1.3.3"
   lvgl/lvgl: "9.6.0"
+  # custom_pcb (Waveshare ESP32-P4-WIFI6-Touch-LCD-4B): the P4 has no radio; Wi-Fi is the ESP32-C6's,
+  # over SDIO. Pinned at the versions of Waveshare's factory app, which flashes the C6 with
+  # ESP-Hosted 3.0.10: the host and the C6's slave firmware must speak the same protocol.
+  espressif/esp_hosted:
+    version: "3.0.10"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_wifi_remote:
+    version: "1.6.5"
+    rules:
+      - if: "target == esp32p4"
+  # custom_pcb's display: a 720x720 MIPI-DSI panel, ST7703 or JD9365DA depending on the unit (DsiDisplay
+  # probes which), and its GT911 touch controller. The versions of Waveshare's board definition
+  # (waveshare/waveshare_boards 0.3.7, esp32_p4_wifi6_touch_lcd_4b).
+  waveshare/esp_lcd_st7703:
+    version: "2.0.0"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_lcd_jd9365:
+    version: "2.0.2"
+    rules:
+      - if: "target == esp32p4"
+  espressif/esp_lcd_touch_gt911:
+    version: "1.2.1"
+    rules:
+      - if: "target == esp32p4"

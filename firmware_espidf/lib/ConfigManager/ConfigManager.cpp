@@ -1,9 +1,9 @@
 #include "ConfigManager.hpp"
 #include <LittleFS.hpp>
 #include <PanelMetrics.hpp>
+#include <WiFiManager.hpp>
 #include <errno.h>
 #include <esp_log.h>
-#include <esp_mac.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -308,7 +308,7 @@ esp_err_t ConfigManager::load_config() {
 void ConfigManager::create_default() {
   // Load MAC-address. Last three bytes are specific to this device and will be used as a unique ID.
   uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA); // Read MAC address for Wi-Fi Station
+  WiFiManager::mac(mac); // The Wi-Fi station's (WiFiManager::init() ran first)
   char mac_str[7];                     // Format: XXXXXX
   snprintf(mac_str, sizeof(mac_str), "%02X%02X%02X", mac[3], mac[4], mac[5]);
 

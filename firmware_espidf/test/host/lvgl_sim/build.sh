@@ -19,7 +19,7 @@ cflags="-O2 -g -DLV_CONF_INCLUDE_SIMPLE -I$here -I$lvgl -I$lvgl/src -I$lib -I$ro
 find "$lvgl/src" -name '*.c' | while read -r src; do
   obj="$build/obj/$(echo "$src" | sed "s|$lvgl/||; s|/|_|g").o"
   if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ "$here/lv_conf.h" -nt "$obj" ]; then echo "$src $obj"; fi
-done | xargs -r -P "$(nproc)" -n 2 sh -c 'cc '"$cflags"' -c "$0" -o "$1"' 2>"$build/lvgl-build.log"
+done | xargs -r -P "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -n 2 sh -c 'cc '"$cflags"' -c "$0" -o "$1"' 2>"$build/lvgl-build.log"
 
 # Every font in lib/LvglRenderer, or FONT_DIR's version of it where FONT_DIR has one.
 fonts="${FONT_DIR:-$lib}"

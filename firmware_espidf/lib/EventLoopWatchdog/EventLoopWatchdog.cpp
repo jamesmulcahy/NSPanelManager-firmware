@@ -96,6 +96,11 @@ void EventLoopWatchdog::_capture_putc(char c) {
 }
 
 void EventLoopWatchdog::_log_all_backtraces() {
+#if !CONFIG_IDF_TARGET_ARCH_XTENSA
+  // esp_backtrace_print_all_tasks() is Xtensa-only: on RISC-V (the custom PCB's ESP32-P4) ESP-IDF unwinds
+  // a backtrace only in the panic handler. The stall itself was logged.
+  ESP_LOGW("LoopWatchdog", "Task backtraces are not available on this chip.");
+#else
   // PSRAM first: 16 KB of internal RAM is the last thing a stalled panel has to spare. Safe there because
   // _capture_putc() runs in this task's context with the scheduler suspended and the other core held in
   // an IPC call, so no flash operation can have the cache off meanwhile (esp_backtrace_print_all_tasks()).
@@ -146,4 +151,5 @@ void EventLoopWatchdog::_log_all_backtraces() {
 
   free(EventLoopWatchdog::_capture);
   EventLoopWatchdog::_capture = nullptr;
+#endif
 }

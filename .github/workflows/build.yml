@@ -61,7 +61,8 @@ jobs:
           key: build-${{ matrix.environment }}-${{ runner.os }}-${{ hashFiles('firmware_espidf/platformio.ini') }}
 
       - name: Install PlatformIO
-        run: pip install platformio==6.1.19
+        # 6.2: custom_pcb (ESP32-P4) builds on pioarduino's platform, which needs it.
+        run: pip install platformio==6.2.0
 
       - name: Build firmware
         run: pio run --environment ${{ matrix.environment }}

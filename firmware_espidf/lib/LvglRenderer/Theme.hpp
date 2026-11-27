@@ -82,11 +82,23 @@ lv_opa_t card_opa();
 void set_card_opa(lv_opa_t opa);
 
 /**
+ * A screen that is neither of the NSPanel's (the custom PCB's 480x480, drawn x1.5 on its 720x720 LCD):
+ * pages use all of it. 0 x 0 (the default): the NSPanel's, by `landscape` below. Set before the first
+ * page is built.
+ */
+inline int32_t screen_width_override = 0;
+inline int32_t screen_height_override = 0;
+inline void set_screen_size(int32_t width, int32_t height) {
+  screen_width_override = width;
+  screen_height_override = height;
+}
+
+/**
  * The part of the screen a page may use. The EU HMI's art is 456 px wide on its 480x320
  * controller: the rightmost 24 columns sit under the bezel, so pages leave them alone.
  */
-inline int32_t usable_width(bool landscape) { return landscape ? 456 : 320; }
-inline int32_t usable_height(bool landscape) { return landscape ? 320 : 480; }
+inline int32_t usable_width(bool landscape) { return screen_width_override > 0 ? screen_width_override : landscape ? 456 : 320; }
+inline int32_t usable_height(bool landscape) { return screen_height_override > 0 ? screen_height_override : landscape ? 320 : 480; }
 
 // The clock's digits (tools/lv_font_subset.py), and the text sizes.
 const lv_font_t *clock_font();

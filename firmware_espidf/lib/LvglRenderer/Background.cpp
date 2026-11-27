@@ -341,22 +341,33 @@ void build(void (*render)(int y, uint16_t *row)) {
 
 void draw(lv_event_t *event) {
   lv_obj_t *screen = (lv_obj_t *)lv_event_get_current_target(event);
-  if (rects == nullptr || lv_obj_get_width(screen) > lv_obj_get_height(screen)) {
+  const int32_t screen_w = lv_obj_get_width(screen);
+  const int32_t screen_h = lv_obj_get_height(screen);
+  if (rects == nullptr || screen_w > screen_h) {
     return;
   }
+  // The art is 320x480. A wider screen (the custom PCB's 480x480) gets it scaled to its width, the
+  // proportions kept, and its bottom on the screen's: what is cut off is sky. Scale and offset in
+  // 1/256 px; on a 320x480 screen they are 1 and 0, and every rectangle lands where it always did.
+  const int32_t scale = screen_w * 256 / W;
+  const int32_t offset = H * scale / 256 - screen_h;
+  auto sx = [scale](int32_t x) { return x * scale / 256; };
+  auto sy = [scale, offset](int32_t y) { return y * scale / 256 - offset; };
   lv_layer_t *layer = lv_event_get_layer(event);
   const lv_area_t &clip = layer->_clip_area;
-  // The first rectangle that can reach the band: none starting more than max_h above it.
-  int32_t from = clip.y1 - max_h;
+  // The first rectangle that can reach the band: none starting more than max_h above it (in the
+  // art's rows).
+  int32_t from = (clip.y1 + offset) * 256 / scale - max_h;
   const Rect *first = std::lower_bound(rects, rects + rect_count, from, [](const Rect &r, int32_t y) { return (int32_t)r.y < y; });
   lv_draw_fill_dsc_t fill;
   lv_draw_fill_dsc_init(&fill);
   fill.opa = LV_OPA_COVER;
-  for (const Rect *r = first; r < rects + rect_count && (int32_t)r->y <= clip.y2; r++) {
-    if ((int32_t)(r->y + r->h - 1) < clip.y1) {
+  for (const Rect *r = first; r < rects + rect_count && sy(r->y) <= clip.y2; r++) {
+    // Edges scaled, not sizes, so that neighbours still meet without a gap.
+    lv_area_t area = {sx(r->x), sy(r->y), sx(r->x + r->w) - 1, sy(r->y + r->h) - 1};
+    if (area.y2 < clip.y1 || area.x2 < area.x1 || area.y2 < area.y1) {
       continue;
     }
-    lv_area_t area = {(int32_t)r->x, (int32_t)r->y, (int32_t)(r->x + r->w - 1), (int32_t)(r->y + r->h - 1)};
     // Exact in RGB565: the low bits LVGL drops are zero.
     fill.color = lv_color_make(((r->color >> 11) & 31) << 3, ((r->color >> 5) & 63) << 2, (r->color & 31) << 3);
     lv_draw_fill(layer, &fill, &area);

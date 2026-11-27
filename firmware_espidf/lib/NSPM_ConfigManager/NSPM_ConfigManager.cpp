@@ -10,7 +10,6 @@
 #include <WebUiEmbedded.hpp>
 #include <WiFiManager.hpp>
 #include <esp_log.h>
-#include <esp_mac.h>
 #include <esp_wifi.h>
 #include <nlohmann/json.hpp>
 #include <string.h>
@@ -335,10 +334,7 @@ bool NSPM_ConfigManager::get_manager_online() {
 
 void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   // Get MAC address string
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA); // Read MAC address for Wi-Fi Station
-  char mac_str[18];                    // Format: AA:BB:CC:DD:EE:FF
-  snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  const char *mac_str = WiFiManager::mac_string(); // Format: AA:BB:CC:DD:EE:FF
 
   // Get IP address string
   char ip_address_str[IP4ADDR_STRLEN_MAX];
