@@ -39,6 +39,14 @@ dependencies:
     version: "1.2.1"
     rules:
       - if: "target == esp32p4"
+  # custom_pcb's microphones: the ES7210 ADC (lib/VoiceCapture), driven directly, without Waveshare's
+  # board manager. 1.6.2, the newest stable release: Waveshare's 2.0.0-beta5 is a beta whose API still
+  # changes from one beta to the next (channel_mask's meaning did in beta4), and on the P4 it brings in
+  # usb_host_uac too.
+  espressif/esp_codec_dev:
+    version: "1.6.2"
+    rules:
+      - if: "target == esp32p4"
   # custom_pcb's microphones: esp-sr's audio front end (2-mic BSS, WebRTC noise suppression) and its GSC
   # beamformer. 2.6.2 builds against ESP-IDF 6.1 (2.5.0 fixed its Kconfig for 6.1) and ships P4 rev 3.x
   # libraries for IDF 6 (lib/esp32p4). Its dependencies are pinned too: dependencies.lock is

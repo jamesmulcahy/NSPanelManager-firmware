@@ -190,6 +190,6 @@ direct_dependencies:
 - joltwallet/littlefs
 - lvgl/lvgl
 - mittelab/nlohmann-json
-manifest_hash: 7c93b23c5856d5f0f17b5ce6a64d1ef2387d559956d73d554a659a6a399fbb31
+manifest_hash: 9a04f022941ce86e0992db9a769b71974f377adfdf6220267f0d8c7fc9f18bfb
 target: esp32
 version: 3.0.0
