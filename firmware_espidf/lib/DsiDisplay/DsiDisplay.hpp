@@ -17,7 +17,7 @@
  * panel from its next frame on (no tearing). Touches are in the panel's 720x720 coordinates.
  *
  *   LDO VO3 2.5 V (D-PHY), DSI 2 lanes at 480 Mbps, panel reset GPIO 27
- *   backlight GPIO 26 (LEDC, 5 kHz, inverted), GT911 on I2C port 1 SDA 7 / SCL 8, reset GPIO 23, no INT
+ *   backlight GPIO 26 (LEDC, 5 kHz, inverted), GT911 on BoardI2c's bus (I2C port 1, SDA 7 / SCL 8), reset GPIO 23, no INT
  */
 class DsiDisplay {
 public:
