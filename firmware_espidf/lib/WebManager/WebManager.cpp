@@ -12,6 +12,9 @@
 #include <Nextion.hpp>
 #include <NSPM_version.hpp>
 #include <WebManager.hpp>
+#if defined(BOARD_CUSTOM)
+#include <VoiceCapture.hpp>
+#endif
 #include <WiFiManager.hpp>
 #include <cstring>
 #include <esp_heap_caps.h>
@@ -89,7 +92,7 @@ void WebManager::start() {
   if (WebManager::_server == NULL) {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
     WebManager::_config.server_port = WebManager::HTTP_PORT;
-    WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included; 14 with NSPM_HEAP_DIAG), with room to spare
+    WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included; 13 on custom_pcb, +2 with NSPM_HEAP_DIAG), with room to spare
     // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
     // chunked send, and 8 KB left only 412 bytes unused on a panel (PNG). See the
     // "Screenshot ..." log line for what is left unused.
@@ -123,8 +126,11 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_handle_generate204);     // Handle /generate204 for Android captive portal popup
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_screenshot);             // The LVGL screen as an image
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_metrics);                // Prometheus scrape endpoint
+#if defined(BOARD_CUSTOM)
+      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // TEMPORARY: raw microphone audio
+#endif
 #ifdef NSPM_HEAP_DIAG
-      HeapDiag::register_uris(WebManager::_server); // 2 more, 14 in all
+      HeapDiag::register_uris(WebManager::_server); // 2 more, 14 in all (15 on custom_pcb)
 #endif
     } else {
       ESP_LOGE("Web", "Failed to start web server!");
@@ -569,3 +575,94 @@ esp_err_t WebManager::_handle_uri_screenshot(httpd_req_t *req) {
            (unsigned)uxTaskGetStackHighWaterMark(NULL));
   return sent ? ESP_OK : ESP_FAIL;
 }
+
+#if defined(BOARD_CUSTOM)
+// TEMPORARY (voice, phase 0b): the microphones' raw audio, to listen to. Remove once voice capture has its
+// own way out (the AFE's output, its URL sent over MQTT).
+static void put_le(uint8_t *at, uint32_t value, int bytes) {
+  for (int i = 0; i < bytes; i++) {
+    at[i] = (value >> (8 * i)) & 0xFF;
+  }
+}
+
+esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
+  static constexpr int MAX_SECONDS = 30;
+  static constexpr size_t WAV_HEADER = 44;
+  httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+  char query[96], value[16];
+  int seconds = 5, gain_db = VoiceCapture::DEFAULT_GAIN_DB;
+  int channel = -1; // -1: all three
+  bool bad = false;
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    if (httpd_query_key_value(query, "secs", value, sizeof(value)) == ESP_OK) {
+      seconds = atoi(value);
+      bad |= seconds < 1 || seconds > MAX_SECONDS;
+    }
+    if (httpd_query_key_value(query, "gain", value, sizeof(value)) == ESP_OK) {
+      gain_db = atoi(value);
+      bad |= gain_db < 0 || gain_db > 37;
+    }
+    if (httpd_query_key_value(query, "ch", value, sizeof(value)) == ESP_OK) {
+      channel = strcmp(value, "1") == 0     ? VoiceCapture::MIC1
+                : strcmp(value, "2") == 0   ? VoiceCapture::MIC2
+                : strcmp(value, "ref") == 0 ? VoiceCapture::REF
+                : strcmp(value, "all") == 0 ? -1
+                                            : -2;
+      bad |= channel == -2;
+    }
+  }
+  if (bad) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "secs must be 1-30, ch all, 1, 2 or ref, gain 0-37 (dB).\n");
+  }
+
+  // The recording, with room for the WAV header in front. A single channel is then packed in place.
+  const size_t frames = (size_t)seconds * VoiceCapture::SAMPLE_RATE;
+  const int channels = channel < 0 ? VoiceCapture::CHANNELS : 1;
+  uint8_t *wav = static_cast<uint8_t *>(heap_caps_malloc(WAV_HEADER + frames * VoiceCapture::CHANNELS * sizeof(int16_t), MALLOC_CAP_SPIRAM));
+  if (wav == nullptr) {
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "No memory for the recording.\n");
+  }
+  int16_t *samples = reinterpret_cast<int16_t *>(wav + WAV_HEADER);
+  // Blocks this (the web server's) task for the recording; the I2S reads run on VoiceCapture's.
+  esp_err_t err = VoiceCapture::record(samples, frames, gain_db);
+  if (err != ESP_OK) {
+    heap_caps_free(wav);
+    ESP_LOGW("WebManager", "No recording: %s.", esp_err_to_name(err));
+    httpd_resp_set_status(req, err == ESP_ERR_INVALID_STATE ? "503 Service Unavailable" : "500 Internal Server Error");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, err == ESP_ERR_INVALID_STATE ? "Another recording is under way.\n" : "Recording failed: see the log.\n");
+  }
+  if (channels == 1) {
+    for (size_t i = 0; i < frames; i++) {
+      samples[i] = samples[i * VoiceCapture::CHANNELS + channel];
+    }
+  }
+
+  const uint32_t data_size = frames * channels * sizeof(int16_t);
+  memcpy(wav, "RIFF", 4);
+  put_le(wav + 4, 36 + data_size, 4);
+  memcpy(wav + 8, "WAVEfmt ", 8);
+  put_le(wav + 16, 16, 4); // fmt chunk size
+  put_le(wav + 20, 1, 2); // PCM
+  put_le(wav + 22, channels, 2);
+  put_le(wav + 24, VoiceCapture::SAMPLE_RATE, 4);
+  put_le(wav + 28, VoiceCapture::SAMPLE_RATE * channels * sizeof(int16_t), 4); // byte rate
+  put_le(wav + 32, channels * sizeof(int16_t), 2); // block align
+  put_le(wav + 34, 16, 2); // bits per sample
+  memcpy(wav + 36, "data", 4);
+  put_le(wav + 40, data_size, 4);
+
+  httpd_resp_set_type(req, "audio/wav");
+  httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=\"test.wav\"");
+  // One send, so the response has a Content-Length.
+  err = httpd_resp_send(req, reinterpret_cast<const char *>(wav), WAV_HEADER + data_size);
+  heap_caps_free(wav);
+  ESP_LOGI("WebManager", "Recording sent: %d s, %d channel(s), %lu bytes%s.", seconds, channels, (unsigned long)(WAV_HEADER + data_size),
+           err == ESP_OK ? "" : " (send failed)");
+  return err;
+}
+#endif
