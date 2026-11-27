@@ -1,4 +1,5 @@
 #include "Ui.hpp"
+#include "Background.hpp"
 #include "Theme.hpp"
 
 #include <cstring>
@@ -232,6 +233,7 @@ lv_obj_t *tile(lv_obj_t *parent, const char *glyph, int icon_size, const char *t
   }
   (void)image;
   reach_screen_edges(card);
+  Background::see_through(card);
   return card;
 }
 

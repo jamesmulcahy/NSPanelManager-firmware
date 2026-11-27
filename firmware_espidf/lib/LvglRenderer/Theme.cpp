@@ -1,4 +1,5 @@
 #include "Theme.hpp"
+#include "Background.hpp"
 
 #include <cstring>
 #include <initializer_list>
@@ -116,6 +117,7 @@ lv_obj_t *card(lv_obj_t *parent) {
   lv_obj_set_style_pad_all(card, SPACE_L, 0);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(card, px(6), 0);
+  Background::see_through(card);
   return card;
 }
 

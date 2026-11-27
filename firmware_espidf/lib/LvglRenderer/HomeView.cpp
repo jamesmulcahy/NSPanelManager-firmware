@@ -1,4 +1,5 @@
 #include "HomeView.hpp"
+#include "Background.hpp"
 #include "Theme.hpp"
 #include "Ui.hpp"
 
@@ -142,6 +143,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_radius(room, Theme::RADIUS_CARD, 0);
   lv_obj_set_style_bg_color(room, Theme::card(), 0);
   lv_obj_set_style_bg_opa(room, Theme::card_opa(), 0);
+  Background::see_through(room);
   Theme::bottom_lip(room);
   lv_obj_set_style_bg_color(room, Theme::pressed(), LV_STATE_PRESSED);
   lv_obj_set_style_text_font(room, Theme::body_font(), 0);
@@ -197,6 +199,7 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_height(mode, lv_pct(100));
   lv_obj_set_style_bg_color(mode, Theme::card(), 0);
   lv_obj_set_style_bg_opa(mode, Theme::card_opa(), 0);
+  Background::see_through(mode);
   lv_obj_set_style_radius(mode, Theme::RADIUS_CARD, 0);
   Theme::top_highlight(mode);
   lv_obj_set_style_pad_all(mode, Theme::SPACE_S, 0);

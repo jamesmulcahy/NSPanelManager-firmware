@@ -948,10 +948,15 @@ struct Vesuvius : Scene {
 const uint8_t BAYER[8][8] = {{0, 32, 8, 40, 2, 34, 10, 42},  {48, 16, 56, 24, 50, 18, 58, 26}, {12, 44, 4, 36, 14, 46, 6, 38},  {60, 28, 52, 20, 62, 30, 54, 22},
                              {3, 35, 11, 43, 1, 33, 9, 41},  {51, 19, 59, 27, 49, 17, 57, 25}, {15, 47, 7, 39, 13, 45, 5, 37},  {63, 31, 55, 23, 61, 29, 53, 21}};
 
-void to565(const Row &row, int y, uint16_t *out) {
+// The row, with `tint` (if any) over it at its opacity, dithered to RGB565.
+void to565(const Row &row, int y, const BackgroundHd::Tint *tint, uint16_t *out) {
+  const float a = tint != nullptr ? tint->opa / 255.0f : 0;
+  const float tr = tint != nullptr ? tint->r * a : 0, tg = tint != nullptr ? tint->g * a : 0, tb = tint != nullptr ? tint->b * a : 0;
+  const float keep = 1 - a;
   for (int x = 0; x < N; x++) {
     float d = (BAYER[y & 7][x & 7] + 0.5f) / 64;
-    int r = (int)(std::max(0.0f, row.r[x]) / 8 + d), g = (int)(std::max(0.0f, row.g[x]) / 4 + d), b = (int)(std::max(0.0f, row.b[x]) / 8 + d);
+    float fr = std::max(0.0f, row.r[x]) * keep + tr, fg = std::max(0.0f, row.g[x]) * keep + tg, fb = std::max(0.0f, row.b[x]) * keep + tb;
+    int r = (int)(fr / 8 + d), g = (int)(fg / 4 + d), b = (int)(fb / 8 + d);
     out[x] = (uint16_t)((std::min(r, 31) << 11) | (std::min(g, 63) << 5) | std::min(b, 31));
   }
 }
@@ -981,7 +986,7 @@ bool BackgroundHd::has(Background::Preset preset) {
   return preset != Background::Preset::NONE;
 }
 
-bool BackgroundHd::render(Background::Preset preset, uint16_t *out) {
+bool BackgroundHd::render(Background::Preset preset, uint16_t *out, const Tint *tints, int tint_count) {
   std::unique_ptr<Scene> scene = make(preset);
   if (!scene) {
     return false;
@@ -989,7 +994,10 @@ bool BackgroundHd::render(Background::Preset preset, uint16_t *out) {
   std::unique_ptr<Row> row(new Row());
   for (int y = 0; y < N; y++) {
     scene->row(y, *row);
-    to565(*row, y, out + (size_t)y * N);
+    to565(*row, y, nullptr, out + (size_t)y * N);
+    for (int i = 0; i < tint_count; i++) {
+      to565(*row, y, &tints[i], tints[i].out + (size_t)y * N);
+    }
   }
   return true;
 }

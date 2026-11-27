@@ -43,4 +43,12 @@ void render_row(Preset preset, int y, uint16_t *row);
  * simulator), set() runs both at once.
  */
 inline void (*run_off_gui)(void (*work)(void *), void (*done)(void *), void *arg) = nullptr;
+
+/**
+ * GUI task: `obj` is a see-through card (Theme::card() or Theme::on_tint() at Theme::card_opa()). Over the
+ * HD art, its background is then drawn from the art as blended under that colour when the art was drawn
+ * (smooth, dithered) rather than blended by LVGL (RGB565 at 32 levels, no dither: the art bands and its
+ * dither breaks up under the card). Without NSPM_HD_ART, or not in HD, nothing.
+ */
+void see_through(lv_obj_t *obj);
 } // namespace Background

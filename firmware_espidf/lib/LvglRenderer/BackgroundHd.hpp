@@ -20,7 +20,16 @@ constexpr int SIZE = 720;
 // Whether `preset` has HD art (all but NONE).
 bool has(Background::Preset preset);
 
-// Draw `preset` into `out`: SIZE x SIZE RGB565 pixels, row by row. False for a preset without HD art.
-bool render(Background::Preset preset, uint16_t *out);
+// A see-through card colour over the art: the art under it, blended at full precision and dithered like
+// the art (LVGL's own RGB565 blend has 32 levels and no dither: the art bands under cards).
+struct Tint {
+  uint8_t r, g, b;
+  uint8_t opa;    // the card's
+  uint16_t *out;  // SIZE x SIZE RGB565, like `out` below
+};
+
+// Draw `preset` into `out`: SIZE x SIZE RGB565 pixels, row by row; and under each of `tints` into its own
+// `out`. False for a preset without HD art.
+bool render(Background::Preset preset, uint16_t *out, const Tint *tints = nullptr, int tint_count = 0);
 } // namespace BackgroundHd
 #endif
