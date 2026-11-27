@@ -252,7 +252,7 @@ void parthenon(int y, uint16_t *row) {
     int grow = y < baseY - 6.5f ? 5 : (y < baseY - 3 ? 8 : 11);
     std::fill(row + (int)(x0 - grow), row + (int)(x0 + pw + grow), temple);
   } else if (y >= baseY && y < baseY + 77) { // Four steps, each a little wider and darker.
-    int i = (y - (int)baseY) / 19;
+    int i = std::min((y - (int)baseY) / 19, 3); // 77 rows / 19 = 4.05: the last step takes the extra row.
     std::fill(row + std::max(0, 6 - i * 3), row + std::min(W, 314 + i * 3), to565(steps[i]));
     std::fill(row, row + std::max(0, 6 - i * 3), to565(bg));
     std::fill(row + std::min(W, 314 + i * 3), row + W, to565(bg));
