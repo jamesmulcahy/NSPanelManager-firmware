@@ -1,9 +1,12 @@
 # Name,   Type, SubType, Offset,   Size, Flags
 # Waveshare ESP32-P4-WIFI6-Touch-LCD-4B (custom_pcb): 32 MB flash. Same partitions as partitions.csv
-# (same names: LittleFS mounts "spiffs"), larger.
+# (same names: LittleFS mounts "spiffs"), larger, plus "model" at the end.
 nvs,      data, nvs,     0x9000,   0x5000
 otadata,  data, ota,     0xE000,   0x2000
 ota_0,    app,  ota_0,   0x10000,  0x400000
 ota_1,    app,  ota_1,   0x410000, 0x400000
 spiffs,   data, spiffs,  0x810000, 0x400000
 coredump, data, coredump, 0xC10000, 0x10000
+# esp-sr's speech models (srmodels.bin), for the microphones' noise suppression. esp-sr finds it by the
+# name "model". Last, so the partitions before it keep their offsets; 0x1420000-0x2000000 is still free.
+model,    data, spiffs,  0xC20000, 0x800000
