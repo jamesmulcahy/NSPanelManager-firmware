@@ -3,3 +3,16 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# custom_pcb only (src/idf_component.yml rules): the component manager removes them again whenever
+# original_sonoff builds, so they are downloaded on demand rather than committed.
+managed_components/espressif__esp_hosted
+managed_components/espressif__esp_wifi_remote
+managed_components/espressif__eppp_link
+managed_components/espressif__esp_serial_slave_link
+managed_components/espressif__wifi_remote_over_eppp
+managed_components/waveshare__esp_lcd_st7703
+managed_components/espressif__esp_lcd_jd9365
+managed_components/espressif__esp_lcd_touch_gt911
+managed_components/espressif__esp_lcd_touch
+managed_components/espressif__cmake_utilities

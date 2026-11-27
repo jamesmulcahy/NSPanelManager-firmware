@@ -3,6 +3,7 @@
 #include <lvgl.h>
 #include <string>
 
+#include "Theme.hpp"
 #include "nspm_icons.h"
 
 // The building blocks the NSPM pages share: a header bar, icon buttons, tiles, slider cards, and
@@ -55,7 +56,7 @@ lv_obj_t *icon_button(lv_obj_t *parent, const char *glyph, int size);
  * again replaces the earlier reach and margin.
  * Every icon button and tile has this; call it for other controls near an edge.
  */
-void reach_screen_edges(lv_obj_t *obj, int32_t reach = 24, int32_t margin = 0);
+void reach_screen_edges(lv_obj_t *obj, int32_t reach = Theme::px(24), int32_t margin = 0);
 void set_icon(lv_obj_t *button, const char *glyph);
 void set_enabled(lv_obj_t *button, bool enabled);
 

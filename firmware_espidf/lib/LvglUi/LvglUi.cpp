@@ -14,6 +14,9 @@
 #include <ScreensaverPage.hpp>
 #include <Theme.hpp>
 #include <Ui.hpp>
+#if defined(BOARD_CUSTOM)
+#include <DsiDisplay.hpp>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <esp_log.h>
@@ -26,13 +29,13 @@ static constexpr int64_t TICK_US = 1000 * 1000;
 // Between attempts to bring the terminal back after it gave up (3 failed sessions in a row).
 static constexpr int64_t RESTART_INTERVAL_US = 10 * 1000 * 1000;
 // A swipe: at least this far, within this long.
-static constexpr int SWIPE_PX = 80;
+static constexpr Theme::Px SWIPE_PX{80}; // NSPanel pixels, as every length here (Theme::px())
 static constexpr int64_t SWIPE_MAX_US = 1000 * 1000;
 // A swipe-down that starts this near the top (the header bar is 8..52) opens the menu, from any page,
 // after EDGE_SWIPE_PX. Only from there: elsewhere a drag may be meant for what is under the finger
 // (a vertical slider on a landscape panel, a list).
-static constexpr int EDGE_ZONE_PX = 72;
-static constexpr int EDGE_SWIPE_PX = 48;
+static constexpr Theme::Px EDGE_ZONE_PX{72};
+static constexpr Theme::Px EDGE_SWIPE_PX{48};
 
 // The display's identity, up to the reply's 0xFF terminator.
 static std::string printable_identity() {
@@ -45,6 +48,16 @@ bool LvglUi::init() {
   esp_log_level_set(TAG, ConfigManager::log_level);
   std::string identity = printable_identity();
   const char *shown_identity = identity.empty() ? "no connect reply" : identity.c_str();
+#if defined(BOARD_CUSTOM)
+  // The custom PCB's own display (DsiDisplay), no Nextion: LVGL is the UI if the panel comes up.
+  esp_err_t display = DsiDisplay::init();
+  if (display != ESP_OK) {
+    ESP_LOGE(TAG, "No UI: the display did not start: %s.", esp_err_to_name(display));
+    LvglUi::_display_mode = DisplayMode::TERMINAL_IDLE;
+    return false;
+  }
+  (void)shown_identity;
+#else
   // The TFT decides the UI. There are no HMI pages to fall back to: without LVGL the panel shows
   // no pages at all (InterfaceManager), and keeps working as a switch, a sensor and an update target.
   if (Nextion::nspm_flag_received()) {
@@ -61,6 +74,7 @@ bool LvglUi::init() {
     Nextion::set_brightness_redirect([](uint8_t) {});
     return false;
   }
+#endif
   // The palette before the first screen is built; Background::set() below applies the same one.
   Background::Preset preset = Background::from_name(ConfigManager::lvgl_background.c_str());
   const Theme::Palette *theme = Theme::palette_from_name(ConfigManager::lvgl_theme.c_str());
@@ -75,7 +89,11 @@ bool LvglUi::init() {
     return false;
   }
 
+#if defined(BOARD_CUSTOM)
+  Nextion::set_brightness_redirect([](uint8_t brightness) { DsiDisplay::set_brightness(brightness); });
+#else
   Nextion::set_brightness_redirect([](uint8_t brightness) { NextionTerminal::set_brightness(brightness); });
+#endif
   LvglRenderer::touch_filter = LvglUi::_touch;
   LvglRenderer::on_press = LvglUi::_pressed;
   // GUI task, after a region change rebuilt the screens: build the last view again.
@@ -97,8 +115,12 @@ bool LvglUi::init() {
   LvglUi::_last_activity_us = esp_timer_get_time();
   LvglUi::_active = true;
   LvglUi::_display_mode = DisplayMode::LVGL;
+#if defined(BOARD_CUSTOM)
+  ESP_LOGI(TAG, "LVGL is the UI, on the MIPI-DSI display.");
+#else
   LvglUi::_start_terminal();
   ESP_LOGI(TAG, "LVGL is the UI: the display runs a terminal TFT (%s).", identity.c_str());
+#endif
   return true;
 }
 

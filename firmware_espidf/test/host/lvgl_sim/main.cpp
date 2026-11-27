@@ -1,5 +1,6 @@
 // Host simulator for the LVGL screens (lib/LvglRenderer): draws every page on a US (320x480) and an
-// EU (480x320) screen, and reports what each frame costs on the terminal link: the bytes of the
+// EU (480x320) screen, and on the custom PCB's 720x720 one ("hd": the portrait layout at 1.5x, with the
+// 1.5x fonts), and reports what each frame costs on the terminal link: the bytes of the
 // protocol-8 records NextionTerminal would send (PackBits, COBS, headers), and the time at 4 Mbaud.
 // Built and run by build.sh.
 //
@@ -11,6 +12,10 @@
 // NSPM_THEME=<palette> (Theme.hpp: dark, light, ocean, ...) draws everything in that palette, as the
 // lvgl_theme command does; unset, or "auto", each background takes its own (dark without one).
 #include "Background.hpp"
+#if defined(NSPM_HD_ART)
+#include "BackgroundHd.hpp"
+#include <chrono>
+#endif
 #include "BootScreen.hpp"
 #include "Pages.hpp"
 #include "TerminalProtocol.hpp"
@@ -135,16 +140,18 @@ static void check_media_hits() {
   expect_hit("below volume-down, near the bottom edge", (d.x1 + d.x2) / 2, H - 3, down);
 }
 
-static void run(bool landscape, const char *out) {
-  const char *region = landscape ? "eu" : "us";
-  W = landscape ? 480 : 320;
-  H = landscape ? 320 : 480;
+static void run(bool landscape, const char *out, bool hd = false) {
+  const char *region = hd ? "hd" : landscape ? "eu" : "us";
+  W = hd ? 720 : landscape ? 480 : 320;
+  H = hd ? 720 : landscape ? 320 : 480;
   frame.assign(W * H, 0);
+  Theme::set_screen_size(hd ? W : 0, hd ? H : 0);
+  Theme::set_hd(hd);
 
   lv_display_t *display = lv_display_create(W, H);
   // 20 lines, as LvglRenderer draws.
   static std::vector<uint8_t> buffer;
-  buffer.assign(480 * 20 * 2, 0);
+  buffer.assign(W * 20 * 2, 0);
   lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
   lv_display_set_buffers(display, buffer.data(), NULL, buffer.size(), LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(display, flush);
@@ -157,7 +164,7 @@ static void run(bool landscape, const char *out) {
   Theme::screen(screen);
   lv_obj_t *root = Theme::group(screen, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_size(root, lv_pct(100), lv_pct(100));
-  lv_obj_set_style_pad_gap(root, 12, 0);
+  lv_obj_set_style_pad_gap(root, Theme::px(12), 0);
   BootScreen::build(root, landscape);
   BootStatus status;
   status.time = "12:34";
@@ -209,13 +216,43 @@ static void run(bool landscape, const char *out) {
   lv_display_delete(display);
 }
 
+#if defined(NSPM_HD_ART)
+// Each preset's HD art on its own (OUT/hd-art-<preset>.ppm), and how long it took to draw on the host.
+static void dump_hd_art(const char *out) {
+  std::vector<uint16_t> pixels((size_t)BackgroundHd::SIZE * BackgroundHd::SIZE);
+  for (Background::Preset preset : {Background::Preset::OCEAN, Background::Preset::DUSK, Background::Preset::AURORA, Background::Preset::PEAKS,
+                                    Background::Preset::VESUVIUS, Background::Preset::PARTHENON}) {
+    auto start = std::chrono::steady_clock::now();
+    BackgroundHd::render(preset, pixels.data());
+    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    printf("hd art %-10s %6.1f ms on the host\n", Background::name(preset), ms);
+    std::string path = std::string(out) + "/hd-art-" + Background::name(preset) + ".ppm";
+    FILE *f = fopen(path.c_str(), "wb");
+    fprintf(f, "P6\n%d %d\n255\n", BackgroundHd::SIZE, BackgroundHd::SIZE);
+    for (uint16_t c : pixels) {
+      unsigned char rgb[3] = {(unsigned char)(((c >> 11) & 0x1F) << 3), (unsigned char)(((c >> 5) & 0x3F) << 2), (unsigned char)((c & 0x1F) << 3)};
+      fwrite(rgb, 1, 3, f);
+    }
+    fclose(f);
+  }
+}
+#endif
+
 int main(int argc, char **argv) {
   const char *out = argc > 1 ? argv[1] : ".";
+#if defined(NSPM_HD_ART)
+  if (argc > 2 && strcmp(argv[2], "art") == 0) { // Only the HD art: build.sh OUT art
+    dump_hd_art(out);
+    return 0;
+  }
+  dump_hd_art(out);
+#endif
   theme = Theme::palette_from_name(getenv("NSPM_THEME"));
   lv_init();
   lv_tick_set_cb([]() -> uint32_t { return ticks; });
   run(false, out);
   run(true, out);
+  run(false, out, true);
   FILE *f = fopen((std::string(out) + "/costs.csv").c_str(), "w");
   fprintf(f, "region,frame,wire_bytes,ms_4mbaud\n");
   for (const std::string &row : csv) {

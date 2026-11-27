@@ -611,7 +611,9 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
         xTaskCreatePinnedToCore(UpdateManager::update_firmware, "update_firmware", 8192, NULL, 2, &UpdateManager::_current_update_task, 1);
       }
     } else if (command_string.compare("tft_update") == 0 && UpdateManager::_current_update_task == NULL) {
-      if (NSPM_ConfigManager::get_manager_address().empty()) {
+      if (!Nextion::present()) {
+        ESP_LOGW("UpdateManager", "Ignoring TFT update: this board has no Nextion display.");
+      } else if (NSPM_ConfigManager::get_manager_address().empty()) {
         ESP_LOGE("UpdateManager", "Cannot start TFT update: manager address not yet known.");
       } else {
         xTaskCreatePinnedToCore(UpdateManager::update_gui, "update_gui", 8192, NULL, 2, &UpdateManager::_current_update_task, 1);

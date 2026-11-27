@@ -1,4 +1,5 @@
 #pragma once
+#include "Theme.hpp"
 #include <lvgl.h>
 #include <memory>
 #include <string>
@@ -12,7 +13,7 @@ struct MediaPlayerState {
   std::string title;
   std::string artist;
   std::string album;                   // Not on the Nextion page; shown if the manager sends it
-  const lv_image_dsc_t *art = NULL;    // RGB565, ART_SIZE square (the manager scales it); NULL: placeholder
+  const lv_image_dsc_t *art = NULL;    // RGB565, art_size() square (the manager scales it); NULL: placeholder
   // Keeps art's pixels valid (an LvglArt::Handle on the panel). The view holds it for as long as it
   // draws art: until a show() with other art, or until the view is deleted.
   std::shared_ptr<const void> art_hold;
@@ -30,7 +31,8 @@ struct MediaPlayerState {
 class MediaPlayerView {
 public:
   // The album art side, as the manager scales it for the panel.
-  static constexpr int ART_SIZE = 180;
+  // Screen pixels: what the media page asks the manager for (MediaPlayerPage), 180 at the NSPanel's 1x.
+  static int art_size() { return Theme::px(180); }
   enum class Action { BACK, ART /* opens the sources page */, PREVIOUS, PLAY_PAUSE, NEXT, MUTE, VOLUME_DOWN, VOLUME_UP, SOURCE_SWITCH };
   static inline void (*on_action)(Action action) = nullptr;
 

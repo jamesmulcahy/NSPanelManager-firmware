@@ -86,7 +86,7 @@ static lv_obj_t *reading(lv_obj_t *parent, const char *glyph, lv_obj_t **icon, l
 static lv_obj_t *clock(lv_obj_t *parent, lv_obj_t **time, lv_obj_t **am_pm, const lv_font_t *font = Theme::clock_font()) {
   lv_obj_t *row = Theme::group(parent, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-  lv_obj_set_style_pad_gap(row, 6, 0);
+  lv_obj_set_style_pad_gap(row, Theme::px(6), 0);
   *time = Theme::label(row, "", font, Theme::text());
   *am_pm = Theme::label(row, "", Theme::title_font(), Theme::muted());
   // On the digits' baseline: the font's line has room below it for descenders the digits lack.
@@ -101,7 +101,7 @@ static lv_obj_t *body(lv_obj_t *parent) {
   return body;
 }
 
-static constexpr int32_t DATE_WIDTH = 240;
+static constexpr Theme::Px DATE_WIDTH{240};
 
 void ScreensaverView::_build_header(bool landscape, bool outside) {
   lv_obj_t *header = panel(ScreensaverView::_parent, ScreensaverView::_background);
@@ -172,7 +172,7 @@ lv_obj_t *ScreensaverView::_build_weather(bool landscape) {
     lv_obj_set_width(ScreensaverView::_outside_group, lv_pct(100));
   }
   lv_obj_set_flex_align(ScreensaverView::_outside_group, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_gap(ScreensaverView::_outside_group, 10, 0);
+  lv_obj_set_style_pad_gap(ScreensaverView::_outside_group, Theme::px(10), 0);
   ScreensaverView::_outside_icon = Ui::icon(ScreensaverView::_outside_group, "", 64, Theme::on());
   lv_obj_t *temps = Theme::group(ScreensaverView::_outside_group, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_gap(temps, 0, 0);
@@ -229,10 +229,10 @@ lv_obj_t *ScreensaverView::_build_weather(bool landscape) {
     d.wind = Theme::label(day, "", Theme::body_font(), Theme::muted());
     if (!landscape) {
       // Fixed columns, so the rows line up.
-      lv_obj_set_width(d.day, 40);
-      lv_obj_set_width(d.max_min, 70);
-      lv_obj_set_width(d.rain, 36);
-      lv_obj_set_width(d.wind, 60);
+      lv_obj_set_width(d.day, Theme::px(40));
+      lv_obj_set_width(d.max_min, Theme::px(70));
+      lv_obj_set_width(d.rain, Theme::px(36));
+      lv_obj_set_width(d.wind, Theme::px(60));
       for (lv_obj_t *label : {d.max_min, d.rain, d.wind}) {
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, 0);
       }
@@ -243,8 +243,8 @@ lv_obj_t *ScreensaverView::_build_weather(bool landscape) {
 
 // The calendar card's line pitch, and the time column's width (it grows for a longer time, such as
 // "Now · until 4:00 PM").
-static constexpr int32_t CALENDAR_LINE_HEIGHT = 26;
-static constexpr int32_t CALENDAR_TIME_WIDTH = 72;
+static constexpr Theme::Px CALENDAR_LINE_HEIGHT{26};
+static constexpr Theme::Px CALENDAR_TIME_WIDTH{72};
 
 lv_obj_t *ScreensaverView::_build_calendar(bool landscape) {
   lv_obj_t *calendar = body(ScreensaverView::_parent);
@@ -370,9 +370,9 @@ lv_obj_t *ScreensaverView::_build_energy(bool landscape) {
 
 // The art is never smaller than this while the card has text; below it the text goes, not the art
 // (decision 3 of NOW_PLAYING_CARD_PLAN.md), and the art takes the whole card.
-static constexpr int32_t ART_MIN = 112;
+static constexpr Theme::Px ART_MIN{112};
 // The text column of a landscape card needs this much width to be worth drawing.
-static constexpr int32_t TEXT_MIN_WIDTH = 120;
+static constexpr Theme::Px TEXT_MIN_WIDTH{120};
 
 static int32_t round_down_8(int32_t value) { return value / 8 * 8; }
 
@@ -426,7 +426,7 @@ lv_obj_t *ScreensaverView::_build_now_playing(bool landscape) {
   lv_obj_set_flex_align(ScreensaverView::_np_player_row, landscape ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_width(ScreensaverView::_np_player_row, lv_pct(100));
   // Measure with the placeholder's own sizes: the art box has none yet.
-  lv_obj_set_size(box, 8, 8);
+  lv_obj_set_size(box, Theme::px(8), Theme::px(8));
   lv_obj_update_layout(ScreensaverView::_parent);
 
   const int32_t width = lv_obj_get_content_width(card);
@@ -436,23 +436,24 @@ lv_obj_t *ScreensaverView::_build_now_playing(bool landscape) {
   const int32_t artist_h = lv_font_get_line_height(Theme::body_font());
   const int32_t player_h = lv_obj_get_height(ScreensaverView::_np_player_row);
   const int32_t lines_h = title_h + Theme::SPACE_XS + artist_h;
+  const int32_t max_art = MAX_ART_SIZE;
   int32_t size;
   bool show_text = true;
   bool show_player = false;
   if (landscape) {
-    size = std::min(round_down_8(std::min(height, MAX_ART_SIZE)), round_down_8(width));
+    size = std::min(round_down_8(std::min(height, max_art)), round_down_8(width));
     show_text = width - size - gap >= TEXT_MIN_WIDTH && size >= ART_MIN;
     show_player = show_text && lines_h + Theme::SPACE_XS + player_h <= height;
     if (show_text) {
       lv_obj_set_width(text, width - size - gap);
     }
   } else {
-    size = round_down_8(std::min({width, height - gap - lines_h, MAX_ART_SIZE}));
+    size = round_down_8(std::min({width, height - gap - lines_h, max_art}));
     show_text = size >= ART_MIN;
     if (!show_text) {
-      size = round_down_8(std::min({width, height, MAX_ART_SIZE})); // The art takes the card
+      size = round_down_8(std::min({width, height, max_art})); // The art takes the card
     } else {
-      show_player = round_down_8(std::min({width, height - gap - lines_h - Theme::SPACE_XS - player_h, MAX_ART_SIZE})) == size;
+      show_player = round_down_8(std::min({width, height - gap - lines_h - Theme::SPACE_XS - player_h, max_art})) == size;
       lv_obj_set_width(text, lv_pct(100));
     }
   }
@@ -484,7 +485,7 @@ void ScreensaverView::_build_clock() {
   ScreensaverView::_date = Theme::label(middle, "", Theme::title_font(), Theme::muted());
   // Balance the top row, so the clock sits in the middle of the screen.
   lv_obj_t *spacer = Theme::group(parent, LV_FLEX_FLOW_ROW);
-  lv_obj_set_height(spacer, 32);
+  lv_obj_set_height(spacer, Theme::px(32));
 }
 
 // Fill the calendar card's lines: each day's heading, then its events, a day kept in one column
@@ -577,7 +578,7 @@ void ScreensaverView::_show_calendar(const ScreensaverState &state) {
         }
       }
       Ui::set_text(line.summary, text.kind == Text::MORE ? more_text : text.kind == Text::HEADING ? heading : *text.summary);
-      int32_t spacing = text.kind == Text::HEADING ? 1 : 0;
+      int32_t spacing = text.kind == Text::HEADING ? Theme::px(1) : 0;
       if (lv_obj_get_style_text_letter_space(line.summary, LV_PART_MAIN) != spacing) {
         lv_obj_set_style_text_letter_space(line.summary, spacing, 0);
       }

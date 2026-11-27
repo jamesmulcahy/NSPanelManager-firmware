@@ -35,6 +35,10 @@ esp_err_t Nextion::init(bool (*recognised)(const char *identity)) {
   esp_event_handler_register(NEXTION_EVENT, ESP_EVENT_ANY_ID, Nextion::_wait_for_event_event_handler, NULL);
 
   Nextion::_current_nextion_state = nextion_state_t::INITIALIZING;
+  if constexpr (!Nextion::present()) {
+    ESP_LOGI("Nextion", "This board has no Nextion display.");
+    return ESP_OK; // And stays INITIALIZING: see present()
+  }
 
   // Custom event loop that handles messages from UART -> data handler. Created without a task: esp_event_loop_create()
   // cannot put its task's stack in PSRAM, so _task_uart_frame_loop() below runs it on a stack that is.
@@ -309,6 +313,9 @@ uint32_t Nextion::get_link_baud() {
 }
 
 void Nextion::log_link_baud() {
+  if constexpr (!Nextion::present()) {
+    return;
+  }
   uint32_t link_baud = Nextion::_link_baud;
   switch (Nextion::_link_baud_result.load()) {
   case link_baud_result_t::NOT_REQUESTED:
@@ -710,6 +717,9 @@ void Nextion::_write_locked(const std::string &command) {
 }
 
 esp_err_t Nextion::_send_command(const std::string &command, uint16_t mutex_timeout) {
+  if constexpr (!Nextion::present()) {
+    return ESP_OK; // Nothing to send it to
+  }
   // Verify that the Nextion state is "running" as we don't want to send data that may interrupt other processes such as updating the GUI
   if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(mutex_timeout)) == pdTRUE) {
     if (Nextion::_current_nextion_state != nextion_state_t::RUNNING) {
@@ -766,6 +776,9 @@ nextion_state_t Nextion::get_current_state() {
 }
 
 void Nextion::restart() {
+  if constexpr (!Nextion::present()) {
+    return;
+  }
   ESP_LOGI("Nextion", "Power-cycling Nextion display.");
   gpio_set_level(NEXTION_ON_OFF_GPIO, 1); // Turn off power to the display
   vTaskDelay(pdMS_TO_TICKS(250));         // Wait for screen to turn off
@@ -858,6 +871,9 @@ void Nextion::terminal_release(bool restart_display) {
 }
 
 esp_err_t Nextion::start_update(uint32_t upload_baudrate, bool use_new_upload_protocol, uint64_t upload_file_size) {
+  if constexpr (!Nextion::present()) {
+    return ESP_ERR_NOT_SUPPORTED;
+  }
   if (xSemaphoreTake(Nextion::_uart_write_mutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
     if (xSemaphoreTake(Nextion::_nextion_state_mutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
       Nextion::_current_nextion_state = nextion_state_t::UPDATING; // Set state to updating so that other functions won't write to the UART.
@@ -936,6 +952,9 @@ esp_err_t Nextion::start_update(uint32_t upload_baudrate, bool use_new_upload_pr
 }
 
 esp_err_t Nextion::write_update_bytes(uint8_t *data, uint16_t size) {
+  if constexpr (!Nextion::present()) {
+    return ESP_ERR_NOT_SUPPORTED;
+  }
   if (xSemaphoreTake(Nextion::_uart_write_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
     bool write_success = uart_write_bytes(UART_NUM_2, data, size) >= 0;
     uart_wait_tx_done(UART_NUM_2, pdMS_TO_TICKS(1000)); // Wait up to 1 second for TX buffer to clear.

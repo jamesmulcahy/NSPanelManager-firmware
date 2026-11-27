@@ -42,8 +42,8 @@ void TimerView::build_timers(lv_obj_t *parent, bool landscape) {
   lv_obj_add_event_cb(header.back, [](lv_event_t *) { act(Action::BACK); }, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *body = Ui::fill(parent, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_gap(body, landscape ? Theme::SPACE_S + 2 : Theme::SPACE_M, 0);
-  const int32_t row_height = landscape ? 46 : 60;
+  lv_obj_set_style_pad_gap(body, landscape ? Theme::SPACE_S + Theme::px(2) : Theme::SPACE_M, 0);
+  const int32_t row_height = Theme::px(landscape ? 46 : 60);
   for (int i = 0; i < MAX_ROWS; i++) {
     lv_obj_t *card = Theme::card(body);
     lv_obj_set_size(card, lv_pct(100), row_height);
@@ -65,7 +65,7 @@ void TimerView::build_timers(lv_obj_t *parent, bool landscape) {
     cards[i] = card;
   }
   new_button = Ui::tile(body, NSPM_ICON_PLUS, 24, "New timer", true);
-  lv_obj_set_size(new_button, lv_pct(100), landscape ? 44 : 56);
+  lv_obj_set_size(new_button, lv_pct(100), Theme::px(landscape ? 44 : 56));
   lv_obj_add_event_cb(new_button, [](lv_event_t *) {
     if (!lv_obj_has_state(new_button, LV_STATE_DISABLED)) {
       act(Action::NEW_TIMER);
@@ -132,7 +132,7 @@ lv_obj_t *make_roller(lv_obj_t *column, int i, int rows) {
   lv_obj_set_width(roller, lv_pct(100));
   lv_obj_set_style_text_font(roller, Theme::large_font(), 0);
   lv_obj_set_style_text_align(roller, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_text_line_space(roller, 8, 0);
+  lv_obj_set_style_text_line_space(roller, Theme::px(8), 0);
   lv_obj_set_style_radius(roller, Theme::RADIUS_CONTROL, 0);
   lv_obj_set_style_bg_opa(roller, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(roller, Theme::card(), 0);
@@ -153,7 +153,7 @@ lv_obj_t *make_chip(lv_obj_t *parent, int minutes, int32_t width) {
   lv_obj_t *chip = lv_button_create(parent);
   lv_obj_remove_style_all(chip);
   lv_obj_remove_flag(chip, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(chip, width, 38);
+  lv_obj_set_size(chip, width, Theme::px(38));
   lv_obj_set_style_radius(chip, Theme::RADIUS_CONTROL, 0);
   lv_obj_set_style_bg_opa(chip, LV_OPA_COVER, 0);
   lv_obj_set_style_bg_color(chip, Theme::track(), 0);
@@ -216,14 +216,14 @@ void TimerView::build_set(lv_obj_t *parent, bool landscape) {
   lv_obj_t *chips = Theme::group(side, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_width(chips, lv_pct(100));
   lv_obj_set_height(chips, LV_SIZE_CONTENT);
-  lv_obj_set_style_pad_gap(chips, Theme::SPACE_S + 2, 0);
-  const int32_t chip_width = landscape ? 64 : 56;
+  lv_obj_set_style_pad_gap(chips, Theme::SPACE_S + Theme::px(2), 0);
+  const int32_t chip_width = Theme::px(landscape ? 64 : 56);
   for (int minutes : {1, 5, 10, 15, 30}) {
     make_chip(chips, minutes, chip_width);
   }
 
   lv_obj_t *buttons = Theme::group(side, LV_FLEX_FLOW_ROW);
-  lv_obj_set_size(buttons, lv_pct(100), 52);
+  lv_obj_set_size(buttons, lv_pct(100), Theme::px(52));
   lv_obj_set_style_pad_gap(buttons, Theme::SPACE_M, 0);
   lv_obj_t *cancel = Ui::tile(buttons, NSPM_ICON_CLOSE, 24, "Cancel", true);
   lv_obj_set_size(cancel, lv_pct(48), lv_pct(100));
@@ -262,8 +262,8 @@ void TimerView::build_alarm(lv_obj_t *parent, bool landscape) {
   lv_obj_t *word = Ui::tile_label(dismiss);
   lv_obj_delete(Ui::tile_icon(dismiss)); // Just the word, large
   lv_obj_set_style_text_align(word, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_pad_left(dismiss, 6, 0);
-  lv_obj_set_size(dismiss, lv_pct(100), landscape ? 80 : 104);
+  lv_obj_set_style_pad_left(dismiss, Theme::px(6), 0);
+  lv_obj_set_size(dismiss, lv_pct(100), Theme::px(landscape ? 80 : 104));
   Ui::set_bg_color(dismiss, Theme::accent());
   Ui::set_font(word, Theme::title_font());
   lv_obj_add_event_cb(dismiss, [](lv_event_t *) { act(Action::DISMISS); }, LV_EVENT_CLICKED, NULL);

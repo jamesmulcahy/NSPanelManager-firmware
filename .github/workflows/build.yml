@@ -41,8 +41,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One job per board, each in its own checkout: dependencies.lock records a
-        # single target, and a build for the other target rewrites it.
+        # One job per board. Each target has its own lock file
+        # (dependencies.lock.esp32, dependencies.lock.esp32p4; see CMakeLists.txt).
         environment: [original_sonoff, custom_pcb]
     defaults:
       run:
@@ -61,7 +61,8 @@ jobs:
           key: build-${{ matrix.environment }}-${{ runner.os }}-${{ hashFiles('firmware_espidf/platformio.ini') }}
 
       - name: Install PlatformIO
-        run: pip install platformio==6.1.19
+        # 6.2: custom_pcb (ESP32-P4) builds on pioarduino's platform, which needs it.
+        run: pip install platformio==6.2.0
 
       - name: Build firmware
         run: pio run --environment ${{ matrix.environment }}

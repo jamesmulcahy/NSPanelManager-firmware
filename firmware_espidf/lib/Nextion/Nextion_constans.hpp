@@ -4,7 +4,7 @@
 #if defined(BOARD_SONOFF)
 #define NEXTION_ON_OFF_GPIO GPIO_NUM_4
 #elif defined(BOARD_CUSTOM)
-#define NEXTION_ON_OFF_GPIO GPIO_NUM_9
+#define NEXTION_ON_OFF_GPIO GPIO_NUM_NC // No Nextion (Nextion::present())
 #endif
 
 // Return data from command execution

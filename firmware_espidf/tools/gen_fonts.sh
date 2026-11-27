@@ -40,6 +40,24 @@ latin=00A1-00FF,2013-2014,2018-201E,2022,2026,20AC,20B9
 "$python" -I "$here/lv_icon_font.py" --ttf "$montserrat" --size 88 --bpp "$large_bpp" --codes 002D,0030-003A nspm_font_clock_88 > "$out/nspm_font_clock_88.c"
 icons --ttf "$mdi" --size 24 --bpp "$large_bpp" nspm_font_icon_24 > "$out/nspm_font_icon_24.c"
 # Tiles, transport and big buttons; the empty calendar card; the energy card's lights.
-icons --ttf "$mdi" --size 40 --bpp "$large_bpp" --icons chevron-left,chevron-right,ceiling-light,lamp,lamps,lightbulb,lightbulb-outline,lightbulb-group,toggle-switch,toggle-switch-off-outline,power-socket-us,fan,gesture-tap-button,window-shutter,window-shutter-open,blinds,garage,thermostat,television,coffee-maker,sofa,speaker,palette,palette-swatch,play,pause,skip-previous,skip-next,shield-home,shield-off,weather-night,spray-bottle,restart,music,arrow-up,arrow-down,stop,calendar,lightbulb-on,timer-outline nspm_font_icon_40 > "$out/nspm_font_icon_40.c"
+icons40=chevron-left,chevron-right,ceiling-light,lamp,lamps,lightbulb,lightbulb-outline,lightbulb-group,toggle-switch,toggle-switch-off-outline,power-socket-us,fan,gesture-tap-button,window-shutter,window-shutter-open,blinds,garage,thermostat,television,coffee-maker,sofa,speaker,palette,palette-swatch,play,pause,skip-previous,skip-next,shield-home,shield-off,weather-night,spray-bottle,restart,music,arrow-up,arrow-down,stop,calendar,lightbulb-on,timer-outline
+icons --ttf "$mdi" --size 40 --bpp "$large_bpp" --icons "$icons40" nspm_font_icon_40 > "$out/nspm_font_icon_40.c"
 # The current weather, the cleaning screen, the album art placeholder and the energy card's power.
-icons --ttf "$mdi" --size 64 --bpp "$large_bpp" --icons weather-sunny,weather-partly-cloudy,weather-cloudy,weather-rainy,weather-partly-rainy,weather-pouring,weather-snowy,weather-lightning,weather-fog,weather-night,weather-night-partly-cloudy,weather-windy,spray-bottle,music,lightning-bolt nspm_font_icon_64 > "$out/nspm_font_icon_64.c"
+icons64=weather-sunny,weather-partly-cloudy,weather-cloudy,weather-rainy,weather-partly-rainy,weather-pouring,weather-snowy,weather-lightning,weather-fog,weather-night,weather-night-partly-cloudy,weather-windy,spray-bottle,music,lightning-bolt
+icons --ttf "$mdi" --size 64 --bpp "$large_bpp" --icons "$icons64" nspm_font_icon_64 > "$out/nspm_font_icon_64.c"
+
+# The custom PCB's 720x720 screen (Theme::scale() 1.5): every font above at 1.5x its size, rasterised from
+# the TTFs (LVGL has no Montserrat 21, 30 or 72), with the Latin-1 extras and LVGL's symbols in the same
+# font rather than a fallback. Only builds that define NSPM_HD_FONTS compile them (the custom PCB, the
+# simulator): the NSPanel's flash has no room for them.
+hd() { "$python" -I "$here/lv_icon_font.py" --guard NSPM_HD_FONTS "$@"; }
+fa="${LVGL_DIR:-$root/managed_components/lvgl__lvgl}/scripts/generators/built_in_font/FontAwesome5-Solid+Brands+Regular.woff"
+sym=f1eb,f015,f079,f054,f013,f00b,f03e,f00c
+hd --ttf "$montserrat" --size 21 --bpp "$body_bpp" --codes "0020-007E,$latin" --sym-ttf "$fa" --sym-codes "$sym" nspm_font_hd_body > "$out/nspm_font_hd_body.c"
+hd --ttf "$montserrat" --size 30 --bpp "$large_bpp" --codes "0020-007E,$latin" nspm_font_hd_title > "$out/nspm_font_hd_title.c"
+hd --ttf "$montserrat" --size 48 --bpp "$large_bpp" --codes 0020,0025,002D-003A,0041,0043,0046,004D,0050,00B0 nspm_font_hd_large > "$out/nspm_font_hd_large.c"
+hd --ttf "$montserrat" --size 72 --bpp "$large_bpp" --codes 0020,002D-002E,0030-003A,0041,0046,004D,0050,00B0 nspm_font_hd_clock > "$out/nspm_font_hd_clock.c"
+hd --ttf "$montserrat" --size 132 --bpp "$large_bpp" --codes 002D,0030-003A nspm_font_hd_big_clock > "$out/nspm_font_hd_big_clock.c"
+hd --table "$here/nspm_icons.txt" --ttf "$mdi" --size 36 --bpp "$large_bpp" nspm_font_hd_icon_36 > "$out/nspm_font_hd_icon_36.c"
+hd --table "$here/nspm_icons.txt" --ttf "$mdi" --size 60 --bpp "$large_bpp" --icons "$icons40" nspm_font_hd_icon_60 > "$out/nspm_font_hd_icon_60.c"
+hd --table "$here/nspm_icons.txt" --ttf "$mdi" --size 96 --bpp "$large_bpp" --icons "$icons64" nspm_font_hd_icon_96 > "$out/nspm_font_hd_icon_96.c"

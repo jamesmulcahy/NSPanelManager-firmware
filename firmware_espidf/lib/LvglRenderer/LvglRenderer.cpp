@@ -1,3 +1,4 @@
+#include <Background.hpp>
 #include <BootScreen.hpp>
 #include <ConfigManager.hpp>
 #include <LvglRenderer.hpp>
@@ -6,6 +7,9 @@
 #include <NSPM_ConfigManager_event.hpp>
 #include <NSPM_version.hpp>
 #include <NextionTerminal.hpp>
+#if defined(BOARD_CUSTOM)
+#include <DsiDisplay.hpp>
+#endif
 #include <PanelClock.hpp>
 #include <Theme.hpp>
 #include <WiFiManager.hpp>
@@ -42,6 +46,19 @@ esp_err_t LvglRenderer::start() {
   }
 
   LvglRenderer::_us_layout = ConfigManager::lvgl_us_layout;
+#if defined(BOARD_CUSTOM)
+  // LVGL draws straight into the panel's two frame buffers (direct mode): into the one the panel is not
+  // sending, and DsiDisplay::show() swaps them after each refresh; LVGL copies what it redrew into the
+  // other before the next. The pages are laid out portrait at 1.5x (Theme::set_hd()) and fill the screen.
+  LvglRenderer::_us_layout = true;
+  Theme::set_hd(true);
+  Theme::set_screen_size(LvglRenderer::width(), LvglRenderer::height());
+  const size_t buffer_bytes = LvglRenderer::MAX_PIXELS * sizeof(uint16_t);
+  // The panel sends frame buffer 0 first, so LVGL starts in 1.
+  uint8_t *draw_buffer = static_cast<uint8_t *>(DsiDisplay::frame_buffer(1));
+  uint8_t *draw_buffer_2 = static_cast<uint8_t *>(DsiDisplay::frame_buffer(0));
+  const lv_display_render_mode_t render_mode = LV_DISPLAY_RENDER_MODE_DIRECT;
+#else
   // The widest the screen can be, so a region change needs no new buffer.
   const size_t buffer_bytes = 480 * DRAW_LINES * sizeof(uint16_t);
   uint8_t *draw_buffer = static_cast<uint8_t *>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -49,12 +66,17 @@ esp_err_t LvglRenderer::start() {
     ESP_LOGW(TAG, "No internal RAM for the draw buffer; drawing into PSRAM, slower.");
     draw_buffer = static_cast<uint8_t *>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_SPIRAM));
   }
+  uint8_t *draw_buffer_2 = NULL;
+  const lv_display_render_mode_t render_mode = LV_DISPLAY_RENDER_MODE_PARTIAL;
+#endif
   LvglRenderer::_text_mutex = xSemaphoreCreateMutex();
   LvglRenderer::_touches = xQueueCreate(TOUCH_QUEUE_LENGTH, sizeof(Touch));
   LvglRenderer::_work = xQueueCreate(32, sizeof(std::function<void()> *));
   if (draw_buffer == NULL || LvglRenderer::_text_mutex == NULL || LvglRenderer::_touches == NULL || LvglRenderer::_work == NULL) {
     ESP_LOGE(TAG, "Failed to allocate LVGL's buffers.");
+#if !defined(BOARD_CUSTOM) // The panel's frame buffers are DsiDisplay's
     heap_caps_free(draw_buffer);
+#endif
     return ESP_ERR_NO_MEM;
   }
 
@@ -62,7 +84,7 @@ esp_err_t LvglRenderer::start() {
   lv_tick_set_cb(LvglRenderer::_tick);
   LvglRenderer::_display = lv_display_create(LvglRenderer::width(), LvglRenderer::height());
   lv_display_set_color_format(LvglRenderer::_display, LV_COLOR_FORMAT_RGB565);
-  lv_display_set_buffers(LvglRenderer::_display, draw_buffer, NULL, buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_display_set_buffers(LvglRenderer::_display, draw_buffer, draw_buffer_2, buffer_bytes, render_mode);
   lv_display_set_flush_cb(LvglRenderer::_display, LvglRenderer::_flush);
   lv_indev_t *pointer = lv_indev_create();
   lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
@@ -73,6 +95,37 @@ esp_err_t LvglRenderer::start() {
     }
   }, LV_EVENT_PRESSED, NULL);
 
+#if defined(BOARD_CUSTOM)
+  DsiDisplay::on_touch = LvglRenderer::inject_touch;
+  // The HD page background takes a while to draw: on a task of its own, on the other core, at low priority.
+  Background::run_off_gui = [](void (*work)(void *), void (*done)(void *), void *arg) {
+    struct Job {
+      void (*work)(void *);
+      void (*done)(void *);
+      void *arg;
+      int64_t start;
+    };
+    Job *job = new Job{work, done, arg, esp_timer_get_time()};
+    auto run = [](void *param) {
+      Job *job = static_cast<Job *>(param);
+      job->work(job->arg);
+      ESP_LOGI(TAG, "Drew the HD background in %lld ms.", (long long)((esp_timer_get_time() - job->start) / 1000));
+      if (!LvglRenderer::post([job]() {
+            job->done(job->arg);
+            delete job;
+          })) {
+        ESP_LOGW(TAG, "GUI queue full: the HD background is dropped.");
+      }
+      vTaskDelete(NULL);
+    };
+    if (xTaskCreatePinnedToCore(run, "bg_art", 6144, job, 2, NULL, 0) != pdPASS) {
+      ESP_LOGW(TAG, "No task for the HD background: drawing it on the GUI task.");
+      work(arg);
+      done(arg);
+      delete job;
+    }
+  };
+#endif
   // The terminal's touches, and a full repaint whenever it (re)starts: the display lost the picture.
   NextionTerminal::on_touch = LvglRenderer::inject_touch;
   NextionTerminal::on_streaming_changed = [](bool streaming) {
@@ -198,6 +251,14 @@ void LvglRenderer::notify() {
   }
 }
 
+bool LvglRenderer::_display_streaming() {
+#if defined(BOARD_CUSTOM)
+  return DsiDisplay::ready();
+#else
+  return NextionTerminal::streaming();
+#endif
+}
+
 uint32_t LvglRenderer::_tick() {
   return (uint32_t)(esp_timer_get_time() / 1000);
 }
@@ -269,7 +330,7 @@ void LvglRenderer::_task(void *param) {
 
     uint32_t sleep_ms = MAX_SLEEP_MS;
     // Nothing reaches the display until the receiver streams: wait, and repaint everything then.
-    if (LvglRenderer::_active && !NextionTerminal::streaming()) {
+    if (LvglRenderer::_active && !LvglRenderer::_display_streaming()) {
       LvglRenderer::_repaint = true;
     } else if (LvglRenderer::_active) {
       if (LvglRenderer::_wanted_screen != LvglRenderer::_loaded_screen) {
@@ -321,6 +382,24 @@ void LvglRenderer::repaint() {
 }
 
 void LvglRenderer::_flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map) {
+#if defined(BOARD_CUSTOM)
+  // Direct mode: px_map is the whole screen (the frame buffer LVGL drew into), and `area` the part of it
+  // LVGL redrew. The frame is shown even while capturing: LVGL swaps the buffers after it whatever this does.
+  if (LvglRenderer::_capture != nullptr) {
+    const uint16_t *screen = reinterpret_cast<const uint16_t *>(px_map);
+    int area_width = lv_area_get_width(area);
+    for (int y = area->y1; y <= area->y2; y++) {
+      if (y >= 0 && y < LvglRenderer::_capture_height && area->x1 >= 0 && area->x2 < LvglRenderer::_capture_width) {
+        memcpy(LvglRenderer::_capture + y * LvglRenderer::_capture_width + area->x1, screen + y * LvglRenderer::width() + area->x1, area_width * sizeof(uint16_t));
+      }
+    }
+  }
+  if (lv_display_flush_is_last(display) && DsiDisplay::show(px_map) != ESP_OK) {
+    LvglRenderer::_repaint = true;
+  }
+  lv_display_flush_ready(display);
+  return;
+#endif
   if (LvglRenderer::_capture != nullptr) {
     // A capture (_run_capture()): the band goes into the copy, not to the display.
     const uint16_t *band = reinterpret_cast<const uint16_t *>(px_map);
@@ -365,7 +444,7 @@ esp_err_t LvglRenderer::capture(uint32_t timeout_ms, std::shared_ptr<const Scree
   // From here on, the last owner's ~Screenshot() clears _capture_busy.
   auto shot = std::make_shared<Screenshot>();
   // Big enough for either layout, as the region may change before the GUI task gets to it.
-  shot->pixels = static_cast<uint16_t *>(heap_caps_malloc(480 * 320 * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
+  shot->pixels = static_cast<uint16_t *>(heap_caps_malloc(LvglRenderer::MAX_PIXELS * sizeof(uint16_t), MALLOC_CAP_SPIRAM));
   shot->_done = xSemaphoreCreateBinary();
   if (shot->pixels == nullptr || shot->_done == NULL) {
     ESP_LOGW(TAG, "No memory for a screenshot.");
@@ -393,7 +472,7 @@ void LvglRenderer::_run_capture(Screenshot &shot) {
   // Pass 1: whatever is still invalid goes to the display as usual, as the capture pass consumes
   // every invalid area. Not lv_refr_now(), which would also step the animations: between the two
   // passes nothing may change. Without a session the display gets a full repaint once it streams.
-  bool streaming = LvglRenderer::_active && NextionTerminal::streaming();
+  bool streaming = LvglRenderer::_active && LvglRenderer::_display_streaming();
   if (streaming) {
     lv_display_refr_timer(refresh);
   }
@@ -407,7 +486,7 @@ void LvglRenderer::_run_capture(Screenshot &shot) {
 
   shot.width = LvglRenderer::_capture_width;
   shot.height = LvglRenderer::_capture_height;
-  shot.in_sync = streaming && NextionTerminal::streaming() && !LvglRenderer::_repaint;
+  shot.in_sync = streaming && LvglRenderer::_display_streaming() && !LvglRenderer::_repaint;
   shot.capture_ms = (uint32_t)((esp_timer_get_time() - start) / 1000);
   shot._ok = true;
   xSemaphoreGive(shot._done);
@@ -440,6 +519,8 @@ void LvglRenderer::_config_event_handler(void *arg, esp_event_base_t event_base,
     ConfigManager::lvgl_us_layout = us_layout;
     ConfigManager::save_config(CONFIG_SAVE_BY_US_LAYOUT);
   }
+#if !defined(BOARD_CUSTOM) // One layout there, whatever the region
   LvglRenderer::_wanted_region = us_layout ? 1 : 0;
   LvglRenderer::notify();
+#endif
 }

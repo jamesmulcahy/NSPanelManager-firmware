@@ -61,6 +61,13 @@ public:
   static const char *mac_string();
 
   /**
+   * @brief The panel's MAC address, the Wi-Fi station's: what the manager knows the panel by.
+   * Read once by init(); valid after it. On the custom PCB (ESP32-P4) it is the ESP32-C6's, read over
+   * ESP-Hosted: the P4 has no radio, and its own eFuse MAC is not what the network sees.
+   */
+  static void mac(uint8_t out[6]);
+
+  /**
    * @brief Say whether the page now shown wants the Wi-Fi radio kept awake.
    * With the IDF default (WIFI_PS_MIN_MODEM) the radio sleeps between the AP's beacons and the AP
    * holds every packet for the panel until the next one, which adds up to a few hundred ms to each
@@ -122,8 +129,10 @@ private:
   // Flag to indicate to start_ap function that the _config variable is in fact configured and we are starting a fallback AP.
   static inline bool _has_wifi_config = false;
 
-  // MAC address of ESP32 WiFi
+  // MAC address of the Wi-Fi station (mac()), and as text (mac_string()).
+  static inline uint8_t _mac[6] = {};
   static inline char _mac_address[18];
+  static void _set_mac(const uint8_t mac[6]);
 
   // Whether the shown page wants the radio awake (set_low_latency()).
   static inline std::atomic<bool> _page_wants_low_latency = true;

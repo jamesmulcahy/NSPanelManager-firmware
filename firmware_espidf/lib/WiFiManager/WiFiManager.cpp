@@ -6,6 +6,7 @@
 #include <esp_mac.h>
 #include <esp_netif.h>
 #include <esp_private/wifi.h>
+#include <cstring>
 #include <string>
 
 #if defined(NSPM_QEMU)
@@ -25,7 +26,7 @@ void WiFiManager::init() {
   // start_client() brings the network up over Ethernet instead.
   uint8_t qemu_mac[6];
   esp_read_mac(qemu_mac, ESP_MAC_WIFI_STA);
-  snprintf(WiFiManager::_mac_address, sizeof(WiFiManager::_mac_address), "%02X:%02X:%02X:%02X:%02X:%02X", qemu_mac[0], qemu_mac[1], qemu_mac[2], qemu_mac[3], qemu_mac[4], qemu_mac[5]);
+  WiFiManager::_set_mac(qemu_mac);
   return;
 #endif
 
@@ -48,11 +49,30 @@ void WiFiManager::init() {
   // cannot reach them. esp_wifi_init() sets their own level to CONFIG_LOG_MAXIMUM_LEVEL (DEBUG), which
   // ESP-IDF's per-tag "wifi" level (INFO) used to filter; with one global level it no longer does, and
   // every keep-alive frame logged several lines. Keep them at INFO.
+  // On the custom PCB the Wi-Fi libraries run on the ESP32-C6, which logs on its own UART; the remote API has
+  // no such call.
+#if !defined(CONFIG_ESP_WIFI_REMOTE_ENABLED)
   esp_wifi_internal_set_log_level(WIFI_LOG_INFO);
+#endif
 
-  // Load MAC address from ESP32 into memory
-  uint8_t mac[6];
+  uint8_t mac[6] = {};
+#if defined(CONFIG_ESP_WIFI_REMOTE_ENABLED)
+  // The ESP32-C6's station MAC, over ESP-Hosted (esp_wifi_init() above brought the link up). The P4's own
+  // eFuse MAC (esp_read_mac()) is not the radio's.
+  esp_err_t mac_res = esp_wifi_get_mac(WIFI_IF_STA, mac);
+  if (mac_res != ESP_OK) {
+    ESP_LOGE("WiFiManager", "Failed to read the Wi-Fi MAC from the ESP32-C6: %s", esp_err_to_name(mac_res));
+  }
+  ESP_ERROR_CHECK(mac_res);
+#else
   esp_read_mac(mac, ESP_MAC_WIFI_STA); // Read MAC address for Wi-Fi Station
+#endif
+  WiFiManager::_set_mac(mac);
+  ESP_LOGI("WiFiManager", "Wi-Fi MAC %s", WiFiManager::_mac_address);
+}
+
+void WiFiManager::_set_mac(const uint8_t mac[6]) {
+  memcpy(WiFiManager::_mac, mac, sizeof(WiFiManager::_mac));
   snprintf(WiFiManager::_mac_address, sizeof(WiFiManager::_mac_address), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
@@ -391,7 +411,7 @@ void WiFiManager::_fallback_timer_callback(TimerHandle_t timer) {
         WiFiManager::start_ap(&WiFiManager::_fallback_ssid);
         vTaskDelete(NULL); // Start AP then exit task cleanly.
       },
-                  "start_ap_fallback", 6000, NULL, 1, NULL) != ESP_OK) {
+                  "start_ap_fallback", 6000, NULL, 1, NULL) != pdPASS) {
     ESP_LOGE("WiFiManager", "Failed to start task to start fallback SoftAP as we've failed to connect to WiFi.");
   }
 }
@@ -476,4 +496,8 @@ std::string WiFiManager::ip_string() {
 
 const char *WiFiManager::mac_string() {
   return WiFiManager::_mac_address;
+}
+
+void WiFiManager::mac(uint8_t out[6]) {
+  memcpy(out, WiFiManager::_mac, sizeof(WiFiManager::_mac));
 }

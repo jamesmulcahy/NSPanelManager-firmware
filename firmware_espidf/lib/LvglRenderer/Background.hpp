@@ -35,4 +35,20 @@ Preset current();
 // The art's pixels in row y (0-479) of a 320x480 screen, RGB565, into row[320]. For tests and the
 // simulator; drawing uses the rectangles.
 void render_row(Preset preset, int y, uint16_t *row);
+
+/**
+ * With NSPM_HD_ART, on a 720x720 screen in HD (Theme::hd()): set() also draws the preset's HD art
+ * (BackgroundHd), which replaces the rectangles once it is ready. Drawing it takes a while, so the device
+ * sets this to run `work(arg)` on a task of its own and then `done(arg)` on the GUI task; unset (the
+ * simulator), set() runs both at once.
+ */
+inline void (*run_off_gui)(void (*work)(void *), void (*done)(void *), void *arg) = nullptr;
+
+/**
+ * GUI task: `obj` is a see-through card (Theme::card() or Theme::on_tint() at Theme::card_opa()). Over the
+ * HD art, its background is then drawn from the art as blended under that colour when the art was drawn
+ * (smooth, dithered) rather than blended by LVGL (RGB565 at 32 levels, no dither: the art bands and its
+ * dither breaks up under the card). Without NSPM_HD_ART, or not in HD, nothing.
+ */
+void see_through(lv_obj_t *obj);
 } // namespace Background

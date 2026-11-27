@@ -62,7 +62,7 @@ void EntitiesView::build(lv_obj_t *parent, bool landscape) {
   // Shown while a scene is held down to be saved (the Nextion page's slider_save).
   EntitiesView::_save = lv_bar_create(parent);
   lv_obj_remove_style_all(EntitiesView::_save);
-  lv_obj_set_size(EntitiesView::_save, lv_pct(100), 6);
+  lv_obj_set_size(EntitiesView::_save, lv_pct(100), Theme::px(6));
   lv_obj_set_style_radius(EntitiesView::_save, Theme::RADIUS_BAR, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(EntitiesView::_save, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(EntitiesView::_save, Theme::track(), LV_PART_MAIN);
@@ -112,7 +112,7 @@ void EntitiesView::_layout(int size) {
     }
     lv_obj_set_flex_flow(tile, wide ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(tile, wide ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_left(tile, wide ? 20 : 6, 0);
+    lv_obj_set_style_pad_left(tile, Theme::px(wide ? 20 : 6), 0);
     lv_obj_set_style_pad_gap(tile, wide ? Theme::SPACE_XL : Theme::SPACE_XS, 0);
     lv_obj_t *label = Ui::tile_label(tile);
     if (wide) {

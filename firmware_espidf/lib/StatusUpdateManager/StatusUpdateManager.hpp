@@ -10,9 +10,6 @@
 #include <string>
 #include <vector>
 
-#if defined(BOARD_CUSTOM)
-#include <bmx280.h>
-#endif
 
 class StatusUpdateManager {
 public:
@@ -162,32 +159,6 @@ private:
 
 #endif
 
-#if defined(BOARD_CUSTOM)
-  // What is the current average measured temperature
-  static inline MutexWrapped<double> _measured_average_humidity = 0;
-
-  // Records of measured humidity from _measure_temperature function.
-  static inline float _measured_humidity[_AVERAGE_READINGS];
-
-  // What index is the next index to insert/replace read humidity into.
-  static inline uint8_t _measured_humidity_next_index;
-
-  // How many samples has been read from the pressure sensor
-  static inline uint8_t _measured_humidity_total_samples;
-
-  // What is the current average measured temperature
-  static inline MutexWrapped<double> _measured_average_pressure = 0;
-
-  // Records of measured pressure from _measure_temperature function.
-  static inline float _measured_pressure[_AVERAGE_READINGS];
-
-  // What index is the next index to insert/replace read pressure into.
-  static inline uint8_t _measured_pressure_next_index;
-
-  // How many samples has been read from the humidity sensor
-  static inline uint8_t _measured_pressure_total_samples;
-
-#endif
 
   // Mutex to only allow once task at the time access to the _status_report.
   static inline SemaphoreHandle_t _status_report_mutex;
@@ -206,32 +177,4 @@ private:
   static inline std::string _lvgl_background_text;
   static inline NSPanelWarning *_warnings[1];
 
-#if defined(BOARD_CUSTOM)
-  // Custom PCB that uses I2C sensors. Define them:
-
-  static bool _initialize_bme280();
-
-  // I2C Master bus handle
-  static inline i2c_master_bus_handle_t _i2c_master_bus_handle;
-
-  // Was the BME280 sensor initialized correctly
-  static inline bool _bme280_initialized = false;
-
-  // Time of last try to initialize the BME280 sensor
-  static inline uint64_t _last_bme280_init_try = 0;
-
-  // Device handle for BME280 sensor on I2C bus.
-  static inline bmx280_t *_bme280_dev_handle = NULL;
-
-  // static bool _initialize_ltr303();
-
-  // // Was the LTR303 sensor initialized correctly
-  // static inline bool _ltr303_initialized = false;
-
-  // // Time of last try to initialize the LTR303 sensor
-  // static inline uint64_t _last_ltr303_init_try = 0;
-
-  // // Device handle for LTR-303ALS-01 sensor on I2C bus.
-  // static inline LTR303 *_ltr303_dev_handle = NULL;
-#endif
 };

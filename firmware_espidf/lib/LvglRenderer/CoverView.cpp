@@ -48,7 +48,7 @@ void CoverView::build(lv_obj_t *parent, bool landscape) {
   lv_obj_set_style_pad_all(position.card, 0, 0);
   if (landscape) {
     lv_obj_set_flex_grow(position.card, 0);
-    lv_obj_set_width(position.card, 60);
+    lv_obj_set_width(position.card, Theme::px(60));
   } else {
     lv_obj_set_flex_grow(position.card, 0);
   }
@@ -80,7 +80,7 @@ void CoverView::build(lv_obj_t *parent, bool landscape) {
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(button, Theme::track(), 0);
     lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_size(button, 68, 68);
+    lv_obj_set_size(button, Theme::px(68), Theme::px(68));
     lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, (void *)(intptr_t)control.action);
     *control.button = button;
   }

@@ -24,7 +24,7 @@
 // --- Album art -----------------------------------------------------------------------------------
 // Generated, as there is no image to ship: a "photo" (sunset over hills, with the per-pixel grain a
 // JPEG-decoded photo has, so almost every pixel differs from its neighbour) and a flat graphic
-// cover (smooth gradient and solid shapes, as many album covers are). Both 180 x 180 RGB565, the
+// cover (smooth gradient and solid shapes, as many album covers are). Both art_size() square RGB565, the
 // size the manager scales album art to for the panel.
 
 static uint16_t rgb565(double r, double g, double b) {
@@ -47,8 +47,8 @@ static lv_image_dsc_t make_image(std::vector<uint16_t> &pixels, int size) {
 static const lv_image_dsc_t *photo_art() {
   static std::vector<uint16_t> pixels;
   static lv_image_dsc_t image;
-  if (pixels.empty()) {
-    const int n = MediaPlayerView::ART_SIZE;
+  const int n = MediaPlayerView::art_size(); // 180, or 270 on the hd screen: made again when it changes
+  if (pixels.size() != (size_t)n * n) {
     pixels.resize(n * n);
     uint32_t seed = 12345;
     for (int y = 0; y < n; y++) {
@@ -83,8 +83,8 @@ static const lv_image_dsc_t *photo_art() {
 static const lv_image_dsc_t *graphic_art() {
   static std::vector<uint16_t> pixels;
   static lv_image_dsc_t image;
-  if (pixels.empty()) {
-    const int n = MediaPlayerView::ART_SIZE;
+  const int n = MediaPlayerView::art_size(); // 180, or 270 on the hd screen: made again when it changes
+  if (pixels.size() != (size_t)n * n) {
     pixels.resize(n * n);
     for (int y = 0; y < n; y++) {
       for (int x = 0; x < n; x++) {

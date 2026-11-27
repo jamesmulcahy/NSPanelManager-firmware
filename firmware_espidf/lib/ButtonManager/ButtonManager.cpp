@@ -36,6 +36,14 @@ void ButtonManager::init() {
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::AVERAGE_TEMP_UPDATE, ButtonManager::_new_temperature_event, NULL);
   esp_event_handler_register(STATUSUPDATEMANAGER_EVENT, statusupdatemanagerevent_t::TEMPERATURE_SENSOR_FAILED, ButtonManager::_temperature_sensor_failed_event, NULL);
 
+  if constexpr (!ButtonManager::_has_buttons_and_relays) {
+    // Only the relays' state (MQTT), no GPIO and no buttons.
+    ESP_LOGI("ButtonManager", "This board has no buttons or relays; the relays are state only.");
+    ButtonManager::_set_relay_state(1, ButtonManager::_relay1_default_mode, false);
+    ButtonManager::_set_relay_state(2, ButtonManager::_relay2_default_mode, false);
+    return;
+  }
+
   ButtonManager::_relay_io_config = {};
   ButtonManager::_relay_io_config.intr_type = GPIO_INTR_DISABLE;
   ButtonManager::_relay_io_config.pin_bit_mask = ButtonManager::_relay_pin_mask;
@@ -216,6 +224,12 @@ void ButtonManager::_open_entity_page(uint8_t button) {
   InterfaceManager::request_show_entity_page(topic);
 }
 
+void ButtonManager::_write_relay_pin(gpio_num_t pin, bool state) {
+  if constexpr (ButtonManager::_has_buttons_and_relays) {
+    gpio_set_level(pin, state ? 1 : 0);
+  }
+}
+
 void ButtonManager::_set_relay_state(uint8_t relay, bool state, bool send_mqtt_update) {
   if (relay == 1) {
     // Only allow relay state to be changed once every 250ms if we have actually been running for more than 250ms.  This will not allow default relay mode to be set otherwise.
@@ -226,11 +240,11 @@ void ButtonManager::_set_relay_state(uint8_t relay, bool state, bool send_mqtt_u
     if (!ButtonManager::_reverse_relays) {
       ESP_LOGD("ButtonManager", "Setting output of relay 1 (left) relay to %s", state ? "ON" : " OFF");
       ButtonManager::_relay1_current_state = state;
-      gpio_set_level(ButtonManager::_relay1_pin, state ? 1 : 0);
+      ButtonManager::_write_relay_pin(ButtonManager::_relay1_pin, state);
     } else {
       ESP_LOGD("ButtonManager", "Setting output of relay 2 (right|reversed) relay to %s", state ? "ON" : " OFF");
       ButtonManager::_relay2_current_state = state;
-      gpio_set_level(ButtonManager::_relay2_pin, state ? 1 : 0);
+      ButtonManager::_write_relay_pin(ButtonManager::_relay2_pin, state);
     }
 
     if (send_mqtt_update) {
@@ -261,11 +275,11 @@ void ButtonManager::_set_relay_state(uint8_t relay, bool state, bool send_mqtt_u
     if (!ButtonManager::_reverse_relays) {
       ESP_LOGD("ButtonManager", "Setting output of relay 2 (right) relay to %s", state ? "ON" : " OFF");
       ButtonManager::_relay2_current_state = state;
-      gpio_set_level(ButtonManager::_relay2_pin, state ? 1 : 0);
+      ButtonManager::_write_relay_pin(ButtonManager::_relay2_pin, state);
     } else {
       ESP_LOGD("ButtonManager", "Setting output of relay 1 (left|reversed) relay to %s", state ? "ON" : " OFF");
       ButtonManager::_relay1_current_state = state;
-      gpio_set_level(ButtonManager::_relay1_pin, state ? 1 : 0);
+      ButtonManager::_write_relay_pin(ButtonManager::_relay1_pin, state);
     }
 
     if (send_mqtt_update) {
@@ -461,8 +475,10 @@ void ButtonManager::_nspm_configmanager_event_handler(void *arg, esp_event_base_
       ButtonManager::_min_button_push_time = config->min_button_push_time;
       ConfigManager::min_button_push_time = ButtonManager::_min_button_push_time;
 
-      ButtonManager::_button1->setDoubleClickInterval(ButtonManager::_min_button_push_time);
-      ButtonManager::_button2->setDoubleClickInterval(ButtonManager::_min_button_push_time);
+      if (ButtonManager::_button1 != nullptr && ButtonManager::_button2 != nullptr) { // None on a board without buttons
+        ButtonManager::_button1->setDoubleClickInterval(ButtonManager::_min_button_push_time);
+        ButtonManager::_button2->setDoubleClickInterval(ButtonManager::_min_button_push_time);
+      }
       save = true;
     }
 
@@ -470,8 +486,10 @@ void ButtonManager::_nspm_configmanager_event_handler(void *arg, esp_event_base_
       ButtonManager::_min_button_long_push_time = config->button_long_press_time;
       ConfigManager::min_button_long_push_time = ButtonManager::_min_button_long_push_time;
 
-      ButtonManager::_button1->setLongPressInterval(ButtonManager::_min_button_long_push_time);
-      ButtonManager::_button2->setLongPressInterval(ButtonManager::_min_button_long_push_time);
+      if (ButtonManager::_button1 != nullptr && ButtonManager::_button2 != nullptr) { // None on a board without buttons
+        ButtonManager::_button1->setLongPressInterval(ButtonManager::_min_button_long_push_time);
+        ButtonManager::_button2->setLongPressInterval(ButtonManager::_min_button_long_push_time);
+      }
       save = true;
     }
 

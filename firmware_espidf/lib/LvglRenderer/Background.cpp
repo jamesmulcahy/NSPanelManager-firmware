@@ -1,5 +1,8 @@
 #include "Background.hpp"
 #include "Theme.hpp"
+#if defined(NSPM_HD_ART)
+#include "BackgroundHd.hpp"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -339,24 +342,194 @@ void build(void (*render)(int y, uint16_t *row)) {
   }
 }
 
-void draw(lv_event_t *event) {
-  lv_obj_t *screen = (lv_obj_t *)lv_event_get_current_target(event);
-  if (rects == nullptr || lv_obj_get_width(screen) > lv_obj_get_height(screen)) {
+#if defined(NSPM_HD_ART)
+// The HD art (BackgroundHd), once drawn: SIZE x SIZE RGB565 in LVGL's heap, and the image over it. And
+// the art as it shows under the see-through cards: one copy per card colour (TINTS), blended and dithered
+// when it is drawn, for see_through().
+constexpr int TINTS = 2; // Theme::card(), Theme::on_tint()
+constexpr size_t HD_BYTES = (size_t)BackgroundHd::SIZE * BackgroundHd::SIZE * 2;
+struct HdArt {
+  uint16_t *pixels = nullptr;
+  uint16_t *tinted[TINTS] = {nullptr, nullptr};
+  lv_color_t tint_color[TINTS];
+  lv_opa_t tint_opa = LV_OPA_COVER;
+};
+HdArt hd;
+lv_image_dsc_t hd_image;
+// What the HD art was asked for with: a new preset, palette or card opacity draws it again.
+Background::Preset hd_preset = Background::Preset::NONE;
+const Theme::Palette *hd_palette = nullptr;
+lv_opa_t hd_opa = LV_OPA_COVER;
+// Counts the requests: a drawing that finishes after another was asked for is thrown away.
+uint32_t hd_generation = 0;
+
+struct HdJob {
+  Background::Preset preset;
+  uint32_t generation;
+  HdArt art;
+  BackgroundHd::Tint tints[TINTS];
+  bool ok;
+};
+
+void hd_release(HdArt &art) {
+  lv_free(art.pixels);
+  art.pixels = nullptr;
+  for (uint16_t *&t : art.tinted) {
+    lv_free(t);
+    t = nullptr;
+  }
+}
+
+// GUI task: the drawing is done. Show it, if it is still what was asked for.
+void hd_done(void *arg) {
+  HdJob *job = static_cast<HdJob *>(arg);
+  if (job->ok && job->generation == hd_generation) {
+    hd_release(hd);
+    hd = job->art;
+    memset(&hd_image, 0, sizeof(hd_image));
+    hd_image.header.magic = LV_IMAGE_HEADER_MAGIC;
+    hd_image.header.cf = LV_COLOR_FORMAT_RGB565;
+    hd_image.header.w = BackgroundHd::SIZE;
+    hd_image.header.h = BackgroundHd::SIZE;
+    hd_image.header.stride = BackgroundHd::SIZE * 2;
+    hd_image.data_size = HD_BYTES;
+    hd_image.data = reinterpret_cast<const uint8_t *>(hd.pixels);
+    lv_obj_invalidate(lv_screen_active());
+  } else {
+    hd_release(job->art);
+  }
+  delete job;
+}
+
+// GUI task: start drawing `preset`'s HD art (unless it is drawn, or being drawn, as it is now asked for);
+// the rectangles stand in until it is ready.
+void hd_start(Background::Preset preset) {
+  const Theme::Palette *palette = &Theme::palette();
+  const lv_opa_t opa = Theme::card_opa();
+  if (preset == hd_preset && palette == hd_palette && opa == hd_opa) {
     return;
   }
+  hd_preset = preset;
+  hd_palette = palette;
+  hd_opa = opa;
+  hd_generation++;
+  hd_release(hd);
+  if (!Theme::hd() || !BackgroundHd::has(preset)) {
+    return;
+  }
+  // Allocated here, as LVGL's heap belongs to the GUI task; written only by the drawing.
+  HdJob *job = new HdJob{preset, hd_generation, {}, {}, false};
+  job->art.pixels = static_cast<uint16_t *>(lv_malloc(HD_BYTES));
+  const lv_color_t colors[TINTS] = {Theme::card(), Theme::on_tint()};
+  bool all = job->art.pixels != nullptr;
+  for (int i = 0; i < TINTS; i++) {
+    job->art.tint_color[i] = colors[i];
+    job->art.tinted[i] = opa < LV_OPA_COVER ? static_cast<uint16_t *>(lv_malloc(HD_BYTES)) : nullptr;
+    all = all && (opa == LV_OPA_COVER || job->art.tinted[i] != nullptr);
+    job->tints[i] = {colors[i].red, colors[i].green, colors[i].blue, opa, job->art.tinted[i]};
+  }
+  job->art.tint_opa = opa;
+  if (!all) {
+    LV_LOG_WARN("No memory for the HD background.");
+    hd_release(job->art);
+    delete job;
+    return;
+  }
+  auto work = [](void *arg) {
+    HdJob *job = static_cast<HdJob *>(arg);
+    job->ok = BackgroundHd::render(job->preset, job->art.pixels, job->tints, job->art.tinted[0] != nullptr ? TINTS : 0);
+  };
+  if (Background::run_off_gui != nullptr) {
+    Background::run_off_gui(work, hd_done, job);
+  } else {
+    work(job);
+    hd_done(job);
+  }
+}
+
+// A see-through card's background fill, when it is one of the tinted colours over the HD art: dropped, and
+// the card's part of that tinted art drawn instead, its corners rounded as the fill's. Each card keeps an
+// image descriptor (the event's user data) pointing into the tinted art where the card is.
+void see_through_draw(lv_event_t *event) {
+  lv_draw_task_t *task = lv_event_get_draw_task(event);
+  if (hd.pixels == nullptr || hd.tinted[0] == nullptr || lv_draw_task_get_type(task) != LV_DRAW_TASK_TYPE_FILL) {
+    return;
+  }
+  lv_draw_fill_dsc_t *fill = lv_draw_task_get_fill_dsc(task);
+  if (fill == nullptr || fill->base.part != LV_PART_MAIN || fill->opa != hd.tint_opa || fill->grad.dir != LV_GRAD_DIR_NONE) {
+    return;
+  }
+  int tint = -1;
+  for (int i = 0; i < TINTS; i++) {
+    if (lv_color_eq(fill->color, hd.tint_color[i])) {
+      tint = i;
+    }
+  }
+  lv_area_t area;
+  lv_draw_task_get_area(task, &area);
+  if (tint < 0 || area.x1 < 0 || area.y1 < 0 || area.x2 >= BackgroundHd::SIZE || area.y2 >= BackgroundHd::SIZE) {
+    return;
+  }
+  lv_image_dsc_t *part = static_cast<lv_image_dsc_t *>(lv_event_get_user_data(event));
+  memset(part, 0, sizeof(*part));
+  part->header.magic = LV_IMAGE_HEADER_MAGIC;
+  part->header.cf = LV_COLOR_FORMAT_RGB565;
+  part->header.w = lv_area_get_width(&area);
+  part->header.h = lv_area_get_height(&area);
+  part->header.stride = BackgroundHd::SIZE * 2;
+  part->data_size = (uint32_t)part->header.stride * part->header.h;
+  part->data = reinterpret_cast<const uint8_t *>(hd.tinted[tint] + (size_t)area.y1 * BackgroundHd::SIZE + area.x1);
+  fill->opa = LV_OPA_TRANSP;
+  lv_draw_image_dsc_t image;
+  lv_draw_image_dsc_init(&image);
+  image.src = part;
+  image.clip_radius = fill->radius;
+  image.image_area = area;
+  lv_draw_image(fill->base.layer, &image, &area);
+}
+#endif
+
+void draw(lv_event_t *event) {
+  lv_obj_t *screen = (lv_obj_t *)lv_event_get_current_target(event);
+  const int32_t screen_w = lv_obj_get_width(screen);
+  const int32_t screen_h = lv_obj_get_height(screen);
+#if defined(NSPM_HD_ART)
+  if (hd.pixels != nullptr && screen_w == BackgroundHd::SIZE && screen_h == BackgroundHd::SIZE) {
+    // The HD art, copied under whatever is redrawn (LVGL clips the image to the layer's area).
+    lv_draw_image_dsc_t image;
+    lv_draw_image_dsc_init(&image);
+    image.src = &hd_image;
+    lv_area_t area;
+    lv_obj_get_coords(screen, &area);
+    lv_draw_image(lv_event_get_layer(event), &image, &area);
+    return;
+  }
+#endif
+  if (rects == nullptr || screen_w > screen_h) {
+    return;
+  }
+  // The art is 320x480. A wider screen (the custom PCB's 480x480) gets it scaled to its width, the
+  // proportions kept, and its bottom on the screen's: what is cut off is sky. Scale and offset in
+  // 1/256 px; on a 320x480 screen they are 1 and 0, and every rectangle lands where it always did.
+  const int32_t scale = screen_w * 256 / W;
+  const int32_t offset = H * scale / 256 - screen_h;
+  auto sx = [scale](int32_t x) { return x * scale / 256; };
+  auto sy = [scale, offset](int32_t y) { return y * scale / 256 - offset; };
   lv_layer_t *layer = lv_event_get_layer(event);
   const lv_area_t &clip = layer->_clip_area;
-  // The first rectangle that can reach the band: none starting more than max_h above it.
-  int32_t from = clip.y1 - max_h;
+  // The first rectangle that can reach the band: none starting more than max_h above it (in the
+  // art's rows).
+  int32_t from = (clip.y1 + offset) * 256 / scale - max_h;
   const Rect *first = std::lower_bound(rects, rects + rect_count, from, [](const Rect &r, int32_t y) { return (int32_t)r.y < y; });
   lv_draw_fill_dsc_t fill;
   lv_draw_fill_dsc_init(&fill);
   fill.opa = LV_OPA_COVER;
-  for (const Rect *r = first; r < rects + rect_count && (int32_t)r->y <= clip.y2; r++) {
-    if ((int32_t)(r->y + r->h - 1) < clip.y1) {
+  for (const Rect *r = first; r < rects + rect_count && sy(r->y) <= clip.y2; r++) {
+    // Edges scaled, not sizes, so that neighbours still meet without a gap.
+    lv_area_t area = {sx(r->x), sy(r->y), sx(r->x + r->w) - 1, sy(r->y + r->h) - 1};
+    if (area.y2 < clip.y1 || area.x2 < area.x1 || area.y2 < area.y1) {
       continue;
     }
-    lv_area_t area = {(int32_t)r->x, (int32_t)r->y, (int32_t)(r->x + r->w - 1), (int32_t)(r->y + r->h - 1)};
     // Exact in RGB565: the low bits LVGL drops are zero.
     fill.color = lv_color_make(((r->color >> 11) & 31) << 3, ((r->color >> 5) & 63) << 2, (r->color & 31) << 3);
     lv_draw_fill(layer, &fill, &area);
@@ -407,6 +580,9 @@ void Background::set(Preset preset, const Theme::Palette *theme) {
     preset = Preset::NONE;
   }
   if (preset == current_preset && (rects != nullptr || preset == Preset::NONE)) {
+#if defined(NSPM_HD_ART)
+    hd_start(preset); // A new palette tints the cards' art anew
+#endif
     return;
   }
   lv_free(rects);
@@ -421,6 +597,26 @@ void Background::set(Preset preset, const Theme::Palette *theme) {
     }
   }
   Theme::set_card_opa(card_opa);
+#if defined(NSPM_HD_ART)
+  hd_start(preset);
+#endif
+}
+
+void Background::see_through(lv_obj_t *obj) {
+#if defined(NSPM_HD_ART)
+  if (!Theme::hd() || obj == nullptr) {
+    return;
+  }
+  lv_image_dsc_t *part = static_cast<lv_image_dsc_t *>(lv_malloc_zeroed(sizeof(lv_image_dsc_t)));
+  if (part == nullptr) {
+    return;
+  }
+  lv_obj_add_flag(obj, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+  lv_obj_add_event_cb(obj, see_through_draw, LV_EVENT_DRAW_TASK_ADDED, part);
+  lv_obj_add_event_cb(obj, [](lv_event_t *event) { lv_free(lv_event_get_user_data(event)); }, LV_EVENT_DELETE, part);
+#else
+  (void)obj;
+#endif
 }
 
 Background::Preset Background::current() {

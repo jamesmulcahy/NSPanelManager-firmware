@@ -1,5 +1,6 @@
 #pragma once
 #include "EnergyFormat.hpp"
+#include "Theme.hpp"
 #include <atomic>
 #include <cstdint>
 #include <lvgl.h>
@@ -114,7 +115,7 @@ public:
   // its text, a multiple of 8 and at most MAX_ART_SIZE. Worked out from the layout when the card is
   // built (0 until then), and the size to ask the manager for. on_art_size runs on the GUI task each
   // time the card is built.
-  static constexpr int32_t MAX_ART_SIZE = 256;
+  static constexpr Theme::Px MAX_ART_SIZE{256};
   static inline void (*on_art_size)(uint16_t size) = nullptr;
   static uint16_t art_size() { return ScreensaverView::_art_size.load(); }
 

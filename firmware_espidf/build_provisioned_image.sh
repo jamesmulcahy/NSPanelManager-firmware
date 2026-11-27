@@ -22,14 +22,16 @@ cd "$(dirname "$0")"
 
 if [ "${BOARD_TYPE}" == "custom" ]; then
   PIO_ENV="custom_pcb"
-  CHIP_ARGS=(--chip esp32s3 merge_bin --flash_mode qio --flash_size 16MB)
-  # The ESP32-S3 boots its second-stage bootloader from 0x0 (CONFIG_BOOTLOADER_OFFSET_IN_FLASH in
+  CHIP_ARGS=(--chip esp32p4 merge_bin --flash_mode qio --flash_size 32MB)
+  # The ESP32-P4 boots its second-stage bootloader from 0x2000 (CONFIG_BOOTLOADER_OFFSET_IN_FLASH in
   # sdkconfig.custom_pcb); the ESP32 from 0x1000.
-  BOOTLOADER_OFFSET=0x0
+  BOOTLOADER_OFFSET=0x2000
+  PARTITIONS_CSV=partitions_p4.csv
 elif [ "${BOARD_TYPE}" == "sonoff" ]; then
   PIO_ENV="original_sonoff"
   CHIP_ARGS=(--chip esp32 merge_bin --flash_mode dio --flash_size 4MB)
   BOOTLOADER_OFFSET=0x1000
+  PARTITIONS_CSV=partitions.csv
 else
   echo "Syntax: $0 <sonoff|custom> [output file]"
   exit 1
@@ -43,7 +45,7 @@ if [ -f provision.env ]; then
 fi
 
 function get_partition_field {
-  grep -Eve "^#" partitions.csv | grep "$1," | awk -v field="$2" '{ print $field }' | cut -d ',' -f 1
+  grep -Eve "^#" "${PARTITIONS_CSV}" | grep "$1," | awk -v field="$2" '{ print $field }' | cut -d ',' -f 1
 }
 
 # Prefer tools on PATH, else the copies PlatformIO installs.
