@@ -276,6 +276,15 @@ void LvglRenderer::_task(void *param) {
         LvglRenderer::_loaded_screen = LvglRenderer::_wanted_screen;
         lv_screen_load(LvglRenderer::_loaded_screen == Screen::PAGES ? LvglRenderer::_pages_screen : LvglRenderer::_boot_screen);
       }
+      if (LvglRenderer::_repaint_requested.exchange(false)) {
+        // Now rather than at the refresh timer's next turn, so the log line follows the repaint.
+        int64_t start = esp_timer_get_time();
+        LvglRenderer::_repaint = false;
+        lv_obj_invalidate(lv_screen_active());
+        lv_display_refr_timer(lv_display_get_refr_timer(LvglRenderer::_display));
+        ESP_LOGI(TAG, "Repainted the whole screen in %lu ms%s.", (unsigned long)((esp_timer_get_time() - start) / 1000),
+                 NextionTerminal::streaming() && !LvglRenderer::_repaint ? "" : " (a band failed; repainting again)");
+      }
       if (LvglRenderer::_repaint.exchange(false)) {
         lv_obj_invalidate(lv_screen_active());
       }
@@ -300,6 +309,15 @@ void LvglRenderer::_task(void *param) {
     }
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms < 10 ? 10 : sleep_ms));
   }
+}
+
+void LvglRenderer::repaint() {
+  if (!LvglRenderer::_enabled) {
+    return;
+  }
+  // Not streaming: the repaint waits for the receiver, which repaints everything anyway.
+  LvglRenderer::_repaint_requested = true;
+  LvglRenderer::notify();
 }
 
 void LvglRenderer::_flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map) {
