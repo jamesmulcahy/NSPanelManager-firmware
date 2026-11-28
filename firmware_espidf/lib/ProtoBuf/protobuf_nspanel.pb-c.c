@@ -160,6 +160,51 @@ void   nspanel_status_report__free_unpacked
   assert(message->base.descriptor == &nspanel_status_report__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
+void   build_info__init
+                     (BuildInfo         *message)
+{
+  static const BuildInfo init_value = BUILD_INFO__INIT;
+  *message = init_value;
+}
+size_t build_info__get_packed_size
+                     (const BuildInfo *message)
+{
+  assert(message->base.descriptor == &build_info__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t build_info__pack
+                     (const BuildInfo *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &build_info__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t build_info__pack_to_buffer
+                     (const BuildInfo *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &build_info__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+BuildInfo *
+       build_info__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (BuildInfo *)
+     protobuf_c_message_unpack (&build_info__descriptor,
+                                allocator, len, data);
+}
+void   build_info__free_unpacked
+                     (BuildInfo *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &build_info__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
 void   nspanel_room_entities_page__entity_slot__init
                      (NSPanelRoomEntitiesPage__EntitySlot         *message)
 {
@@ -1577,7 +1622,7 @@ const ProtobufCEnumDescriptor nspanel_status_report__nspanel_display_mode__descr
   nspanel_status_report__nspanel_display_mode__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[20] =
+static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[21] =
 {
   {
     "nspanel_state",
@@ -1819,8 +1864,21 @@ static const ProtobufCFieldDescriptor nspanel_status_report__field_descriptors[2
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "build",
+    21,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_MESSAGE,
+    0,   /* quantifier_offset */
+    offsetof(NSPanelStatusReport, build),
+    &build_info__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned nspanel_status_report__field_indices_by_name[] = {
+  20,   /* field[20] = build */
   15,   /* field[15] = display_mode */
   11,   /* field[11] = has_humidity */
   13,   /* field[13] = has_pressure */
@@ -1845,7 +1903,7 @@ static const unsigned nspanel_status_report__field_indices_by_name[] = {
 static const ProtobufCIntRange nspanel_status_report__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 20 }
+  { 0, 21 }
 };
 const ProtobufCMessageDescriptor nspanel_status_report__descriptor =
 {
@@ -1855,11 +1913,140 @@ const ProtobufCMessageDescriptor nspanel_status_report__descriptor =
   "NSPanelStatusReport",
   "",
   sizeof(NSPanelStatusReport),
-  20,
+  21,
   nspanel_status_report__field_descriptors,
   nspanel_status_report__field_indices_by_name,
   1,  nspanel_status_report__number_ranges,
   (ProtobufCMessageInit) nspanel_status_report__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCFieldDescriptor build_info__field_descriptors[8] =
+{
+  {
+    "version",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, version),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "project",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, project),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "build_date",
+    3,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, build_date),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "idf_version",
+    4,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, idf_version),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "elf_sha256",
+    5,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, elf_sha256),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "image_sha256",
+    6,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, image_sha256),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "chip",
+    7,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, chip),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "ota_partition",
+    8,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(BuildInfo, ota_partition),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned build_info__field_indices_by_name[] = {
+  2,   /* field[2] = build_date */
+  6,   /* field[6] = chip */
+  4,   /* field[4] = elf_sha256 */
+  3,   /* field[3] = idf_version */
+  5,   /* field[5] = image_sha256 */
+  7,   /* field[7] = ota_partition */
+  1,   /* field[1] = project */
+  0,   /* field[0] = version */
+};
+static const ProtobufCIntRange build_info__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 8 }
+};
+const ProtobufCMessageDescriptor build_info__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "BuildInfo",
+  "BuildInfo",
+  "BuildInfo",
+  "",
+  sizeof(BuildInfo),
+  8,
+  build_info__field_descriptors,
+  build_info__field_indices_by_name,
+  1,  build_info__number_ranges,
+  (ProtobufCMessageInit) build_info__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
 static const ProtobufCEnumValue nspanel_room_entities_page__entity_slot__entity_type__enum_values_by_number[8] =

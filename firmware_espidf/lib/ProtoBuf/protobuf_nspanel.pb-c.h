@@ -21,6 +21,7 @@ typedef struct NSPanelConfig__Sound NSPanelConfig__Sound;
 typedef struct NSPanelConfig__ScreensaverCard NSPanelConfig__ScreensaverCard;
 typedef struct NSPanelWarning NSPanelWarning;
 typedef struct NSPanelStatusReport NSPanelStatusReport;
+typedef struct BuildInfo BuildInfo;
 typedef struct NSPanelRoomEntitiesPage NSPanelRoomEntitiesPage;
 typedef struct NSPanelRoomEntitiesPage__EntitySlot NSPanelRoomEntitiesPage__EntitySlot;
 typedef struct NSPanelRoomStatus NSPanelRoomStatus;
@@ -138,7 +139,7 @@ typedef enum _NSPanelStatusReport__State {
 typedef enum _NSPanelStatusReport__NSPanelDisplayMode {
   NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN = 0,
   /*
-   * NSPM's Nextion pages
+   * A legacy TFT (NSPM's Nextion HMI TFT): the firmware has no UI for it and shows a "display update needed" screen
    */
   NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_NEXTION = 1,
   /*
@@ -146,7 +147,7 @@ typedef enum _NSPanelStatusReport__NSPanelDisplayMode {
    */
   NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_LVGL = 2,
   /*
-   * A terminal TFT with LVGL switched off (lvgl_ui false): the TFT's own waiting page
+   * No UI: no terminal TFT is installed, the banner was missed, or LVGL failed to start. The display shows at most the TFT's own waiting page
    */
   NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_TERMINAL_IDLE = 3
     PROTOBUF_C__FORCE_ENUM_TO_BE_INT_SIZE(NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE)
@@ -407,10 +408,59 @@ struct  NSPanelStatusReport
    * read a non-zero `temperature` from such a panel as present.
    */
   protobuf_c_boolean has_temperature;
+  /*
+   * Which build is running. Unset (not has_build) on firmware that predates it.
+   */
+  BuildInfo *build;
 };
 #define NSPANEL_STATUS_REPORT__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&nspanel_status_report__descriptor) \
-    , NSPANEL_STATUS_REPORT__STATE__ONLINE, 0, 0, 0, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, 0, 0, NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0 }
+    , NSPANEL_STATUS_REPORT__STATE__ONLINE, 0, 0, 0, (char *)protobuf_c_empty_string, 0, (char *)protobuf_c_empty_string, 0,NULL, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, 0, 0, NSPANEL_STATUS_REPORT__NSPANEL_DISPLAY_MODE__DISPLAY_MODE_UNKNOWN, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, 0, 0, NULL }
+
+
+/*
+ * Identity of a firmware build, read from the running image's esp_app_desc_t and OTA partition.
+ * Also sent in register_request as a JSON "build" object with the same field names.
+ */
+struct  BuildInfo
+{
+  ProtobufCMessage base;
+  /*
+   * esp_app_desc_t.version, normally `git describe --always --tags --dirty`
+   */
+  char *version;
+  /*
+   * esp_app_desc_t.project_name
+   */
+  char *project;
+  /*
+   * esp_app_desc_t.date + " " + time
+   */
+  char *build_date;
+  /*
+   * esp_app_desc_t.idf_ver
+   */
+  char *idf_version;
+  /*
+   * esp_app_desc_t.app_elf_sha256, 64 lowercase hex characters
+   */
+  char *elf_sha256;
+  /*
+   * SHA-256 of the image in the running OTA partition (the .bin's last 32 bytes), 64 lowercase hex characters
+   */
+  char *image_sha256;
+  /*
+   * "esp32", "esp32s3" or "esp32p4"
+   */
+  char *chip;
+  /*
+   * Label of the running partition: ota_0, ota_1 or factory
+   */
+  char *ota_partition;
+};
+#define BUILD_INFO__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&build_info__descriptor) \
+    , (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string, (char *)protobuf_c_empty_string }
 
 
 struct  NSPanelRoomEntitiesPage__EntitySlot
@@ -915,6 +965,25 @@ NSPanelStatusReport *
 void   nspanel_status_report__free_unpacked
                      (NSPanelStatusReport *message,
                       ProtobufCAllocator *allocator);
+/* BuildInfo methods */
+void   build_info__init
+                     (BuildInfo         *message);
+size_t build_info__get_packed_size
+                     (const BuildInfo   *message);
+size_t build_info__pack
+                     (const BuildInfo   *message,
+                      uint8_t             *out);
+size_t build_info__pack_to_buffer
+                     (const BuildInfo   *message,
+                      ProtobufCBuffer     *buffer);
+BuildInfo *
+       build_info__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   build_info__free_unpacked
+                     (BuildInfo *message,
+                      ProtobufCAllocator *allocator);
 /* NSPanelRoomEntitiesPage__EntitySlot methods */
 void   nspanel_room_entities_page__entity_slot__init
                      (NSPanelRoomEntitiesPage__EntitySlot         *message);
@@ -1091,6 +1160,9 @@ typedef void (*NSPanelWarning_Closure)
 typedef void (*NSPanelStatusReport_Closure)
                  (const NSPanelStatusReport *message,
                   void *closure_data);
+typedef void (*BuildInfo_Closure)
+                 (const BuildInfo *message,
+                  void *closure_data);
 typedef void (*NSPanelRoomEntitiesPage__EntitySlot_Closure)
                  (const NSPanelRoomEntitiesPage__EntitySlot *message,
                   void *closure_data);
@@ -1171,6 +1243,7 @@ extern const ProtobufCMessageDescriptor nspanel_warning__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_status_report__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_status_report__state__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_status_report__nspanel_display_mode__descriptor;
+extern const ProtobufCMessageDescriptor build_info__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_room_entities_page__descriptor;
 extern const ProtobufCMessageDescriptor nspanel_room_entities_page__entity_slot__descriptor;
 extern const ProtobufCEnumDescriptor    nspanel_room_entities_page__entity_slot__entity_type__descriptor;
