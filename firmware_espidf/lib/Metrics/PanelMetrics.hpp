@@ -110,6 +110,31 @@ extern Counter config_written_bytes;
 extern Gauge config_file_bytes;
 extern Gauge config_load_state;
 
+#if defined(BOARD_CUSTOM)
+// The voice recorder (lib/VoiceRecorder, docs/VOICE_RECORDER.md section 8).
+// nspanel_voice_recordings_total{outcome}: how each recording ended.
+enum VoiceOutcome { VOICE_SENT,
+                    VOICE_CANCELLED,
+                    VOICE_TOO_SHORT,
+                    VOICE_CAPTURE_FAILED,
+                    VOICE_BUSY,
+                    VOICE_OUTCOME_COUNT };
+extern Counter voice_recordings[VOICE_OUTCOME_COUNT];
+extern Counter voice_limit;             // nspanel_voice_recordings_limit_total: recordings that hit MAX_FRAMES
+extern Counter voice_recorded_ms;       // nspanel_voice_recorded_seconds_total (kept as milliseconds)
+extern Counter voice_announce_failures; // nspanel_voice_announce_failures_total
+// nspanel_voice_http_requests_total{status}: serve() responses.
+enum VoiceHttp { VOICE_HTTP_200,
+                 VOICE_HTTP_206,
+                 VOICE_HTTP_404,
+                 VOICE_HTTP_410,
+                 VOICE_HTTP_416,
+                 VOICE_HTTP_COUNT };
+extern Counter voice_http_requests[VOICE_HTTP_COUNT];
+extern Counter voice_http_bytes;     // nspanel_voice_http_bytes_total
+extern Counter voice_sink_overruns;  // nspanel_voice_sink_overruns_total
+#endif
+
 /**
  * Create the lock that serialises scrapes. Call once, before the web server starts.
  */

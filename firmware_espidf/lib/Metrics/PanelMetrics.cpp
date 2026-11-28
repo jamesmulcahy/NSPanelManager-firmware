@@ -31,6 +31,15 @@ LatencyHistogram config_write_duration;
 Counter config_written_bytes;
 Gauge config_file_bytes;
 Gauge config_load_state;
+#if defined(BOARD_CUSTOM)
+Counter voice_recordings[VOICE_OUTCOME_COUNT];
+Counter voice_limit;
+Counter voice_recorded_ms;
+Counter voice_announce_failures;
+Counter voice_http_requests[VOICE_HTTP_COUNT];
+Counter voice_http_bytes;
+Counter voice_sink_overruns;
+#endif
 
 namespace {
 // Wi-Fi power save time keeping. Indexed by mode: 0 WIFI_PS_NONE, 1 WIFI_PS_MIN_MODEM. Counted from
@@ -165,6 +174,13 @@ bool sample_uptime(int64_t *value) {
       CONFIG_SAVE(caller, caller_label, CONFIG_SAVE_FAILED, "failed")
 
 // Series of the same metric must be listed together (checked below).
+#if defined(BOARD_CUSTOM)
+bool sample_voice_recorded_seconds(int64_t *value) {
+  *value = voice_recorded_ms.value() / 1000;
+  return true;
+}
+#endif
+
 constexpr MetricDesc registry[] = {
     // Time from subscribe() (or a reconnect) to the topic's retained value, by stage: total, queued
     // (until the SUBSCRIBE was sent), suback (SUBSCRIBE to SUBACK) and data (SUBACK to the value).
@@ -304,6 +320,23 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_heap_min_free_bytes", sample_heap_min_free<HEAP_PSRAM>, {"pool", "psram"}),
     metric("nspanel_heap_largest_free_block_bytes", sample_heap_largest_free_block<HEAP_INTERNAL>, {"pool", "internal"}),
     metric("nspanel_uptime_seconds", sample_uptime),
+#if defined(BOARD_CUSTOM)
+    metric("nspanel_voice_recordings_total", voice_recordings[VOICE_SENT], {"outcome", "sent"}),
+    metric("nspanel_voice_recordings_total", voice_recordings[VOICE_CANCELLED], {"outcome", "cancelled"}),
+    metric("nspanel_voice_recordings_total", voice_recordings[VOICE_TOO_SHORT], {"outcome", "too_short"}),
+    metric("nspanel_voice_recordings_total", voice_recordings[VOICE_CAPTURE_FAILED], {"outcome", "capture_failed"}),
+    metric("nspanel_voice_recordings_total", voice_recordings[VOICE_BUSY], {"outcome", "busy"}),
+    metric("nspanel_voice_recordings_limit_total", voice_limit),
+    sampled_counter("nspanel_voice_recorded_seconds_total", sample_voice_recorded_seconds),
+    metric("nspanel_voice_announce_failures_total", voice_announce_failures),
+    metric("nspanel_voice_http_requests_total", voice_http_requests[VOICE_HTTP_200], {"status", "200"}),
+    metric("nspanel_voice_http_requests_total", voice_http_requests[VOICE_HTTP_206], {"status", "206"}),
+    metric("nspanel_voice_http_requests_total", voice_http_requests[VOICE_HTTP_404], {"status", "404"}),
+    metric("nspanel_voice_http_requests_total", voice_http_requests[VOICE_HTTP_410], {"status", "410"}),
+    metric("nspanel_voice_http_requests_total", voice_http_requests[VOICE_HTTP_416], {"status", "416"}),
+    metric("nspanel_voice_http_bytes_total", voice_http_bytes),
+    metric("nspanel_voice_sink_overruns_total", voice_sink_overruns),
+#endif
 };
 static_assert(metrics_names_grouped(registry), "List every series of a metric next to each other in the registry");
 

@@ -14,6 +14,7 @@
 #include <WebManager.hpp>
 #if defined(BOARD_CUSTOM)
 #include <VoiceCapture.hpp>
+#include <VoiceRecorder.hpp>
 #endif
 #include <WiFiManager.hpp>
 #include <cstring>
@@ -92,7 +93,11 @@ void WebManager::start() {
   if (WebManager::_server == NULL) {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
     WebManager::_config.server_port = WebManager::HTTP_PORT;
-    WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included; 13 on custom_pcb, +2 with NSPM_HEAP_DIAG), with room to spare
+    WebManager::_config.max_uri_handlers = 18; // 12 registered (/screenshot and /metrics included; 13 on custom_pcb, +2 for /rec/*, +2 with NSPM_HEAP_DIAG = 17), with room to spare
+#if defined(BOARD_CUSTOM)
+    // /rec/<token>.wav is a wildcard pattern; the exact URIs match as before.
+    WebManager::_config.uri_match_fn = httpd_uri_match_wildcard;
+#endif
     // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
     // chunked send, and 8 KB left only 412 bytes unused on a panel (PNG). See the
     // "Screenshot ..." log line for what is left unused.
@@ -128,6 +133,11 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_metrics);                // Prometheus scrape endpoint
 #if defined(BOARD_CUSTOM)
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // TEMPORARY: microphone audio, raw or processed
+      // The voice recorder's recordings, after /rec/test.wav (the first match wins).
+      static httpd_uri_t uri_rec_get = {.uri = "/rec/*", .method = HTTP_GET, .handler = VoiceRecorder::serve, .user_ctx = NULL};
+      static httpd_uri_t uri_rec_head = {.uri = "/rec/*", .method = HTTP_HEAD, .handler = VoiceRecorder::serve, .user_ctx = NULL};
+      httpd_register_uri_handler(WebManager::_server, &uri_rec_get);
+      httpd_register_uri_handler(WebManager::_server, &uri_rec_head);
 #endif
 #ifdef NSPM_HEAP_DIAG
       HeapDiag::register_uris(WebManager::_server); // 2 more, 14 in all (15 on custom_pcb)
