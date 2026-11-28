@@ -1,5 +1,5 @@
 #pragma once
-// The custom PCB's (Waveshare ESP32-P4-WIFI6-Touch-LCD-4B) 720x720 MIPI-DSI panel: which controller the
+// The custom PCB's (Waveshare ESP32-P4-86-Panel-ETH-2RO) 720x720 MIPI-DSI panel: which controller the
 // unit has, and the panel for it. C, as the JD9365 init table is (C compound literals).
 #if defined(BOARD_CUSTOM)
 

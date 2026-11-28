@@ -1,8 +1,14 @@
-# custom_pcb: Waveshare ESP32-P4-WIFI6-Touch-LCD-4B
+# custom_pcb: Waveshare ESP32-P4-86-Panel-ETH-2RO
 
 The `custom_pcb` environment (`-DBOARD_CUSTOM`) builds for the
-[Waveshare ESP32-P4-WIFI6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm)
-(examples and schematics: [waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4B](https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4B)).
+[Waveshare ESP32-P4-86-Panel-ETH-2RO](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm): the
+ESP32-P4-WIFI6-Touch-LCD-4B core on a bottom board that adds an RJ45, an RS485 terminal and two relays.
+The plain 4B (no bottom board, a MIPI CSI camera connector instead) is the same core, display and
+audio, so it should run this build too; only the 86-Panel has been tried.
+Docs for both variants: [docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4B](https://docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4B)
+(the `waveshare.com/wiki/...-4B` URL redirects to the 86-Panel page). Examples and schematics, the
+bottom board's included (`hardware/schematic/`):
+[waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4B](https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4B).
 The manager still knows it as model `custom`. The earlier ESP32-S3 custom PCB is no longer built.
 
 | | |
@@ -11,7 +17,9 @@ The manager still knows it as model `custom`. The earlier ESP32-S3 custom PCB is
 | Wi-Fi | ESP32-C6 co-processor over SDIO (ESP-Hosted 3.0.10 + esp_wifi_remote 1.6.5, the versions of Waveshare's factory app). SDIO CLK 18, CMD 19, D0-D3 14-17, C6 reset 54 (`ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD`) |
 | Display | 4" 720x720 MIPI-DSI, 2 lanes at 480 Mbps (D-PHY on LDO VO3, 2.5 V), reset GPIO 27; ST7703 or JD9365DA depending on the unit, probed at boot. Backlight GPIO 26 (PWM, inverted). GT911 touch on I2C port 1 (SDA 7, SCL 8), reset GPIO 23, INT not wired (polled) |
 | Microphones | ES7210 ADC (I2C 0x40, the same bus as touch: `lib/BoardI2c`), I2S 0 TDM RX at 16 kHz, MCLK 13, BCLK 12, WS 10, DIN 11. Slots: MIC1, MIC3 (the ES8311's output looped back, the echo reference), MIC2, MIC4 (not connected). Started on first use (`lib/VoiceCapture`); used by the voice recorder (`lib/VoiceRecorder`, `docs/VOICE_RECORDER.md`) and by the test endpoint `GET /rec/test.wav`, off by default (see "Microphones: processing and tuning" below). The ES8311 (0x18) and the speaker amplifier (enable GPIO 53) are not driven |
-| Buttons, relays | None. The relays are state only, kept and reported over MQTT as on the Sonoff |
+| Buttons, relays | No buttons. The bottom board's two low-voltage relays (GPIO 32 and 46, per Waveshare; not yet checked against the schematic) are not driven: the relays are state only, kept and reported over MQTT as on the Sonoff |
+| Ethernet | IP101 PHY on the P4's EMAC (RMII), RJ45 on the bottom board. Not supported: Wi-Fi only ([#84](https://github.com/jamesmulcahy/NSPanelManager-firmware/issues/84)) |
+| RS485 | On the bottom board. Not supported |
 | Temperature | None reported (the P4's die sensor is not room temperature) |
 | Console | UART0, on the board's USB-UART USB-C port, 115200 |
 
@@ -259,7 +267,7 @@ The ESP32-C6 keeps the firmware it shipped with; erasing or flashing the P4 does
 first board tried, it reports ESP-Hosted `coprocessor=0.0.0` and the log says
 `major version mismatch — OTA coprocessor from host`; Wi-Fi (station and the setup AP) works
 regardless. If it stops working, the C6 needs ESP-Hosted 3.0.10 slave firmware (Waveshare's factory
-app installs it). Waveshare's factory image is
+app installs it). Waveshare's factory image (one for both variants) is
 `firmware/ESP32-P4-WIFI6-Touch-LCD-4B_FactoryOnly_*.bin` in their repo.
 
 The P4's bootloader starts at 0x2000, so it must stay under 0x6000 bytes (the partition table is at

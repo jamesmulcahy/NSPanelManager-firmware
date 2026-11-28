@@ -65,7 +65,7 @@ void StatusUpdateManager::init() {
     ESP_LOGE("StatusUpdateManager", "Failed to start ESP timer to periodically send status updates! Error: %s", esp_err_to_name(err));
   }
 
-  // The custom PCB (Waveshare ESP32-P4-WIFI6-Touch-LCD-4B) has no temperature sensor: it reports none.
+  // The custom PCB (Waveshare ESP32-P4-86-Panel-ETH-2RO) has no temperature sensor: it reports none.
 
 // Setup ADC for reading temperature
 #if not defined(BOARD_CUSTOM) && not defined(NSPM_QEMU)
