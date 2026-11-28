@@ -59,9 +59,18 @@ static const audio_codec_if_t *codec_if = nullptr;
 static esp_codec_dev_handle_t codec_dev = nullptr;
 
 // Each Output's name, for the log, lowest bit first.
-static constexpr const char *OUTPUT_NAME[] = {"MIC1", "MIC2", "REF", "NS(MIC1)", "BF", "NS(BF)"};
+static constexpr const char *OUTPUT_NAME[] = {"MIC1", "MIC2", "REF", "NS(MIC1)", "BF", "NS(BF)", "VOICE", "VOICE-B"};
 static constexpr int OUTPUTS = sizeof(OUTPUT_NAME) / sizeof(OUTPUT_NAME[0]);
 static constexpr uint8_t ALL_OUTPUTS = (1 << OUTPUTS) - 1;
+
+VoiceCapture::Options VoiceCapture::voice_options() {
+  Options options;
+  options.outputs = MODE_VOICE;
+  options.gain_db = 36;
+  options.ns_level = 1;
+  options.hpf_hz = 100;
+  return options;
+}
 
 int VoiceCapture::channels(uint8_t outputs) {
   return __builtin_popcount(outputs & ALL_OUTPUTS);
@@ -80,8 +89,10 @@ VoiceCapture::Request &VoiceCapture::_stream_request() {
 
 esp_err_t VoiceCapture::_validate(const Options &options) {
   if ((options.outputs & ALL_OUTPUTS) == 0 || (options.outputs & ~ALL_OUTPUTS) != 0 || options.ns_level < 0 || options.ns_level > 2 ||
-      (options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000)) || options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f ||
-      options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f) {
+      (options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000)) || options.voice_mic > VOICE_AVG ||
+      options.voice_mic_b > VOICE_AVG || options.makeup_db < -20.0f || options.makeup_db > 40.0f || options.agc_target_dbfs < -40.0f ||
+      options.agc_target_dbfs > -3.0f || options.agc_max_gain_db < 0.0f || options.agc_max_gain_db > 40.0f ||
+      options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f || options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f) {
     return ESP_ERR_INVALID_ARG;
   }
   return ESP_OK;
@@ -96,10 +107,10 @@ esp_err_t VoiceCapture::_ensure_task() {
   VoiceCapture::_requests = xQueueCreate(1, sizeof(Request *));
   VoiceCapture::_done = xSemaphoreCreateBinary();
   VoiceCapture::_started = xSemaphoreCreateBinary();
-  // Above the web server (5) and the UI, so that its reads keep up with the DMA. The stack has room for
-  // esp-sr's calls (the high-water mark is logged after each recording that runs them).
+  // Above the web server (5) and the UI, so that its reads keep up with the DMA. 4 KB: the 8 KB it had
+  // used under 2 KB with GSC (the high-water mark is logged after each recording).
   if (VoiceCapture::_requests == NULL || VoiceCapture::_done == NULL || VoiceCapture::_started == NULL ||
-      xTaskCreatePinnedToCore(VoiceCapture::_task, "voice_capture", 8192, NULL, 6, NULL, tskNO_AFFINITY) != pdPASS) {
+      xTaskCreatePinnedToCore(VoiceCapture::_task, "voice_capture", 4096, NULL, 6, NULL, tskNO_AFFINITY) != pdPASS) {
     ESP_LOGE(TAG, "No memory for the capture task.");
     if (VoiceCapture::_requests != NULL) {
       vQueueDelete(VoiceCapture::_requests);
@@ -369,6 +380,97 @@ struct Level {
   }
 };
 
+// The voice chain's last two stages, per 10 ms frame (one NS frame), state carried from frame to frame:
+// makeup gain, then a peak limiter.
+//
+// Makeup is an AGC, or a fixed gain with the AGC off. The AGC measures each frame's RMS after NS. Frames
+// above GATE_DB are speech: a level envelope follows them (up fast, down over about a second) and the
+// gain heads for target - envelope, clamped to 0..max, falling quickly (loud talker: about 30 ms) and
+// rising slowly (about half a second), so it does not pump between words. Frames below the gate (what NS
+// leaves of the room: about -79 dBFS) never raise the gain; they let it drift to the idle gain
+// (makeup_db), so the noise floor is never lifted past that, and a long pause cannot leave +24 dB
+// waiting for the next breath of noise. The gain is ramped across the frame, sample by sample.
+//
+// The limiter has a ceiling of -3 dBFS: per sample the gain drops at once to what keeps the sample at the
+// ceiling, and recovers over 80 ms, so nothing passes the ceiling (no wraparound, no hard clipping).
+struct Makeup {
+  static constexpr float GATE_DB = -60.0f;
+  static constexpr float CEILING = 32768.0f * 0.70794578f; // -3 dBFS
+  static constexpr float RELEASE = 0.00078f;               // 1 - exp(-1 / (0.08 s * 16000 Hz))
+  bool agc = true;
+  float idle_db = 12.0f, max_db = 24.0f, target_db = -20.0f;
+  float gain_db = 12.0f, envelope_db = -90.0f, limiter = 1.0f;
+  // What it did, over the frames that reached the recording.
+  float gain_min = 1e9f, gain_max = -1e9f, gain_sum = 0.0f;
+  uint32_t frames = 0, limited_frames = 0;
+  uint64_t limited_samples = 0;
+
+  void design(const VoiceCapture::Options &options) {
+    agc = options.agc;
+    max_db = options.agc_max_gain_db;
+    idle_db = agc && options.makeup_db > max_db ? max_db : options.makeup_db;
+    target_db = options.agc_target_dbfs;
+    gain_db = idle_db;
+  }
+
+  // NS_FRAMES samples. `count` is false for the padding after a recording's last whole frame.
+  void run(const int16_t *in, int16_t *out, bool count) {
+    float squares = 0.0f;
+    for (size_t i = 0; i < NS_FRAMES; i++) {
+      squares += (float)in[i] * in[i];
+    }
+    const float level_db = 10.0f * log10f(squares / NS_FRAMES / 1073741824.0f + 1e-12f);
+    float next_db = gain_db;
+    if (!agc) {
+      next_db = idle_db;
+    } else if (level_db > GATE_DB) {
+      envelope_db += (level_db > envelope_db ? 0.5f : 0.01f) * (level_db - envelope_db);
+      float want_db = target_db - envelope_db;
+      want_db = want_db < 0.0f ? 0.0f : want_db > max_db ? max_db : want_db;
+      next_db += (want_db < gain_db ? 0.3f : 0.02f) * (want_db - gain_db);
+    } else {
+      next_db += 0.02f * (idle_db - gain_db);
+    }
+    const float from = powf(10.0f, gain_db / 20.0f), step = (powf(10.0f, next_db / 20.0f) - from) / NS_FRAMES;
+    uint32_t limited = 0;
+    float gain = from;
+    for (size_t i = 0; i < NS_FRAMES; i++) {
+      gain += step;
+      const float v = in[i] * gain, magnitude = fabsf(v);
+      const float need = magnitude > CEILING ? CEILING / magnitude : 1.0f;
+      if (need < limiter) {
+        limiter = need;
+      }
+      if (limiter < 0.999f) {
+        limited++;
+      }
+      const float y = v * limiter;
+      limiter += (1.0f - limiter) * RELEASE;
+      out[i] = y > 32767.0f ? 32767 : y < -32768.0f ? -32768 : (int16_t)lroundf(y);
+    }
+    gain_db = next_db;
+    if (count) {
+      frames++;
+      gain_min = next_db < gain_min ? next_db : gain_min;
+      gain_max = next_db > gain_max ? next_db : gain_max;
+      gain_sum += next_db;
+      limited_samples += limited;
+      limited_frames += limited > 0;
+    }
+  }
+};
+
+// One voice chain: its input, its NS (its own, or MIC1's from OUT_NS, which is the same audio through
+// the same filter), and the makeup stage. `out` is the chain's output chunk.
+struct VoiceChain {
+  bool on = false, owns_ns = false;
+  VoiceCapture::VoiceMic mic = VoiceCapture::VOICE_AVG;
+  ns_handle_t ns = nullptr;
+  int16_t *ns_out = nullptr, *out = nullptr;
+  Makeup makeup;
+  int64_t us_ns = 0, us_makeup = 0;
+};
+
 struct HeapMark {
   size_t internal, psram;
   static HeapMark now() { return {heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_free_size(MALLOC_CAP_SPIRAM)}; }
@@ -401,9 +503,12 @@ struct VoiceCapture::Pipeline {
   int16_t *bf = nullptr, *ns_mic_out = nullptr, *ns_bf_out = nullptr, *gsc_in = nullptr;
   int64_t us_hpf = 0, us_bf = 0, us_ns_mic = 0, us_ns_bf = 0;
   Level level[OUTPUTS];
+  VoiceChain chain[2];    // OUT_VOICE, OUT_VOICE_B
+  int16_t *avg = nullptr; // (MIC1 + MIC2) / 2, for a chain on VOICE_AVG
+  int64_t us_avg = 0;
 
   bool needs_bf() const { return outputs & (OUT_BF | OUT_BF_NS); }
-  bool needs_sr() const { return outputs & (OUT_NS | OUT_BF | OUT_BF_NS); }
+  bool needs_sr() const { return outputs & (OUT_NS | OUT_BF | OUT_BF_NS | OUT_VOICE | OUT_VOICE_B); }
 
   esp_err_t start(const Options &options) {
     outputs = options.outputs;
@@ -416,14 +521,62 @@ struct VoiceCapture::Pipeline {
     if (!needs_sr()) {
       return ESP_OK;
     }
-    buffers = static_cast<int16_t *>(heap_caps_calloc(CHUNK_FRAMES * 3 + GSC_FRAMES * 2, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    for (int i = 0; i < 2; i++) {
+      chain[i].on = outputs & (i == 0 ? OUT_VOICE : OUT_VOICE_B);
+      chain[i].mic = i == 0 ? options.voice_mic : options.voice_mic_b;
+      chain[i].makeup.design(options);
+      // MIC1's NS is the same filter on the same audio as OUT_NS's: shared, if that is in the recording.
+      chain[i].owns_ns = chain[i].on && !(chain[i].mic == VoiceCapture::VOICE_MIC1 && (outputs & OUT_NS));
+    }
+    // One block of internal RAM for what is needed, CHUNK_FRAMES a buffer (the GSC input is two frames).
+    struct Want {
+      int16_t **pointer;
+      size_t samples;
+    } wants[8];
+    int count = 0;
+    bool avg_used = false;
+    for (const VoiceChain &c : chain) {
+      avg_used |= c.on && c.mic == VoiceCapture::VOICE_AVG;
+    }
+    if (needs_bf()) {
+      wants[count++] = {&bf, CHUNK_FRAMES};
+      wants[count++] = {&gsc_in, GSC_FRAMES * 2};
+    }
+    if (outputs & OUT_NS) {
+      wants[count++] = {&ns_mic_out, CHUNK_FRAMES};
+    }
+    if (outputs & OUT_BF_NS) {
+      wants[count++] = {&ns_bf_out, CHUNK_FRAMES};
+    }
+    if (avg_used) {
+      wants[count++] = {&avg, CHUNK_FRAMES};
+    }
+    for (VoiceChain &c : chain) {
+      if (c.on) {
+        wants[count++] = {&c.out, CHUNK_FRAMES};
+        if (c.owns_ns) {
+          wants[count++] = {&c.ns_out, CHUNK_FRAMES};
+        }
+      }
+    }
+    size_t total = 0;
+    for (int i = 0; i < count; i++) {
+      total += wants[i].samples;
+    }
+    buffers = static_cast<int16_t *>(heap_caps_calloc(total, sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (buffers == nullptr) {
       return ESP_ERR_NO_MEM;
     }
-    bf = buffers;
-    ns_mic_out = buffers + CHUNK_FRAMES;
-    ns_bf_out = buffers + CHUNK_FRAMES * 2;
-    gsc_in = buffers + CHUNK_FRAMES * 3;
+    size_t at = 0;
+    for (int i = 0; i < count; i++) {
+      *wants[i].pointer = buffers + at;
+      at += wants[i].samples;
+    }
+    for (VoiceChain &c : chain) {
+      if (c.on && !c.owns_ns) {
+        c.ns_out = ns_mic_out;
+      }
+    }
     if (needs_bf()) {
       // MIC1 front left, MIC2 front right: along x, the talker out along +y (esp-sr's "near to far").
       const float half = options.mic_spacing_mm / 2000.0f;
@@ -440,6 +593,15 @@ struct VoiceCapture::Pipeline {
     }
     if (outputs & OUT_BF_NS) {
       ns_bf = ns_pro_create(NS_FRAMES * 1000 / SAMPLE_RATE, options.ns_level, SAMPLE_RATE);
+    }
+    for (VoiceChain &c : chain) {
+      if (c.owns_ns) {
+        c.ns = ns_pro_create(NS_FRAMES * 1000 / SAMPLE_RATE, options.ns_level, SAMPLE_RATE);
+        if (c.ns == nullptr) {
+          ESP_LOGE(TAG, "WebRTC NS: no memory.");
+          return ESP_ERR_NO_MEM;
+        }
+      }
     }
     if (((outputs & OUT_NS) && ns_mic == nullptr) || ((outputs & OUT_BF_NS) && ns_bf == nullptr)) {
       ESP_LOGE(TAG, "WebRTC NS: no memory.");
@@ -460,6 +622,12 @@ struct VoiceCapture::Pipeline {
     if (ns_bf != nullptr) {
       ns_destroy(ns_bf);
       ns_bf = nullptr;
+    }
+    for (VoiceChain &c : chain) {
+      if (c.ns != nullptr) {
+        ns_destroy(c.ns);
+        c.ns = nullptr;
+      }
     }
     heap_caps_free(buffers);
     buffers = nullptr;
@@ -559,18 +727,29 @@ esp_err_t VoiceCapture::_capture(Request *request) {
   // Which slot is which shows here: with the speaker silent, the reference is near silence and MIC4's
   // slot (nothing connected, not enabled) is zero, while the microphones hear the room. The slots are
   // before the high-pass filter, the outputs after it.
-  ESP_LOGI(TAG, "Recorded %u frames (%lu ms) at %d dB, outputs 0x%02x, NS level %d, HPF %d Hz, beam %.0f deg, spacing %.0f mm:", (unsigned)done,
-           (unsigned long)(done * 1000 / SAMPLE_RATE), options.gain_db, options.outputs, options.ns_level, options.hpf_hz, options.bf_angle_deg,
-           options.mic_spacing_mm);
+  ESP_LOGI(TAG, "Recorded %u frames (%lu ms) at %d dB, outputs 0x%02x, NS level %d, HPF %d Hz, makeup %.0f dB, AGC %d (max %.0f dB), beam %.0f deg, spacing %.0f mm:",
+           (unsigned)done, (unsigned long)(done * 1000 / SAMPLE_RATE), options.gain_db, options.outputs, options.ns_level, options.hpf_hz, options.makeup_db,
+           (int)options.agc, options.agc_max_gain_db, options.bf_angle_deg, options.mic_spacing_mm);
   for (int slot = 0; slot < SLOTS && done > 0; slot++) {
     float rms = sqrtf((float)squares[slot] / done);
     int dbfs = rms >= 1.0f ? (int)lroundf(20.0f * log10f(rms / 32768.0f)) : -91;
     ESP_LOGI(TAG, "  slot %d %-10s peak %5d, RMS %5d (%d dBFS), mean %d", slot, SLOT_NAME[slot], peak[slot], (int)lroundf(rms), dbfs,
              (int)(sum[slot] / (int64_t)done));
   }
+  static constexpr const char *MIC_NAME[] = {"MIC1", "MIC2", "avg"};
   for (int output = 0; output < OUTPUTS && done > 0; output++) {
     if (options.outputs & (1 << output)) {
       pipeline.level[output].log(OUTPUT_NAME[output], done);
+    }
+  }
+  for (int i = 0; i < 2 && done > 0; i++) {
+    const VoiceChain &c = pipeline.chain[i];
+    if (c.on && c.makeup.frames > 0) {
+      const Makeup &m = c.makeup;
+      ESP_LOGI(TAG, "  %s (mic %s, %s, target %.0f dBFS): makeup gain min %.1f / avg %.1f / max %.1f dB; limiter on %u of %u frames (%llu samples, %.2f%%)",
+               OUTPUT_NAME[6 + i], MIC_NAME[c.mic], m.agc ? "AGC" : "fixed", m.target_db, m.gain_min, m.gain_sum / m.frames, m.gain_max,
+               (unsigned)m.limited_frames, (unsigned)m.frames, (unsigned long long)m.limited_samples,
+               m.limited_samples * 100.0f / ((float)m.frames * NS_FRAMES));
     }
   }
   // CPU time per stage, against the audio's length: the share of one core it takes. The capture task is
@@ -581,6 +760,14 @@ esp_err_t VoiceCapture::_capture(Request *request) {
              (long long)setup_us, (long long)pipeline.us_hpf, pipeline.us_hpf * 100.0f / audio_us, (long long)pipeline.us_bf,
              pipeline.us_bf * 100.0f / audio_us, (long long)pipeline.us_ns_mic, pipeline.us_ns_mic * 100.0f / audio_us, (long long)pipeline.us_ns_bf,
              pipeline.us_ns_bf * 100.0f / audio_us, (long long)(wall_us / 1000), (unsigned long)(done * 1000 / SAMPLE_RATE));
+    for (int i = 0; i < 2; i++) {
+      const VoiceChain &c = pipeline.chain[i];
+      if (c.on) {
+        ESP_LOGI(TAG, "  CPU %s: NS %lld us (%.2f%%, %s), makeup+limiter %lld us (%.2f%%); mic average %lld us (%.2f%%, shared)", OUTPUT_NAME[6 + i],
+                 (long long)c.us_ns, c.us_ns * 100.0f / audio_us, c.owns_ns ? "own" : "NS(MIC1)'s, counted there", (long long)c.us_makeup,
+                 c.us_makeup * 100.0f / audio_us, (long long)pipeline.us_avg, pipeline.us_avg * 100.0f / audio_us);
+      }
+    }
   }
   // What this recording took (esp-sr's handles and the chunk buffers, not the caller's recording), and the
   // lowest the free heap has been since boot.
@@ -630,8 +817,32 @@ void VoiceCapture::_process(Pipeline &pipeline, int16_t *const channels[CHANNELS
       pipeline.us_ns_bf += esp_timer_get_time() - t;
     }
   }
+  if (pipeline.avg != nullptr) {
+    const int64_t t = esp_timer_get_time();
+    for (size_t i = 0; i < CHUNK_FRAMES; i++) {
+      pipeline.avg[i] = (int16_t)(((int)channels[MIC1][i] + channels[MIC2][i]) >> 1);
+    }
+    pipeline.us_avg += esp_timer_get_time() - t;
+  }
+  for (VoiceChain &c : pipeline.chain) {
+    if (!c.on) {
+      continue;
+    }
+    int16_t *input = c.mic == VOICE_MIC1 ? channels[MIC1] : c.mic == VOICE_MIC2 ? channels[MIC2] : pipeline.avg;
+    int64_t t = esp_timer_get_time();
+    for (size_t at = 0; c.ns != nullptr && at < CHUNK_FRAMES; at += NS_FRAMES) {
+      ns_process(c.ns, input + at, c.ns_out + at);
+    }
+    c.us_ns += c.ns != nullptr ? esp_timer_get_time() - t : 0;
+    t = esp_timer_get_time();
+    for (size_t at = 0; at < CHUNK_FRAMES; at += NS_FRAMES) {
+      c.makeup.run(c.ns_out + at, c.out + at, at < frames);
+    }
+    c.us_makeup += esp_timer_get_time() - t;
+  }
   // Interleaved, in Output order.
-  const int16_t *sources[OUTPUTS] = {channels[MIC1], channels[MIC2], channels[REF], pipeline.ns_mic_out, pipeline.bf, pipeline.ns_bf_out};
+  const int16_t *sources[OUTPUTS] = {channels[MIC1], channels[MIC2], channels[REF], pipeline.ns_mic_out, pipeline.bf, pipeline.ns_bf_out,
+                                     pipeline.chain[0].out, pipeline.chain[1].out};
   for (size_t frame = 0; frame < frames; frame++) {
     for (int output = 0; output < OUTPUTS; output++) {
       if (pipeline.outputs & (1 << output)) {

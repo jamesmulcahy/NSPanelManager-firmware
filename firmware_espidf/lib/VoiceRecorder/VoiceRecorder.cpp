@@ -474,15 +474,9 @@ void VoiceRecorder::set_result_listener(void (*listener)(bool, esp_err_t, void *
 }
 
 VoiceCapture::Options VoiceRecorder::capture_options() {
-  // The ONE place the recorder chooses how the microphones are processed. Until the tuning pass's production
-  // mode lands: WebRTC NS on MIC1, high-pass at 100 Hz, 36 dB of ES7210 gain. Switching to MODE_VOICE is
-  // `options.outputs = VoiceCapture::MODE_VOICE;` (and dropping what that mode sets by itself).
-  VoiceCapture::Options options;
-  options.outputs = VoiceCapture::MODE_NS;
-  options.hpf_hz = 100;
-  options.gain_db = 36;
-  options.ns_level = 1;
-  return options;
+  // The ONE place the recorder chooses how the microphones are processed: the tuning pass's production chain
+  // (the two mics averaged, HPF 100 Hz, WebRTC NS, AGC and limiter; 36 dB of ES7210 gain), mono.
+  return VoiceCapture::voice_options();
 }
 
 esp_err_t VoiceRecorder::serve(httpd_req_t *req) {

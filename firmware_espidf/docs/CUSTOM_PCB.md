@@ -90,33 +90,84 @@ no `model` partition at all, and one flashed without `srmodels.bin` has an erase
 
 ## Microphones: processing and tuning (phase 1b)
 
-`VoiceCapture` runs the processing on its capture task as the audio comes in: MIC1 and MIC2 through
-esp-sr's GSC beamformer, then WebRTC noise suppression (`ns_pro`), out as 16 kHz mono. A recording
-holds any set of the stages' outputs (`VoiceCapture::Options::outputs`), interleaved, so the stages can
-be compared on the same audio:
+`VoiceCapture` runs the processing on its capture task as the audio comes in. A recording holds any
+set of the stages' outputs (`VoiceCapture::Options::outputs`), interleaved, so the stages can be
+compared on the same audio:
 
 | Output | Channel |
 |---|---|
 | `OUT_MIC1`, `OUT_MIC2`, `OUT_REF` | The inputs as read (after the high-pass filter, if on) |
 | `OUT_NS` | WebRTC NS on MIC1 alone |
-| `OUT_BF` | The GSC beamformer on MIC1 + MIC2 |
-| `OUT_BF_NS` | The beamformer, then WebRTC NS: the intended voice path |
+| `OUT_BF` | The GSC beamformer on MIC1 + MIC2 (kept, not on the voice path) |
+| `OUT_BF_NS` | The beamformer, then WebRTC NS (kept, not on the voice path) |
+| `OUT_VOICE` | **The voice chain**: mic select, HPF, NS, makeup gain, limiter, mono |
+| `OUT_VOICE_B` | The same chain on `voice_mic_b`: to compare mic choices in one recording |
 
-The I2S reads are 40 ms (640 frames): five GSC frames (128 samples) and four NS frames (160, 10 ms), so
-no stage buffers. esp-sr's handles are made at the start of each recording that needs them and freed at
-its end (about 65 KB of internal RAM held only while recording; see `VoiceCapture::Pipeline`). Each
-recording logs, at INFO (raise the manager's log level to see it):
+### The first tuning round, and what it decided
+
+Two 8 s recordings on hardware, ES7210 gain 36 dB, MIC spacing 60 mm:
+
+| Output | Speech (95th-pct 20 ms RMS) | Noise floor | SNR | Energy < 300 Hz |
+|---|---|---|---|---|
+| MIC1 raw, HPF on | -38.8 dBFS | -66.7 | 27.9 dB | 36% |
+| NS(MIC1), HPF on | -39.1 | -78.8 | 39.7 dB | 33% |
+| BF, HPF on | -41.4 | -70.2 | 28.8 dB | 46% |
+| BF+NS, HPF on | -42.6 | -83.5 | 40.9 dB | 42% |
+
+- **The beamformer is off the voice path.** BF+NS has the best number (SNR 40.9 vs 39.7 dB) but it is
+  1 dB, and by ear NS(MIC1) was the clearest. GSC costs 13.4% of a core, makes speech quieter (-2.3 dB)
+  and adds low end (46% below 300 Hz against 36%): with two microphones 60 mm apart there is little
+  for it to steer. Its code stays, and `mode=bf` / `bf_ns` / `stages` still reach it.
+- **HPF at 100 Hz stays on** (0.54% of a core). Without it raw was 58% below 300 Hz and the floor 4 dB higher.
+- **Playback is too quiet**: speech peaks only about -24 dBFS even at 36 dB analogue gain (the ES7210's
+  ceiling is 37.5 dB). Hence digital makeup gain, below.
+- MIC2 reads 1-3 dB hotter than MIC1 (peak 3880 vs 2818, RMS 254 vs 228).
+- The capture task's stack used about 1.8 KB of 8 KB even with GSC: cut to 4 KB.
+- Heap: two NS instances took 77.6 KB internal; the lowest free internal heap since boot was 238 KB.
+- Outputs lag MIC1: NS 6 ms, BF 4 ms, BF+NS 10 ms (align before subtracting).
+
+### The voice chain
+
+`VoiceCapture::MODE_VOICE` (= `OUT_VOICE`), recorded with `VoiceCapture::voice_options()`:
 
 ```
-VoiceCapture: Recorded 80000 frames (5000 ms) at 30 dB, outputs 0x39, NS level 1, HPF 0 Hz, beam 90 deg, spacing 60 mm:
-VoiceCapture:   slot 0 MIC1       peak ..., RMS ... (-.. dBFS), mean ..      <- the inputs, before the HPF
-VoiceCapture:   out NS(BF)   peak ... (-.. dBFS), RMS ... (-.. dBFS)         <- each output
-VoiceCapture:   CPU: setup .. us; HPF .. us (..%), GSC .. us (..%), NS(MIC1) .. us (..%), NS(BF) .. us (..%); .. ms wall for 5000 ms of audio
-VoiceCapture:   Heap: took .. bytes internal, .. PSRAM; free now ..; lowest since boot ..; stack .. bytes unused
+mic (MIC1 | MIC2 | (MIC1+MIC2)/2) -> HPF 100 Hz -> WebRTC NS level 1 -> makeup (AGC) -> limiter -> mono int16
 ```
 
-The percentages are of one core, against the audio's length. "took" is this recording's esp-sr state
-and chunk buffers (not the recording itself, which is in PSRAM: 32 KB a second a channel).
+Defaults of `voice_options()`: ES7210 gain 36 dB, HPF 100 Hz, NS level 1, mic = **average**, AGC on
+(target -20 dBFS, max +24 dB, idle +12 dB), limiter ceiling -3 dBFS.
+
+- **Mic: the average.** The two microphones' uncorrelated self-noise adds in power, the speech from the
+  front adds in amplitude, so averaging is about 3 dB better in SNR than either alone, and it evens out
+  MIC2's 1-3 dB higher level. It costs 0.1% of a core. Whether it also sounds better than MIC1 or MIC2
+  alone is what `mode=cmp` is for; if an off-axis talker or a comb-filter colour is audible, `mic=2` or
+  `mic=1` is one knob.
+- **Makeup: an AGC with a gain ceiling, not a fixed gain.** A fixed gain that puts speech at -3 dBFS
+  at 1 m clips at 0.5 m and is quiet at 3 m; speech here peaks about -24 dBFS, so it needs about +20 dB,
+  and a limiter alone would be doing the levelling. esp-sr's own AGC was not used: it is the WebRTC AGC,
+  and the part that matters here is the gate, which only this code has (below).
+  - Per 10 ms frame (one NS frame) the AGC measures the RMS after NS. Frames above -60 dBFS are speech:
+    a level envelope follows them (up fast, down over about a second), and the gain heads for
+    `target - envelope`, clamped to 0..+24 dB: down fast (about 30 ms, a loud talker), up slowly (about
+    0.5 s, so it does not pump between words).
+  - Frames below the gate (NS leaves about -79 dBFS of room) never raise the gain; they let it drift
+    to the idle gain (12 dB), so the floor ends at about -67 dBFS, not -55, and a pause does not leave
+    +24 dB waiting for the next breath of noise.
+  - The target is the speech *envelope's* 10 ms RMS: speech has about 15 dB of crest (95th-pct RMS
+    -39 dBFS, peaks -24), so -20 dBFS puts peaks at about -5 dBFS.
+  - The gain is ramped across each 10 ms frame, and the state is carried from chunk to chunk, so it
+    works the same on the streaming path's 320-frame halves as on the test endpoint.
+- **Limiter**: a peak limiter after the gain, ceiling -3 dBFS. Per sample, the gain drops at once to
+  whatever keeps the sample at the ceiling (attack 1 sample, so it cannot overshoot), and recovers
+  over 80 ms. Nothing passes -3 dBFS, so no wraparound, no hard clip. With the AGC on, it should
+  rarely act (see the log).
+
+Each recording's log lists, per voice chain, the makeup gain actually applied (min / avg / max dB) and
+how much the limiter did (frames and samples limited):
+
+```
+VoiceCapture:   VOICE (mic avg, AGC, target -20 dBFS): makeup gain min 12.0 / avg 19.4 / max 24.0 dB; limiter on 3 of 800 frames (41 samples, 0.03%)
+```
 
 ### Fetching clips (TEMPORARY endpoint)
 
@@ -127,63 +178,51 @@ The panel must run a build with this code: `pio run -e custom_pcb -t upload --up
 
 | Knob | Values (default) | What it does |
 |---|---|---|
-| `mode` | `raw` (default), `ns`, `bf`, `bf_ns`, `all` | `raw`: 3 channels MIC1, MIC2, REF, as before. `ns`, `bf`, `bf_ns`: mono, that stage's output. `all`: **4 channels from one recording**: 1 MIC1, 2 NS(MIC1), 3 BF, 4 NS(BF) |
+| `mode` | `raw` (default), `ns`, `bf`, `bf_ns`, `stages`, `voice`, `cmp` (= `all`) | `raw`: 3 channels MIC1, MIC2, REF. `ns`, `bf`, `bf_ns`, `voice`: mono, that output. `cmp`: **4 channels from one recording**: 1 MIC1 raw, 2 NS(MIC1), 3 voice on MIC1, 4 voice on `mic=` (avg). `stages`: the old comparison: MIC1, NS(MIC1), BF, NS(BF). `voice` and `cmp` start from the production options (gain 36, hpf 100): other knobs override |
 | `secs` | 1-30 (5) | Length |
-| `gain` | 0-37 dB (30) | The ES7210's analogue PGA gain, every mic. 36 dB peaks about -12 dBFS at speaking distance |
-| `ns` | 0, 1, 2 (1) | WebRTC NS strength: mild, medium, aggressive. Applies to both NS outputs |
-| `hpf` | 0, 1, or 20-2000 Hz (0) | Software 2nd-order Butterworth high-pass on the inputs, before everything (raw included). `1` = 100 Hz. For hum, rumble, HVAC |
-| `angle` | 0-360 deg (90) | Beamformer steering, from the axis through MIC1 and MIC2. 90 = broadside, straight out of the panel: right for a talker in front |
-| `spacing` | 5-500 mm (60) | MIC1-MIC2 distance for the beamformer's geometry. 60 mm, measured on the board. At `angle=90` it matters little (broadside needs no steering delay) |
+| `gain` | 0-37 dB (30; 36 for voice, cmp) | The ES7210's analogue PGA gain, every mic |
+| `ns` | 0, 1, 2 (1) | WebRTC NS strength: mild, medium, aggressive |
+| `hpf` | 0, 1, or 20-2000 Hz (0; 100 for voice, cmp) | Software 2nd-order Butterworth high-pass on the inputs. `1` = 100 Hz |
+| `mic` | `1`, `2`, `avg` (avg) | `voice`: the chain's input. `cmp`: channel 4's input (channel 3 is always MIC1) |
+| `makeup` | -20 to 40 dB (12) | With `agc=0`, the fixed makeup gain; with the AGC, the gain it starts at and settles to in silence |
+| `agc` | 0, 1 (1) | AGC on, or a fixed `makeup` gain |
+| `target` | -40 to -3 dBFS (-20) | The AGC's target speech level (10 ms RMS of the envelope) |
+| `maxgain` | 0-40 dB (24) | The AGC's gain ceiling |
+| `angle`, `spacing` | 0-360 deg (90), 5-500 mm (60) | The beamformer (`bf`, `bf_ns`, `stages` only) |
 | `ch` | `all`, `1`, `2`, `ref` | `mode=raw` only: one input alone, mono |
+
+### Next listening round
 
 ```
 P=<ip>
-# The comparison: one recording, four stages, 4-channel WAV. Speak from 1-2 m, with some background noise.
-curl -o all.wav "http://$P/rec/test.wav?mode=all&secs=8"
-# Split it into one file per stage to listen to (sox):
-for c in 1 2 3 4; do sox all.wav ch$c.wav remix $c; done   # 1 MIC1, 2 NS(MIC1), 3 BF, 4 NS(BF)
-# Or with ffmpeg:
-ffmpeg -i all.wav -filter_complex "channelsplit=channel_layout=4.0[a][b][c][d]" -map "[a]" mic1.wav -map "[b]" ns.wav -map "[c]" bf.wav -map "[d]" bf_ns.wav
+# 1. Mic choice and loudness on identical input. Speak from 1-2 m, with some background noise.
+#    One recording, 4 channels: 1 MIC1 raw, 2 NS(MIC1), 3 voice on MIC1, 4 voice on the average.
+curl -o cmp.wav "http://$P/rec/test.wav?mode=cmp&secs=10"
+for c in 1 2 3 4; do sox cmp.wav cmp$c.wav remix $c; done
+# Compare 1 vs 2 (NS alone), 2 vs 3 (makeup + limiter: louder, same clarity?), 3 vs 4 (MIC1 vs the average).
+# The same, against MIC2 in channel 4:
+curl -o cmp-mic2.wav "http://$P/rec/test.wav?mode=cmp&secs=10&mic=2"
 
-# Sweeps, each on the comparison:
-curl -o all-ns0.wav "http://$P/rec/test.wav?mode=all&secs=8&ns=0"
-curl -o all-ns2.wav "http://$P/rec/test.wav?mode=all&secs=8&ns=2"
-curl -o all-hpf.wav "http://$P/rec/test.wav?mode=all&secs=8&hpf=1"
-curl -o all-g36.wav "http://$P/rec/test.wav?mode=all&secs=8&gain=36"
-# The voice path alone (what phase 2 will send), and the raw inputs:
-curl -o bf_ns.wav "http://$P/rec/test.wav?mode=bf_ns&secs=8"
-curl -o raw.wav "http://$P/rec/test.wav?mode=raw&secs=8"
+# 2. Loudness: AGC target, fixed gain, and the soft/loud/far talker (repeat the same speech):
+curl -o v-t16.wav "http://$P/rec/test.wav?mode=voice&secs=10&target=-16"
+curl -o v-t24.wav "http://$P/rec/test.wav?mode=voice&secs=10&target=-24"
+curl -o v-fixed20.wav "http://$P/rec/test.wav?mode=voice&secs=10&agc=0&makeup=20"
+curl -o v-max30.wav "http://$P/rec/test.wav?mode=voice&secs=10&maxgain=30"
+
+# 3. The production chain as the recorder will take it, and the old beamformer for reference:
+curl -o voice.wav "http://$P/rec/test.wav?mode=voice&secs=10"
+curl -o stages.wav "http://$P/rec/test.wav?mode=stages&secs=10&gain=36&hpf=1"
 ```
 
-Different recordings are different audio; only `mode=all` compares stages on the same input. Across
-knobs, repeat the same speech and noise. GSC and NS may delay their output by a few milliseconds
-(esp-sr's own latency, not measured yet); align the channels before subtracting one from another. A
-4-channel WAV may play as surround or only partly in some players: split it first. The INFO log lines
-need the manager's log level at Info or Debug (or a first boot), read on the USB-UART port.
+What to listen and look for: is the voice loud enough on the speaker at about -5 dBFS peaks; is the
+room noise between words audible after the makeup (the AGC's idle gain, `makeup=`, lower it if so);
+pumping or breathing when you pause (AGC release); crackle or flattening on loud syllables (the log's
+limiter percentage; above a few percent, lower `target` or `maxgain`). In the log, per voice chain:
+makeup gain min/avg/max, limiter frames, and CPU. A 4-channel WAV may play as surround or only
+partly in some players: split it first. The INFO log lines need the manager's log level at Info or
+Debug, read on the USB-UART port.
 
-### The tuning pass
-
-What to decide, in order, and how to tell:
-
-1. **Gain.** Peaks around -6 to -12 dBFS on MIC1 when speaking at the expected distance, never 0 dBFS
-   (`peak 32767` in the log is clipping). Too high clips loud talkers; too low loses the quiet ones and
-   raises the noise floor relative to speech after NS.
-2. **Does the beamformer help?** Compare channels 1 and 3 (MIC1 vs BF), and 2 and 4 (NS vs BF+NS), of
-   one `mode=all` recording, with a noise source off to one side (a radio, a tap). With only two mics
-   60 mm apart (correlation 0.88), the gain is small and mostly above 1-2 kHz; if BF+NS is not
-   clearly better than NS alone, or sounds hollow or phasey, the plan can drop to NS on MIC1 (or on
-   (MIC1+MIC2)/2) and save GSC's CPU and PSRAM.
-3. **NS level.** `ns=0`, `1`, `2` on `mode=all`. Listen to NS(BF) for musical noise (warbling), clipped
-   word starts and ends, and pumping. Pick the strongest level that keeps speech natural.
-4. **HPF.** `hpf=1` (100 Hz), or 80-150. Keep it if the room has hum or rumble and the voice does not get
-   thin. The ES7210 has its own DC filter, so it is off by default.
-5. **Spacing and angle.** Only if the beamformer is kept: the spacing is measured (60 mm), so leave `spacing` alone and
-   leave `angle=90` unless talkers are off to one side.
-6. **Cost.** Read the `CPU:` and `Heap:` lines: GSC and NS should each be a few percent of a core; note
-   the internal RAM "took" and the lowest free internal RAM, and report them.
-
-Whatever is chosen becomes `Options`' defaults (`lib/VoiceCapture/VoiceCapture.hpp`), and phase 2's
-streaming path records `MODE_BF_NS` (or the mode chosen) with them.
+Different recordings are different audio; only `mode=cmp` and `mode=stages` compare on the same input.
 
 ## Build and flash
 

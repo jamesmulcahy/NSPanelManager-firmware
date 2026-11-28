@@ -596,7 +596,9 @@ static void put_le(uint8_t *at, uint32_t value, int bytes) {
   }
 }
 
-// GET /rec/test.wav?mode=raw|ns|bf|bf_ns|all&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=60&ch=all|1|2|ref
+// GET /rec/test.wav?mode=raw|ns|bf|bf_ns|stages|voice|cmp&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=60&ch=all|1|2|ref
+//                  &mic=1|2|avg&makeup=12&agc=1&target=-20&maxgain=24
+// voice and cmp (all) default to the production settings (VoiceCapture::voice_options()): gain 36, hpf 100.
 esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   static constexpr int MAX_SECONDS = 30;
   static constexpr size_t WAV_HEADER = 44;
@@ -608,18 +610,30 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   const char *mode = "raw";
   int channel = -1; // raw only: -1 all three, or one of them
   bool bad = false;
+  VoiceCapture::VoiceMic mic = VoiceCapture::VOICE_AVG;
+  bool mic_given = false;
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
     if (httpd_query_key_value(query, "mode", value, sizeof(value)) == ESP_OK) {
-      // Each maps to its Output bits; "all" is the four stages of the same audio, 4 channels.
+      // Each maps to its Output bits. "cmp" (and "all") is one recording of 4 channels: MIC1, NS(MIC1), the voice
+      // chain on MIC1, the voice chain on mic= (avg). "stages" is the old four: MIC1, NS(MIC1), BF, NS(BF).
+      // The voice modes start from the production options; the knobs below override them.
       static constexpr struct {
         const char *name;
         uint8_t outputs;
-      } MODES[] = {{"raw", VoiceCapture::MODE_RAW}, {"ns", VoiceCapture::MODE_NS}, {"bf", VoiceCapture::MODE_BF}, {"bf_ns", VoiceCapture::MODE_BF_NS},
-                   {"all", VoiceCapture::MODE_COMPARE}};
+        bool production;
+      } MODES[] = {{"raw", VoiceCapture::MODE_RAW, false},
+                   {"ns", VoiceCapture::MODE_NS, false},
+                   {"bf", VoiceCapture::MODE_BF, false},
+                   {"bf_ns", VoiceCapture::MODE_BF_NS, false},
+                   {"stages", VoiceCapture::MODE_STAGES, false},
+                   {"voice", VoiceCapture::MODE_VOICE, true},
+                   {"cmp", VoiceCapture::MODE_COMPARE, true},
+                   {"all", VoiceCapture::MODE_COMPARE, true}};
       bool known = false;
       for (const auto &entry : MODES) {
         if (strcmp(value, entry.name) == 0) {
           mode = entry.name;
+          options = entry.production ? VoiceCapture::voice_options() : VoiceCapture::Options();
           options.outputs = entry.outputs;
           known = true;
         }
@@ -652,6 +666,29 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
       options.mic_spacing_mm = atof(value);
       bad |= options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f;
     }
+    if (httpd_query_key_value(query, "mic", value, sizeof(value)) == ESP_OK) {
+      mic = strcmp(value, "1") == 0     ? VoiceCapture::VOICE_MIC1
+            : strcmp(value, "2") == 0   ? VoiceCapture::VOICE_MIC2
+            : strcmp(value, "avg") == 0 ? VoiceCapture::VOICE_AVG
+                                        : VoiceCapture::VoiceMic(255);
+      mic_given = true;
+      bad |= mic > VoiceCapture::VOICE_AVG;
+    }
+    if (httpd_query_key_value(query, "makeup", value, sizeof(value)) == ESP_OK) {
+      options.makeup_db = atof(value);
+      bad |= options.makeup_db < -20.0f || options.makeup_db > 40.0f;
+    }
+    if (httpd_query_key_value(query, "agc", value, sizeof(value)) == ESP_OK) {
+      options.agc = atoi(value) != 0;
+    }
+    if (httpd_query_key_value(query, "target", value, sizeof(value)) == ESP_OK) {
+      options.agc_target_dbfs = atof(value);
+      bad |= options.agc_target_dbfs < -40.0f || options.agc_target_dbfs > -3.0f;
+    }
+    if (httpd_query_key_value(query, "maxgain", value, sizeof(value)) == ESP_OK) {
+      options.agc_max_gain_db = atof(value);
+      bad |= options.agc_max_gain_db < 0.0f || options.agc_max_gain_db > 40.0f;
+    }
     if (httpd_query_key_value(query, "ch", value, sizeof(value)) == ESP_OK) {
       channel = strcmp(value, "1") == 0     ? VoiceCapture::OUT_MIC1
                 : strcmp(value, "2") == 0   ? VoiceCapture::OUT_MIC2
@@ -664,12 +701,17 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   if (bad) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_sendstr(req, "mode raw, ns, bf, bf_ns or all; secs 1-30; gain 0-37 (dB); ns 0-2; hpf 0, 1 or 20-2000 (Hz); angle 0-360 (deg); "
-                                   "spacing 5-500 (mm); ch all, 1, 2 or ref (mode raw only).\n");
+    return httpd_resp_sendstr(req, "mode raw, ns, bf, bf_ns, stages, voice or cmp; secs 1-30; gain 0-37 (dB); ns 0-2; hpf 0, 1 or 20-2000 (Hz); "
+                                   "angle 0-360 (deg); spacing 5-500 (mm); ch all, 1, 2 or ref (mode raw only); mic 1, 2 or avg (voice, cmp); "
+                                   "makeup -20 to 40 (dB); agc 0 or 1; target -40 to -3 (dBFS); maxgain 0-40 (dB).\n");
   }
   if (channel > 0) {
     options.outputs = channel;
   }
+  // voice: the chain on mic= (avg). cmp: the chain on MIC1 against the chain on mic= (avg), the same audio.
+  options.voice_mic = options.outputs == VoiceCapture::MODE_COMPARE ? VoiceCapture::VOICE_MIC1 : mic;
+  options.voice_mic_b = mic;
+  (void)mic_given;
 
   // The recording, with room for the WAV header in front.
   const size_t frames = (size_t)seconds * VoiceCapture::SAMPLE_RATE;
