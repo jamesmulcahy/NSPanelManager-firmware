@@ -29,17 +29,18 @@
 class VoiceRecorder {
 public:
   static constexpr uint32_t SAMPLE_RATE = 16000; // Must equal VoiceCapture::SAMPLE_RATE (static_assert in the .cpp)
-  static constexpr uint32_t MAX_SECONDS = 30;
-  static constexpr size_t MAX_FRAMES = MAX_SECONDS * SAMPLE_RATE; // 480 000 samples, 960 000 bytes
+  static constexpr uint32_t MAX_SECONDS = 15;
+  static constexpr size_t MAX_FRAMES = MAX_SECONDS * SAMPLE_RATE; // 240 000 samples, 480 000 bytes
   // Shorter than this at stop() is an accidental tap: discarded, ESP_ERR_INVALID_SIZE.
   static constexpr uint32_t MIN_MS = 300;
   // Recordings kept: the one HA may still be downloading, and the one being made.
   static constexpr size_t SLOTS = 2;
   static constexpr size_t WAV_HEADER_BYTES = 44;
-  // Each slot's PSRAM buffer: the header, then the samples. 960 044 bytes; 1.92 MB for both.
+  // Each slot's PSRAM buffer: the header, then the samples. 480 044 bytes; 0.96 MB for both.
   static constexpr size_t SLOT_BYTES = WAV_HEADER_BYTES + MAX_FRAMES * sizeof(int16_t);
-  // How long a finished recording's URL works, from stop().
-  static constexpr uint32_t TOKEN_TTL_S = 300;
+  // How long a finished recording's URL works, from stop(). Checked when a request starts: a download
+  // already under way at expiry finishes.
+  static constexpr uint32_t TOKEN_TTL_S = 60;
   // 16 bytes from esp_fill_random(), as 32 lowercase hex digits.
   static constexpr size_t TOKEN_BYTES = 16;
   static constexpr size_t TOKEN_CHARS = TOKEN_BYTES * 2;
@@ -117,6 +118,15 @@ public:
    */
   static esp_err_t cancel();
 
+  /**
+   * Be told how each recording ended, for the UI's toast: `sent` true once the MQTT announcement was
+   * published, false if stop() failed in the auto paths (limit, stop_after_ms) or the publish failed or
+   * MQTT was down. Called on the recorder's task (voice_rec), never the LVGL task: the listener must hand
+   * over (e.g. lv_async_call) rather than touch LVGL. One listener; nullptr removes it. Errors returned
+   * synchronously by stop()/stop_and_send() to the caller are not reported here again.
+   */
+  static void set_result_listener(void (*listener)(bool sent, esp_err_t err, void *context), void *context);
+
   /** The current state. Any task. */
   static State state() { return _state.load(std::memory_order_acquire); }
 
@@ -140,7 +150,7 @@ public:
 
   /**
    * The MQTT test trigger, from UpdateManager's nspanel/<mac>/command handler (mqtt_dispatch task), for
-   * {"command": "voice_record", "action": "start"|"stop"|"cancel", "seconds": 1-30}. "start" with
+   * {"command": "voice_record", "action": "start"|"stop"|"cancel", "seconds": 1-15}. "start" with
    * "seconds" records that long and sends; "stop" is stop_and_send(). Logs the outcome. Temporary: the UI
    * replaces it (phase 3).
    */

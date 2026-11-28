@@ -61,12 +61,14 @@ output must therefore be **mono** for the stream path; `record()` may keep its 3
 
 ## 3. Buffers, ownership and locking
 
-- **Allocation:** on the first `start()`, `SLOTS = 2` buffers of `SLOT_BYTES` (960 044 B) each with
-  `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`: **1.92 MB of the board's 32 MB PSRAM**, never freed. Never
+- **Allocation:** on the first `start()`, `SLOTS = 2` buffers of `SLOT_BYTES` (480 044 B) each with
+  `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`: **0.96 MB of the board's 32 MB PSRAM**, never freed. Never
   freeing is what makes use-after-free impossible; the rules below only prevent a buffer being
   *overwritten* while it is being sent.
-- **Max length 30 s** (960 KB per slot): an announcement, not a dictation; 30 s keeps two slots under
-  2 MB and a full download under ~1 s on Wi-Fi. Longer is a constant change (`MAX_SECONDS`), ~32 KB/s.
+- **Max length 15 s** (the user's choice; 480 KB per slot): an announcement, not a dictation; two slots
+  stay under 1 MB and a full download well under a second on Wi-Fi. Changing it is one constant
+  (`MAX_SECONDS`), ~32 KB per second per slot. At the limit the recording **sends itself** (the worker
+  runs `stop()` + `announce()`, as if the user let go).
 - **Slot:**
 
   | Field | Written by | Under |
@@ -101,14 +103,16 @@ output must therefore be **mono** for the stream path; `record()` may keep its 3
 |---|---|
 | Format | 16 bytes from `esp_fill_random()` (hardware RNG; true random with Wi-Fi up), 32 lowercase hex chars |
 | URL | `http://<WiFiManager::ip_string()>/rec/<token>.wav` (port 80, `WebManager::HTTP_PORT`) |
-| Lifetime | `TOKEN_TTL_S = 300` s from `stop()`, or until its slot is reused, whichever is first |
+| Lifetime | `TOKEN_TTL_S = 60` s from `stop()`, or until its slot is reused, whichever is first. Checked when a request arrives: a download under way at expiry finishes |
 | Use | **Multi-use** within its lifetime: HA, Sonos and Cast fetch the URL themselves, often more than once (a HEAD, then ranged GETs, and one fetch per speaker) |
 | Unknown token / bad form | `404 Not Found` |
-| Known but expired | `410 Gone` (the slot still holds it, past `expires_us`); after the slot is reused it's 404 |
+| Known but expired | `410 Gone`: the slot still holds the token, `now >= expires_us` (more than 60 s after `stop()`). Once the slot is reused for a newer recording the token is gone: 404 |
 | Comparison | constant-time over the 32 chars |
 
 Not single-use because it would break multi-speaker groups and players that probe first; the 128-bit
-token on the LAN plus the 5 min expiry is the protection.
+token on the LAN plus the 60 s expiry is the protection. 60 s is ample for HA to react to the MQTT
+message, but it means a broadcast that waits behind others (the automation is `mode: queued`) for over
+a minute gets a 410; `max: 5` and 15 s recordings keep that unlikely.
 
 ## 5. HTTP: `GET|HEAD /rec/<token>.wav`
 
@@ -128,7 +132,7 @@ token on the LAN plus the 5 min expiry is the protection.
   HEAD: `httpd_resp_send` always writes `Content-Length: <buf_len>` itself (so 0 for an empty body, and
   a second header can't be added), so HEAD writes its status line and headers by hand with the raw
   `httpd_send()`, with the real length and no body.
-- The web server has one task, so a 960 KB send holds other requests for ~1 s. Accepted.
+- The web server has one task, so a 480 KB send holds other requests for ~0.5 s. Accepted.
 
 ## 6. MQTT
 
@@ -145,7 +149,7 @@ broadcast on restart). **QoS 1**: phase 2b adds an `int qos = 0` parameter to `M
   "bytes": 134444,
   "format": "wav",
   "sample_rate": 16000,
-  "expires_in": 300,
+  "expires_in": 60,
   "sequence": 7,
   "nspanel_id": 1,
   "name": "Kitchen Panel",
@@ -164,8 +168,8 @@ messages.
 
 | Payload | Effect |
 |---|---|
-| `{"command":"voice_record","action":"start","seconds":5}` | record 5 s (1–30), then stop and announce |
-| `{"command":"voice_record","action":"start"}` | record until `stop`/`cancel` (or the 30 s limit) |
+| `{"command":"voice_record","action":"start","seconds":5}` | record 5 s (1–15), then stop and announce |
+| `{"command":"voice_record","action":"start"}` | record until `stop`/`cancel` (or the 15 s limit, which sends) |
 | `{"command":"voice_record","action":"stop"}` | `stop_and_send()` |
 | `{"command":"voice_record","action":"cancel"}` | `cancel()` |
 
@@ -216,9 +220,22 @@ on port 80 (same LAN/VLAN or a firewall rule). Phase 4 may route this through MQ
 | `nspanel_voice_http_bytes_total` | bytes sent by serve() |
 | `nspanel_voice_sink_overruns_total` | sink calls dropped because the slot was full or no slot was RECORDING |
 
-## 9. Open questions for the user
+## 9. Phase 3a UI decisions (for 3b)
 
-1. **Max length**: 30 s here. Longer is cheap (32 KB per second per slot), but is anything over 30 s wanted?
-2. **Repeat fetches**: the URL is multi-use for 5 minutes. OK, or should it be shorter / single-use (breaks speaker groups)?
-3. **At the limit**: auto-send (this design) or stop and wait for the user to release/cancel?
-4. **Retain**: not retained, so a recording made while HA is restarting is lost. Acceptable?
+| Decision | Detail |
+|---|---|
+| Where | A hard-coded mic button on the home page (`HomeView`), beside the ceiling/table tiles and the sliders. Not configurable, no layout refactor |
+| Which boards | Shown only on boards with microphones (`BOARD_CUSTOM` today); absent elsewhere |
+| Doesn't fit | If the layout has no room for it, the panel logs a warning (`ESP_LOGW`) and shows no button |
+| Gesture | Press = `start()`, release = `stop_and_send()`. **No slide-to-cancel.** `cancel()` stays for the test command and for a hold the UI loses (page left, screen off) |
+| While holding | A level meter only, from `level()` polled by an LVGL timer (~50 ms) |
+| After release | A toast: "Failed" at once if `stop_and_send()` returns an error (including too short, under `MIN_MS = 300` ms); otherwise "Sent" or "Failed" when the result listener (`set_result_listener()`, called on `voice_rec` after the publish) reports, handed to LVGL with `lv_async_call` |
+| At 15 s | Sends automatically (`auto_send_at_limit`); the UI shows the same toast |
+| Targets | Fixed per panel: which speakers play it is decided on the HA side now and by the phase 4 panel config later; no picker on the panel |
+
+## 10. Settled with the user
+
+1. Max length **15 s**.
+2. At the limit it **sends automatically**.
+3. The URL may be fetched **any number of times** and **expires 60 s** after `stop()`.
+4. The MQTT message is **not retained** (a recording made while HA restarts is lost).
