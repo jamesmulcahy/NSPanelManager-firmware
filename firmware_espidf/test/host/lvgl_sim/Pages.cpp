@@ -197,6 +197,44 @@ static void build_home_no_kelvin(lv_obj_t *root, bool landscape) { build_home_wi
 static void build_home_ceiling_only(lv_obj_t *root, bool landscape) { build_home_with(root, landscape, true, false, true); }
 static void build_home_table_only(lv_obj_t *root, bool landscape) { build_home_with(root, landscape, false, true, true); }
 static void build_home_no_lights(lv_obj_t *root, bool landscape) { build_home_with(root, landscape, false, false, false); }
+// The hold-to-talk button (HomeState::has_mic): idle, recording with the meter at 60%, and the toasts.
+enum class MicCase { IDLE, RECORDING, SENT, FAILED, HINT };
+static void build_home_mic(lv_obj_t *root, bool landscape, MicCase what, bool lights) {
+  HomeView::build(root, landscape);
+  fill_home();
+  home.has_mic = true;
+  if (!lights) {
+    home.has_ceiling = home.has_table = home.has_color_temperature = false;
+    home.ceiling = home.brightness = 0;
+  }
+  HomeView::show(home);
+  switch (what) {
+  case MicCase::IDLE:
+    break;
+  case MicCase::RECORDING:
+    HomeView::show_mic_recording(true);
+    HomeView::show_mic_level(60);
+    break;
+  case MicCase::SENT:
+    HomeView::show_toast("Sent", HomeView::Toast::OK);
+    break;
+  case MicCase::FAILED:
+    HomeView::show_toast("Failed", HomeView::Toast::ERROR);
+    break;
+  case MicCase::HINT:
+    HomeView::show_toast("Hold to talk", HomeView::Toast::HINT);
+    break;
+  }
+}
+static void build_home_mic_idle(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::IDLE, true); }
+static void build_home_mic_recording(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::RECORDING, true); }
+static void build_home_mic_sent(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::SENT, true); }
+static void build_home_mic_failed(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::FAILED, true); }
+static void build_home_mic_hint(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::HINT, true); }
+static void build_home_mic_no_lights(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::IDLE, false); }
+static void build_home_mic_no_lights_recording(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::RECORDING, false); }
+static void build_home_mic_no_lights_sent(lv_obj_t *root, bool landscape) { build_home_mic(root, landscape, MicCase::SENT, false); }
+
 // Another room, with every control.
 static void update_home_all_controls() {
   fill_home();
@@ -763,6 +801,14 @@ const std::vector<PageCase> &page_cases() {
       {"home-ceiling-only", build_home_ceiling_only, "to a room with every control", update_home_all_controls},
       {"home-table-only", build_home_table_only, nullptr, nullptr},
       {"home-no-lights", build_home_no_lights, "to a room with every control", update_home_all_controls},
+      {"home-mic-idle", build_home_mic_idle, nullptr, nullptr},
+      {"home-mic-recording", build_home_mic_recording, nullptr, nullptr},
+      {"home-mic-sent", build_home_mic_sent, nullptr, nullptr},
+      {"home-mic-failed", build_home_mic_failed, nullptr, nullptr},
+      {"home-mic-hint", build_home_mic_hint, nullptr, nullptr},
+      {"home-mic-no-lights", build_home_mic_no_lights, nullptr, nullptr},
+      {"home-mic-no-lights-recording", build_home_mic_no_lights_recording, nullptr, nullptr},
+      {"home-mic-no-lights-sent", build_home_mic_no_lights_sent, nullptr, nullptr},
       {"entities-4", build_entities4, "toggle a light", update_toggle_slot},
       {"entities-8", build_entities8, "toggle a light", update_toggle_slot},
       {"scenes-12", build_scenes, "scene saved", update_scenes},
