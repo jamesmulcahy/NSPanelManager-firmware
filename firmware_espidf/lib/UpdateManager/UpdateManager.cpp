@@ -255,11 +255,7 @@ void UpdateManager::update_firmware(void *param) {
   firmware_md5_string.append(":");
   firmware_md5_string.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
   firmware_md5_string.append("/checksum_firmware?model=");
-#if defined(BOARD_SONOFF)
-  firmware_md5_string.append("sonoff");
-#elif defined(BOARD_CUSTOM)
-  firmware_md5_string.append("custom");
-#endif
+  firmware_md5_string.append(NSPM_ConfigManager::BOARD_MODEL);
 
   std::vector<uint8_t> data;
   // Always fetch the checksum, also for forced updates, so that it can be stored as the pending checksum for the firmware about to be flashed.
@@ -339,11 +335,7 @@ void UpdateManager::update_internal_firmware_checksum() {
     firmware_md5_string.append(":");
     firmware_md5_string.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
     firmware_md5_string.append("/checksum_firmware?model=");
-#if defined(BOARD_SONOFF)
-    firmware_md5_string.append("sonoff");
-#elif defined(BOARD_CUSTOM)
-    firmware_md5_string.append("custom");
-#endif
+    firmware_md5_string.append(NSPM_ConfigManager::BOARD_MODEL);
 
     std::vector<uint8_t> data;
     if (UpdateManager::_download_data(&data, firmware_md5_string.c_str(), -1, -1) != ESP_OK) {
@@ -760,11 +752,7 @@ esp_err_t UpdateManager::_update_firmware_ota() {
   firmware_download_url.append(":");
   firmware_download_url.append(std::to_string(NSPM_ConfigManager::get_manager_port()));
   firmware_download_url.append("/download_firmware?model=");
-#if defined(BOARD_SONOFF)
-  firmware_download_url.append("sonoff");
-#elif defined(BOARD_CUSTOM)
-  firmware_download_url.append("custom");
-#endif
+  firmware_download_url.append(NSPM_ConfigManager::BOARD_MODEL);
 
   // Send event that we actually started with firmware update
   esp_event_post(UPDATEMANAGER_EVENT, updatemanager_event_t::FIRMWARE_UPDATE_STARTED, NULL, 0, pdMS_TO_TICKS(500));

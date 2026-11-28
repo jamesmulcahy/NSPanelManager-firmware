@@ -29,7 +29,7 @@ function compile_for_board_type() {
   BOARD_TYPE="$1"
   if [[ "$BOARD_TYPE" == "sonoff" ]]; then
     PLATFORMIO_ENV_NAME="original_sonoff"
-  elif [[ "$BOARD_TYPE" == "custom" ]]; then
+  elif [[ "$BOARD_TYPE" == "waveshare_p4" ]]; then
     PLATFORMIO_ENV_NAME="custom_pcb"
   else
     echo "Invalid board type."
@@ -65,4 +65,4 @@ function compile_for_board_type() {
 }
 
 compile_for_board_type "sonoff" # Compile and upload sonoff PCB firmware
-compile_for_board_type "custom" # Compile and upload custom PCB firmware
+compile_for_board_type "waveshare_p4" # Compile and upload custom PCB (Waveshare ESP32-P4) firmware

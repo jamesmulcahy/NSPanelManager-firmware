@@ -9,7 +9,14 @@ Docs for both variants: [docs.waveshare.com/ESP32-P4-WIFI6-Touch-LCD-4B](https:/
 (the `waveshare.com/wiki/...-4B` URL redirects to the 86-Panel page). Examples and schematics, the
 bottom board's included (`hardware/schematic/`):
 [waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4B](https://github.com/waveshareteam/ESP32-P4-WIFI6-Touch-LCD-4B).
-The manager still knows it as model `custom`. The earlier ESP32-S3 custom PCB is no longer built.
+
+The manager knows it as model `waveshare_p4` (`NSPM_ConfigManager::BOARD_MODEL`), which selects its firmware slot:
+`register_request` `model`, `/checksum_firmware?model=` and `/download_firmware?model=` all use it. Model `custom` was the
+earlier ESP32-S3 custom PCB, which is no longer built. What the board has is sent as `register_request` `features`, not
+derived from the model: this board sends `lvgl_look`, `no_hmi`, `no_tft`, `no_temperature`, `no_buttons` and `no_relays`.
+It sends `no_relays` because the firmware does not drive the bottom board's relays; drop it once it does.
+A manager older than the one that knows `waveshare_p4` logs a warning and treats the panel as `sonoff` (so it serves it
+the Sonoff firmware slot, which this board cannot run); update the manager first.
 
 | | |
 |---|---|
