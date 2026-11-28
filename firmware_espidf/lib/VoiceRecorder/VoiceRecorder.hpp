@@ -1,11 +1,12 @@
 #pragma once
 #if defined(BOARD_CUSTOM)
-// Phase 2a: declarations only. Phase 2b writes VoiceRecorder.cpp from these and docs/VOICE_RECORDER.md,
-// which has the reasons behind the numbers here. Nothing includes this header yet.
+// Implemented in VoiceRecorder.cpp (phase 2b); docs/VOICE_RECORDER.md has the reasons behind the numbers here.
+// The pure parts (token, Range, WAV header, slot choice) are in VoiceRecorderPure.hpp, host-tested.
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <esp_err.h>
+#include <VoiceCapture.hpp>
 #include <esp_http_server.h>
 
 /**
@@ -44,8 +45,6 @@ public:
   // 16 bytes from esp_fill_random(), as 32 lowercase hex digits.
   static constexpr size_t TOKEN_BYTES = 16;
   static constexpr size_t TOKEN_CHARS = TOKEN_BYTES * 2;
-  // The ES7210 gain the recorder asks VoiceCapture for.
-  static constexpr int GAIN_DB = 30;
 
   enum class State : uint8_t {
     IDLE,      // Nothing being recorded (finished recordings may still be served).
@@ -156,7 +155,20 @@ public:
    */
   static void handle_command(const char *action, int seconds);
 
+  /**
+   * How the recorder has VoiceCapture process the microphones: the ONE place that choice is made. Today WebRTC
+   * NS on MIC1 with a 100 Hz high-pass and 36 dB of ES7210 gain. To use the tuning pass's production mode,
+   * change `options.outputs` there to `VoiceCapture::MODE_VOICE`.
+   */
+  static VoiceCapture::Options capture_options();
+
 private:
+  static void _sink(const int16_t *mono, size_t frames, void *context); // Capture task
+  static esp_err_t _ensure_allocated();                                 // _api_mutex held
+  static void _worker(void *param);                                     // voice_rec task
+  static esp_err_t _stop_locked(Recording *out);                        // _api_mutex held
+  static bool _auto_stop(uint32_t generation, Recording *out);          // Worker: the limit or stop_after_ms
+
   static inline std::atomic<State> _state = State::IDLE;
   static inline std::atomic<uint8_t> _level = 0;
   static inline std::atomic<uint32_t> _frames = 0;
