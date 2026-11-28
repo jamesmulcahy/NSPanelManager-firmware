@@ -29,6 +29,9 @@ struct HomeState {
   bool has_ceiling = true;          // Ceiling lights: the Ceiling tile
   bool has_table = true;            // Table lights: the Table tile
   bool has_color_temperature = true; // A light that can change colour temperature: its slider
+  // The board has microphones: show the hold-to-talk button (custom PCB). The host sets it, as HomeView
+  // knows nothing of boards; false everywhere else, where the button is never drawn.
+  bool has_mic = false;
 };
 
 class HomeView {
@@ -53,13 +56,33 @@ public:
     // A press on a light tile that ended as a swipe, or slid off: neither a tap nor a hold.
     CEILING_CANCEL,
     TABLE_CANCEL,
+    // The hold-to-talk button (HomeState::has_mic): pressed, released, or the press became a swipe.
+    MIC_DOWN,
+    MIC_UP,
+    MIC_CANCEL,
   };
+  // What a toast says it with: a tick, a cross, or a hint.
+  enum class Toast { OK, ERROR, HINT };
   static inline void (*on_action)(Action action, int32_t value) = nullptr;
   // Whether the press being released was a swipe (the host detects them): a tile then cancels.
   static inline bool (*is_swipe)() = nullptr;
 
   static void build(lv_obj_t *parent, bool landscape);
   static void show(const HomeState &state);
+
+  // The mic's input level, 0-100, polled while recording (show_mic_recording) about every 40 ms. GUI task.
+  static inline int (*mic_level)() = nullptr;
+  // A line for the host's log (the button was left out for want of room). GUI task.
+  static inline void (*log_warning)(const char *message) = nullptr;
+  /**
+   * GUI task: the button in its recording state (the meter running, polling mic_level) or idle again.
+   * No-ops unless the page is built with the button shown.
+   */
+  static void show_mic_recording(bool recording);
+  // GUI task: the meter, 0-100, without waiting for the poll (the simulator).
+  static void show_mic_level(int level);
+  // GUI task: a message over the page, above the button, for about two seconds. No-op without the button.
+  static void show_toast(const std::string &text, Toast kind);
 
 private:
   static inline lv_obj_t *_time = NULL;
@@ -88,6 +111,23 @@ private:
   static inline std::string _options;
   static inline std::string _room_text;
 
+  // Hold to talk: a bar between the body and the footer, with the meter drawn behind its icon and text.
+  static inline lv_obj_t *_body = NULL;
+  static inline lv_obj_t *_mic = NULL;
+  static inline lv_obj_t *_mic_icon = NULL;
+  static inline lv_obj_t *_mic_label = NULL;
+  static inline lv_obj_t *_mic_meter = NULL;
+  static inline lv_timer_t *_mic_timer = NULL;
+  static inline int _mic_shown = 0;    // The meter as drawn: the level, decaying
+  static inline bool _mic_fits = true; // Checked once, when the button first shows
+  static inline bool _mic_checked = false;
+  static inline lv_obj_t *_toast = NULL;
+  static inline lv_obj_t *_toast_icon = NULL;
+  static inline lv_obj_t *_toast_text = NULL;
+  static inline lv_timer_t *_toast_timer = NULL;
+
   static void _room_event(lv_event_t *event);
+  static void _mic_deleted(lv_event_t *event);
+  static void _mic_poll(lv_timer_t *timer);
   static void _show_controls(const HomeState &state);
 };
