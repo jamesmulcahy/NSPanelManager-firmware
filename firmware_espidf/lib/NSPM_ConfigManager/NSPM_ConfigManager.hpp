@@ -20,6 +20,16 @@
 class NSPM_ConfigManager {
 public:
   /**
+   * The model id the manager knows this board by. It selects the manager's firmware slot (register_request "model",
+   * /checksum_firmware?model=, /download_firmware?model=) and nothing else; what the board has is sent as features.
+   */
+#if defined(BOARD_SONOFF)
+  static constexpr const char *BOARD_MODEL = "sonoff";
+#elif defined(BOARD_CUSTOM)
+  static constexpr const char *BOARD_MODEL = "waveshare_p4";
+#endif
+
+  /**
    * @brief the config manager and load all relevant configuration from the manager.
    */
   static void init();

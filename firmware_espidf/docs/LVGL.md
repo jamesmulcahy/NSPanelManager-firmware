@@ -118,7 +118,7 @@ So the newest change wins, with one tie-break: a look picked on the panel while 
 the manager beats a change made in the manager meanwhile, as the panel cannot tell their order and
 somebody standing at it saw the result.
 
-`register_request` lists `"features": ["lvgl_look"]`. A manager that knows it sends this panel no
+`register_request` lists `"features": ["lvgl_look"]` (plus `no_hmi`, and on the custom_pcb board `no_tft`, `no_temperature`, `no_buttons` and `no_relays`). A manager that knows it sends this panel no
 `lvgl_theme` / `lvgl_background` commands, only the config. That matters: those commands are not
 answers to anything, so one sent on registration would overtake a report still on its way.
 

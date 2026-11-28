@@ -355,16 +355,19 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   // NSPanelMQTTManagerCommand (lvgl_look, LvglLook), so the manager need not send the lvgl_theme and
   // lvgl_background commands. "no_hmi": it has no Nextion HMI pages, so on NSPM's legacy TFT it shows only a
   // "Display update needed" screen (display_mode DISPLAY_MODE_NEXTION) until the terminal TFT is installed.
-  // Older managers ignore keys they do not know.
+  // What the board lacks is sent as negative flags, so a manager that predates them assumes the board has it:
+  // "no_tft": no Nextion display, so no GUI (TFT) update to offer. "no_temperature": no room temperature sensor.
+  // "no_buttons": no physical buttons. "no_relays": no physical relays. (Humidity and pressure are in the status
+  // report, not here.) Older managers ignore keys they do not know.
+#if defined(BOARD_CUSTOM)
+  json["features"] = nlohmann::json::array({"lvgl_look", "no_hmi", "no_tft", "no_temperature", "no_buttons", "no_relays"});
+#else
   json["features"] = nlohmann::json::array({"lvgl_look", "no_hmi"});
+#endif
   // WebManager serves GET /metrics (Prometheus text) on this port. The manager lists only panels
   // that send this in its Prometheus service discovery.
   json["metrics_port"] = WebManager::HTTP_PORT;
-#if defined(BOARD_SONOFF)
-  json["model"] = "sonoff";
-#elif defined(BOARD_CUSTOM)
-  json["model"] = "custom";
-#endif
+  json["model"] = BOARD_MODEL;
   std::string json_string = json.dump();
 
   // Publish register_request every 5s until _send_register_requests goes false
