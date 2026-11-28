@@ -161,6 +161,11 @@ public:
    *         had ended itself; stop() still releases it).
    */
   static esp_err_t stop();
+  /**
+   * Whether a stream started by start() is still capturing. False once its capture loop has ended on its own
+   * (an I2S read failed): the sink is not called again, and stop() must still be called to release it.
+   */
+  static bool streaming() { return _stream_running.load(); }
 
 private:
   struct Request {
@@ -195,5 +200,6 @@ private:
   static inline SemaphoreHandle_t _started = NULL; // Given once per stream: the codec is open, or it will not be
   static Request &_stream_request(); // The stream's request (in the .cpp: Options is not complete here)
   static inline std::atomic<bool> _stream_active = false;
+  static inline std::atomic<bool> _stream_running = false; // Set by start(), cleared when the capture loop ends
 };
 #endif

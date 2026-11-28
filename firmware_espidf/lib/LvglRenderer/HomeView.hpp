@@ -72,6 +72,9 @@ public:
 
   // The mic's input level, 0-100, polled while recording (show_mic_recording) about every 40 ms. GUI task.
   static inline int (*mic_level)() = nullptr;
+  // Called with that poll while the mic button is pressed (the recorder's hold lease); not once it is
+  // released, deleted (a rebuild) or hidden. GUI task.
+  static inline void (*mic_holding)() = nullptr;
   // A line for the host's log (the button was left out for want of room). GUI task.
   static inline void (*log_warning)(const char *message) = nullptr;
   /**

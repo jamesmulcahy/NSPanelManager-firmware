@@ -37,8 +37,7 @@ struct Slot {
 };
 
 struct Message {
-  enum Type : uint8_t { ANNOUNCE, AUTO_STOP } type;
-  uint32_t generation; // AUTO_STOP: which recording it is for
+  enum Type : uint8_t { ANNOUNCE } type; // The automatic stops are polled, not posted (VoiceRecorder::_auto_stop)
   VoiceRecorder::Recording recording;
 };
 
@@ -74,13 +73,14 @@ uint32_t sequence = 0;                // Under locks().api
 // VoiceCapture::start() is the happens-before).
 int current_slot = -1;
 bool current_auto_send = true;
-uint32_t current_generation = 0;
+bool current_hold_lease = false;
 // The sink's own state: the capture task is its only writer while a stream runs.
-std::atomic<bool> limit_posted{false};
+std::atomic<bool> limit_counted{false};
 
-// The worker's timed stop: 0 when none. Written under the api mutex, read by the worker.
-std::atomic<int64_t> stop_deadline_us{0};
-std::atomic<uint32_t> stop_deadline_generation{0};
+// The worker's timed stop: 0 when none. Written and read under the api mutex.
+int64_t stop_deadline_us = 0;
+// A hold_lease recording's lease: hold() (any task) pushes it on; the worker reads it under the api mutex.
+std::atomic<int64_t> hold_until_us{0};
 
 void (*result_listener)(bool, esp_err_t, void *) = nullptr;
 void *result_context = nullptr;
@@ -203,7 +203,7 @@ esp_err_t VoiceRecorder::_ensure_allocated() { // api mutex held
     }
     return ESP_ERR_NO_MEM;
   }
-  // Internal RAM stack (the default), 4 KB: the JSON and the publish fit; it takes no PSRAM stack.
+  // Internal RAM stack (the default), 6 KB: room for the JSON and the publish (unmeasured on hardware).
   queue = q;
   if (xTaskCreate(_worker, "voice_rec", 6144, NULL, 3, NULL) != pdPASS) {
     queue = NULL;
@@ -231,7 +231,9 @@ void VoiceRecorder::_sink(const int16_t *mono, size_t frames, void *) {
     state = VoiceRecorder::state();
   }
   if (state != State::RECORDING || current_slot < 0) {
-    PanelMetrics::voice_sink_overruns.add();
+    if (state != State::FULL) { // At the limit until the stop: expected, not an overrun
+      PanelMetrics::voice_sink_overruns.add();
+    }
     return;
   }
   int peak = 0;
@@ -247,45 +249,28 @@ void VoiceRecorder::_sink(const int16_t *mono, size_t frames, void *) {
     memcpy(slots[current_slot].data + VoiceRecorder::WAV_HEADER_BYTES + kept * sizeof(int16_t), mono, n * sizeof(int16_t));
     VoiceRecorder::_frames.store(kept + n, std::memory_order_relaxed);
   }
-  if (n < frames) {
-    PanelMetrics::voice_sink_overruns.add();
-  }
   if (kept + n >= VoiceRecorder::MAX_FRAMES) {
+    // The worker sees FULL within its 100 ms poll and stops and sends (auto_send_at_limit): nothing is
+    // posted from here, so nothing can be lost to a full queue.
     VoiceRecorder::_state.store(State::FULL, std::memory_order_release);
     VoiceRecorder::_level.store(0, std::memory_order_relaxed);
-    if (!limit_posted.exchange(true)) {
+    if (!limit_counted.exchange(true)) {
       PanelMetrics::voice_limit.add();
-      if (current_auto_send && queue != NULL) {
-        Message message = {Message::AUTO_STOP, current_generation, {}};
-        xQueueSend(queue, &message, 0);
-      }
     }
   }
 }
 
-// The worker: publishes announcements, and runs the automatic stops.
+// The worker: publishes announcements, and at least every 100 ms runs the automatic stops.
 void VoiceRecorder::_worker(void *) {
   for (;;) {
     Message message;
-    if (xQueueReceive(queue, &message, pdMS_TO_TICKS(100)) == pdTRUE) {
-      if (message.type == Message::ANNOUNCE) {
-        announce_now(message.recording);
-      } else if (message.type == Message::AUTO_STOP) {
-        // Only if it is still the recording it was posted for.
-        Recording recording;
-        if (_auto_stop(message.generation, &recording)) {
-          // stop() succeeded; announce directly (we are the worker: queueing to ourselves could deadlock a full queue).
-          announce_now(recording);
-        }
-      }
+    if (xQueueReceive(queue, &message, pdMS_TO_TICKS(100)) == pdTRUE && message.type == Message::ANNOUNCE) {
+      announce_now(message.recording);
     }
-    const int64_t deadline = stop_deadline_us.load();
-    if (deadline != 0 && esp_timer_get_time() >= deadline) {
-      stop_deadline_us.store(0);
-      Recording recording;
-      if (_auto_stop(stop_deadline_generation.load(), &recording)) {
-        announce_now(recording);
-      }
+    Recording recording;
+    if (_auto_stop(&recording)) {
+      // Announced here, not queued: the worker queueing to itself could find its own queue full.
+      announce_now(recording);
     }
   }
 }
@@ -326,8 +311,9 @@ esp_err_t VoiceRecorder::start(const Options &options) {
   }
   current_slot = chosen;
   current_auto_send = options.auto_send_at_limit;
-  current_generation++;
-  limit_posted.store(false);
+  current_hold_lease = options.hold_lease;
+  hold_until_us.store(esp_timer_get_time() + (int64_t)HOLD_START_MS * 1000);
+  limit_counted.store(false);
   VoiceRecorder::_frames.store(0, std::memory_order_relaxed);
   VoiceRecorder::_level.store(0, std::memory_order_relaxed);
   VoiceRecorder::_state.store(State::STARTING, std::memory_order_release);
@@ -343,12 +329,7 @@ esp_err_t VoiceRecorder::start(const Options &options) {
     ESP_LOGW(TAG, "Could not start the capture: %s.", esp_err_to_name(err));
     return err;
   }
-  if (options.stop_after_ms > 0) {
-    stop_deadline_generation.store(current_generation);
-    stop_deadline_us.store(esp_timer_get_time() + (int64_t)options.stop_after_ms * 1000);
-  } else {
-    stop_deadline_us.store(0);
-  }
+  stop_deadline_us = options.stop_after_ms > 0 ? esp_timer_get_time() + (int64_t)options.stop_after_ms * 1000 : 0;
   ESP_LOGI(TAG, "Recording into slot %d.", chosen);
   return ESP_OK;
 }
@@ -362,7 +343,7 @@ esp_err_t VoiceRecorder::_stop_locked(Recording *out) {
   if (VoiceRecorder::state() == State::IDLE) {
     return ESP_ERR_INVALID_STATE;
   }
-  stop_deadline_us.store(0);
+  stop_deadline_us = 0;
   // The sink has returned for the last time when this does.
   const esp_err_t capture = VoiceCapture::stop();
   const uint32_t frames = std::min<uint32_t>(VoiceRecorder::_frames.load(std::memory_order_relaxed), MAX_FRAMES);
@@ -410,12 +391,26 @@ esp_err_t VoiceRecorder::_stop_locked(Recording *out) {
   return ESP_OK;
 }
 
-// Worker task: the limit was reached, or stop_after_ms ran out. Does nothing if that recording is over.
-bool VoiceRecorder::_auto_stop(uint32_t generation, Recording *out) {
+// Worker task: stops the recording under way if a stop is due, all checked under the api mutex (so none
+// races a stop() and a new start()): the capture ended on its own (an I2S read failed: discarded), the
+// limit was reached (auto_send_at_limit), stop_after_ms ran out, or a hold_lease recording's lease did.
+// True when it stopped one that is to be announced.
+bool VoiceRecorder::_auto_stop(Recording *out) {
   Lock api(locks().api);
-  if (VoiceRecorder::state() == State::IDLE || generation != current_generation) {
+  const State state = VoiceRecorder::state();
+  if (state == State::IDLE) {
     return false;
   }
+  const int64_t now = esp_timer_get_time();
+  const char *why = !VoiceCapture::streaming()                          ? "the capture ended"
+                    : state == State::FULL && current_auto_send         ? "the limit"
+                    : stop_deadline_us != 0 && now >= stop_deadline_us ? "its time"
+                    : current_hold_lease && now >= hold_until_us.load() ? "the hold ended"
+                                                                        : nullptr;
+  if (why == nullptr) {
+    return false;
+  }
+  ESP_LOGI(TAG, "Stopping: %s.", why);
   const esp_err_t err = VoiceRecorder::_stop_locked(out);
   if (err != ESP_OK) {
     notify(false, err);
@@ -435,7 +430,7 @@ esp_err_t VoiceRecorder::announce(const Recording &recording) {
       return ESP_ERR_NOT_FOUND;
     }
   }
-  Message message = {Message::ANNOUNCE, 0, recording};
+  Message message = {Message::ANNOUNCE, recording};
   return xQueueSend(queue, &message, 0) == pdTRUE ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
@@ -456,7 +451,7 @@ esp_err_t VoiceRecorder::cancel() {
   if (VoiceRecorder::state() == State::IDLE) {
     return ESP_ERR_INVALID_STATE;
   }
-  stop_deadline_us.store(0);
+  stop_deadline_us = 0;
   VoiceCapture::stop();
   VoiceRecorder::_state.store(State::IDLE, std::memory_order_release);
   VoiceRecorder::_level.store(0, std::memory_order_relaxed);
@@ -464,6 +459,10 @@ esp_err_t VoiceRecorder::cancel() {
   outcome(PanelMetrics::VOICE_CANCELLED);
   ESP_LOGI(TAG, "Cancelled.");
   return ESP_OK;
+}
+
+void VoiceRecorder::hold() {
+  hold_until_us.store(esp_timer_get_time() + (int64_t)HOLD_LEASE_MS * 1000);
 }
 
 void VoiceRecorder::set_result_listener(void (*listener)(bool, esp_err_t, void *), void *context) {
@@ -474,8 +473,8 @@ void VoiceRecorder::set_result_listener(void (*listener)(bool, esp_err_t, void *
 }
 
 VoiceCapture::Options VoiceRecorder::capture_options() {
-  // The ONE place the recorder chooses how the microphones are processed: the tuning pass's production chain
-  // (the two mics averaged, HPF 100 Hz, WebRTC NS, AGC and limiter; 36 dB of ES7210 gain), mono.
+  // The ONE place the recorder chooses how the microphones are processed: the production chain (see
+  // VoiceCapture::voice_options()), mono.
   return VoiceCapture::voice_options();
 }
 

@@ -68,7 +68,19 @@ public:
     bool auto_send_at_limit = true;
     // > 0: the recorder's task runs stop() and announce() this long after start() (the MQTT test command).
     uint32_t stop_after_ms = 0;
+    // A press-and-hold recording (the UI): it lasts only while hold() is called. If no hold() comes for
+    // HOLD_LEASE_MS, the recorder's task runs stop() and announce(), as if the user let go. That covers a
+    // release the UI never got (the page rebuilt under the finger, an event dropped, a page change racing
+    // the press), and keeps the 15 s auto-send to recordings the finger is still on.
+    bool hold_lease = false;
   };
+  // How long a hold_lease recording lives without a hold(); start() gives it HOLD_START_MS to begin with,
+  // for the codec to open and the UI to start calling hold().
+  static constexpr uint32_t HOLD_LEASE_MS = 1000;
+  static constexpr uint32_t HOLD_START_MS = 1500;
+
+  /** Any task, never blocks: the finger is still on the button (Options::hold_lease). */
+  static void hold();
 
   /**
    * Start a recording. The first call allocates both slots in PSRAM (SLOT_BYTES each, kept until reboot,
@@ -119,7 +131,7 @@ public:
 
   /**
    * Be told how each recording ended, for the UI's toast: `sent` true once the MQTT announcement was
-   * published, false if stop() failed in the auto paths (limit, stop_after_ms) or the publish failed or
+   * published, false if stop() failed in the auto paths (limit, stop_after_ms, the hold lease, the capture ending) or the publish failed or
    * MQTT was down. Called on the recorder's task (voice_rec), never the LVGL task: the listener must hand
    * over (e.g. lv_async_call) rather than touch LVGL. One listener; nullptr removes it. Errors returned
    * synchronously by stop()/stop_and_send() to the caller are not reported here again.
@@ -156,9 +168,9 @@ public:
   static void handle_command(const char *action, int seconds);
 
   /**
-   * How the recorder has VoiceCapture process the microphones: the ONE place that choice is made. Today WebRTC
-   * NS on MIC1 with a 100 Hz high-pass and 36 dB of ES7210 gain. To use the tuning pass's production mode,
-   * change `options.outputs` there to `VoiceCapture::MODE_VOICE`.
+   * How the recorder has VoiceCapture process the microphones: the ONE place that choice is made. It returns
+   * VoiceCapture::voice_options(), the production chain: the two mics averaged, high-pass, WebRTC NS, EQ, AGC,
+   * expander, compressor and limiter, at 36 dB of ES7210 gain (see VoiceCapture.hpp for the settings).
    */
   static VoiceCapture::Options capture_options();
 
@@ -167,7 +179,7 @@ private:
   static esp_err_t _ensure_allocated();                                 // _api_mutex held
   static void _worker(void *param);                                     // voice_rec task
   static esp_err_t _stop_locked(Recording *out);                        // _api_mutex held
-  static bool _auto_stop(uint32_t generation, Recording *out);          // Worker: the limit or stop_after_ms
+  static bool _auto_stop(Recording *out);                               // Worker: a stop that is due, if any
 
   static inline std::atomic<State> _state = State::IDLE;
   static inline std::atomic<uint8_t> _level = 0;

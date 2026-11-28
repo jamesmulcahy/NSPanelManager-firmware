@@ -72,6 +72,7 @@ void HomePage::show() {
     HomeView::is_swipe = []() { return LvglUi::swiping(); };
 #if defined(BOARD_CUSTOM)
     HomeView::mic_level = []() { return (int)VoiceRecorder::level(); };
+    HomeView::mic_holding = []() { VoiceRecorder::hold(); };
     HomeView::log_warning = [](const char *message) { ESP_LOGW("HomePage", "%s", message); };
     VoiceRecorder::set_result_listener(mic_result, nullptr);
 #endif
@@ -937,14 +938,22 @@ void HomePage::_lvgl_action(int action, int32_t value) {
     break;
 #if defined(BOARD_CUSTOM)
   case HomeView::Action::MIC_DOWN: {
-    esp_err_t err = VoiceRecorder::start();
+    // Held only while the button is pressed (the hold lease): a release this page never gets (a rebuild
+    // under the finger, a dropped action) still ends the recording, within HOLD_LEASE_MS.
+    VoiceRecorder::Options options;
+    options.hold_lease = true;
+    // Held before start(), so that an unshow() on its own task from here on sees it and cancels.
+    mic_held = true;
+    esp_err_t err = VoiceRecorder::start(options);
     if (err != ESP_OK) {
+      mic_held = false;
       ESP_LOGW("HomePage", "Could not start recording: %s", esp_err_to_name(err));
       mic_toast("Failed", HomeView::Toast::ERROR);
     } else if (!InterfaceManager::is_current_page(HomePage::unshow)) {
-      VoiceRecorder::cancel(); // The page went while start() ran: no release will come to this page
+      // The page went while start() ran; unshow() may have looked before the recording existed.
+      mic_held = false;
+      VoiceRecorder::cancel();
     } else {
-      mic_held = true;
       LvglRenderer::post([]() { HomeView::show_mic_recording(true); });
     }
     break;

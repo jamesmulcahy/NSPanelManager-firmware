@@ -336,6 +336,9 @@ void HomeView::show_mic_level(int level) {
 
 // About every 40 ms while recording: the level rises at once and falls away, so the bar is readable.
 void HomeView::_mic_poll(lv_timer_t *) {
+  if (HomeView::mic_holding != nullptr && HomeView::_mic != NULL && lv_obj_has_state(HomeView::_mic, LV_STATE_PRESSED)) {
+    HomeView::mic_holding();
+  }
   int level = HomeView::mic_level != nullptr ? HomeView::mic_level() : 0;
   int fall = HomeView::_mic_shown - 6;
   HomeView::show_mic_level(level > fall ? level : fall);

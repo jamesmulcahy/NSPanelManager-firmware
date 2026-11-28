@@ -186,6 +186,7 @@ esp_err_t VoiceCapture::start(Sink sink, void *context, const Options &options) 
     VoiceCapture::_busy = false;
     return request.result != ESP_OK ? request.result : ESP_FAIL;
   }
+  VoiceCapture::_stream_running = true;
   VoiceCapture::_stream_active = true;
   return ESP_OK;
 }
@@ -209,6 +210,9 @@ void VoiceCapture::_task(void *param) {
     request->result = codec_dev != nullptr ? ESP_OK : VoiceCapture::_init_codec();
     if (request->result == ESP_OK) {
       request->result = VoiceCapture::_capture(request);
+    }
+    if (request->sink != nullptr) {
+      VoiceCapture::_stream_running = false; // Ended: by stop(), or on its own (a read failed)
     }
     if (request->sink != nullptr && !request->opened) {
       xSemaphoreGive(VoiceCapture::_started); // The stream never opened: start() is waiting
@@ -637,7 +641,7 @@ struct VoiceCapture::Pipeline {
     struct Want {
       int16_t **pointer;
       size_t samples;
-    } wants[8];
+    } wants[10]; // At most 9: bf, gsc_in, ns_mic_out, ns_bf_out, avg, and two chains' out and ns_out
     int count = 0;
     bool avg_used = false;
     for (const VoiceChain &c : chain) {
