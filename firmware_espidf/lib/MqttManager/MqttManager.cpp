@@ -490,10 +490,10 @@ void MqttManager::_task_manage_subscriptions(void *param) {
   }
 }
 
-esp_err_t MqttManager::publish(std::string topic, const char *data, size_t length, bool retain) {
+esp_err_t MqttManager::publish(std::string topic, const char *data, size_t length, bool retain, int qos) {
   if (MqttManager::connected()) {
     int64_t start_us = esp_timer_get_time();
-    int result_code = esp_mqtt_client_publish(MqttManager::_mqtt_client, topic.c_str(), data, length, 0, retain);
+    int result_code = esp_mqtt_client_publish(MqttManager::_mqtt_client, topic.c_str(), data, length, qos, retain);
     PanelMetrics::publish_duration.observe_us(esp_timer_get_time() - start_us);
     if (result_code >= 0) {
       return ESP_OK;
