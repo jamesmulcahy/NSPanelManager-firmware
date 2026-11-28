@@ -222,6 +222,7 @@ on port 80 (same LAN/VLAN or a firewall rule). Phase 4 may route this through MQ
 | `nspanel_voice_announce_failures_total` | MQTT publish failed or was not connected |
 | `nspanel_voice_http_requests_total{status="200"\|"206"\|"404"\|"410"\|"416"}` | serve() responses |
 | `nspanel_voice_http_bytes_total` | bytes sent by serve() |
+| `nspanel_voice_http_aborted_total` | downloads that did not finish (client gone, stalled, or over the 30 s budget) |
 | `nspanel_voice_sink_overruns_total` | sink calls dropped because the slot was full or no slot was RECORDING |
 
 ## 9. Phase 3a UI decisions (for 3b)
@@ -257,3 +258,61 @@ on port 80 (same LAN/VLAN or a firewall rule). Phase 4 may route this through MQ
 - Test: `mosquitto_pub -t 'nspanel/<mac>/command' -m '{"command":"voice_record","action":"start","seconds":5}'`,
   `mosquitto_sub -v -t 'nspanel/+/voice/recording'`, then `curl -sv -o /tmp/r.wav <url>`, `curl -sI <url>`,
   `curl -s -H 'Range: bytes=0-99' -o /dev/null -w '%{http_code}\n' <url>` (206), and the same URL after 60 s (410).
+
+### 11b. As built (phase 5, hardening)
+
+**Download speed (TCP windows).** `sdkconfig.custom_pcb` has `CONFIG_LWIP_TCP_SND_BUF_DEFAULT` and
+`CONFIG_LWIP_TCP_WND_DEFAULT` at 31680 (22 x MSS 1440; they were 5760, 4 x MSS) and `CONFIG_LWIP_TCP_RECVMBOX_SIZE`
+at 24 (the Kconfig's recommendation, WND/MSS + 2; it was 6). They are P4-only overrides:
+`tools/sync_sdkconfig_custom_pcb.py` keeps them (`KEEP_P4`), and `sdkconfig.original_sonoff` is unchanged.
+Constraints checked: SND_BUF is at least 2 x MSS; `TCP_SND_QUEUELEN` is derived (4 x SND_BUF / MSS = 88 pbufs);
+without window scaling both are capped at 65535; ESP-Hosted's SDIO TX queue (20 entries) blocks when full, it does
+not drop, so it needed no change. RAM, all internal heap (lwIP's pbufs come from the heap, and allocations under
+16 KB are internal): what is queued for send is only what the peer has not yet ACKed, at most SND_BUF = 31 KB plus
+pbuf/header overhead (about 34 KB) per connection that is sending; the receive side holds data only until the web
+server reads it (at most WND = 31 KB, normally a few KB); a mailbox slot is 4 bytes. A recording's download is the
+only large send, and the web server has one task, so the normal cost is about 34 KB for the 2-4 s a recording is being
+fetched and nothing otherwise. Worst case, `max_open_sockets` = 4 connections each with a full send queue (an
+upper bound: one serving task sends to one at a time): 4 x 34 KB = about 136 KB of the P4's internal RAM.
+
+**Dead downloads.** `serve()` holds its slot with a `ReaderLease` (VoiceRecorderPure.hpp, host-tested): the
+count goes up under the slots mutex in the same critical section as the token lookup and comes down in the
+lease's destructor, on every way out. The audit found no leak in the code as it was (the decrement sat after the
+last statement and no path returned in between), but that depended on nobody adding an early return; the lease
+makes it structural. The body is now sent in 16 KB pieces by `httpd_send()` against a 30 s deadline for the whole
+download (`DOWNLOAD_BUDGET_MS`, a floor of 16 KB/s; it normally takes 2 s): `httpd_resp_send()` gave every send the
+whole send timeout, so a client taking a few bytes per timeout could hold the web server's only task, and the slot,
+for minutes. A failed or cut-off download returns `ESP_FAIL` (the web server closes the connection) and is counted in
+`nspanel_voice_http_aborted_total`. On `BOARD_CUSTOM` the web server's `send_wait_timeout` and `recv_wait_timeout` are
+3 s (default 5 s): one blocked call holds `/metrics` and everything else for at most that long, and 3 s covers lwIP's
+second retransmission (RTO 1.5 s, then 3 s), so a lost tail segment on a healthy link still recovers.
+
+**Announce, and Wi-Fi or MQTT down.** Recording is local: the sink and VoiceCapture's task touch only the slot,
+atomics and counters, never Wi-Fi or MQTT (`start()` checks the IP once, before recording), and `stop()` does not
+block on the network. Announcing: `MqttManager::publish()` returns `ESP_ERR_NOT_FINISHED` at once when MQTT is
+disconnected (it does not queue); when connected, `esp_mqtt_client_publish()` at QoS 1 keeps the message in
+esp-mqtt's outbox until it is PUBACKed (resent after a reconnect). So the worker retries itself: `announce_step()`
+(pure, tested) backs off 250, 500, 1000, 2000, 2000 ... ms for up to `ANNOUNCE_BUDGET_MS` = 15 s from the first
+attempt (leaving 45 s of the URL's 60 for HA to fetch it), then gives up. Retries sit in a table the worker services
+every 100 ms, so waiting never stops the automatic stops or another recording's announcement. The payload is rebuilt
+on every attempt, so the URL has the IP at that moment and `expires_in` the time left. An attempt checks, in order,
+that the token is still served (else fails at once, `ESP_ERR_NOT_FOUND`), that there is an IP (none on the first
+attempt fails at once with `ESP_ERR_NOT_ALLOWED`: start() refused without one, so the Wi-Fi went away during the
+recording; after a retry it is waited out like MQTT), and `MqttManager::connected()` before calling `publish()`, so
+retries do not each log an error and count a publish failure. The result listener fires once per recording: `sent` is
+true only if the publish was handed to the client, false with `ESP_ERR_TIMEOUT` when MQTT stayed down for the whole
+budget. So the UI shows nothing for up to 15 s after a release with MQTT down, then "Failed";
+`nspanel_voice_announce_failures_total` counts each failed recording once. The message, topic and URL format are
+unchanged. (A blocking `esp_mqtt_client_publish()` on a half-dead TCP connection can still hold the worker for
+esp-mqtt's network timeout, delaying the automatic stops by that long; a release from the UI is not affected.)
+
+**Stacks.** No new gauge: `nspanel_task_stack_unused_bytes{task="voice_rec",mem="internal"}` and
+`{task="voice_capture",mem="internal"}` already come from HeapMetrics' scan of every task (the high-water mark, in
+bytes never used; a task appears once it exists, i.e. after the first recording). The per-recording VoiceCapture log
+line ("stack N bytes unused") stays, and `voice_rec` logs its own after each announcement. The stacks are unchanged
+(6144 and 4096). To decide: make 10-20 recordings, some of 15 s, some with MQTT stopped (a retry), then read the two
+gauges; they only ever fall. Under about 1 KB unused is too tight; over 3 KB unused on both is room to shrink.
+
+**Tests.** `test/host/voice_recorder` also covers the reader lease (counts, early exit, idempotent, never below
+zero), the automatic stops (`auto_stop_reason` and its priority order) and the retry schedule. The worker's use of
+them is on-hardware only.

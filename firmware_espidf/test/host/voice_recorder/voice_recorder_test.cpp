@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace VoiceRecorderPure;
 
@@ -180,6 +181,145 @@ static void lookup() {
   CHECK(find_token(s, 2, T, now, &index) == Lookup::UNKNOWN);
 }
 
+// A mutex that counts, to check the lease's locking as well as its count.
+struct CountingMutex {
+  int locks = 0, unlocks = 0;
+  void lock() { locks++; }
+  void unlock() { unlocks++; }
+};
+
+static void readers() {
+  CountingMutex m;
+  SlotMeta s[2];
+  s[0].state = SlotState::READY;
+  s[0].expires_us = 100;
+  s[1].state = SlotState::READY;
+  s[1].expires_us = 100;
+  s[1].sequence = 1;
+  {
+    ReaderLease<CountingMutex> lease(m);
+    lease.acquire(s[0]);
+    CHECK(s[0].readers == 1);
+    CHECK(m.locks == 0);                // acquire() runs under the caller's lock
+    CHECK(choose_slot(s, 2, 200) == 1); // The slot being read is not picked
+    lease.acquire(s[1]);                // A second acquire on one lease is ignored
+    CHECK(s[1].readers == 0 && s[0].readers == 1);
+  }
+  CHECK(s[0].readers == 0); // The destructor let go, under the lock
+  CHECK(m.locks == 1 && m.unlocks == 1);
+  CHECK(choose_slot(s, 2, 200) == 0);
+
+  // Leases opened and abandoned in scopes that end in different ways
+  for (int i = 0; i < 100; i++) {
+    ReaderLease<CountingMutex> a(m), b(m);
+    a.acquire(s[0]);
+    b.acquire(s[0]);
+    CHECK(s[0].readers == 2);
+    if (i % 3 == 0) {
+      a.release();
+      CHECK(s[0].readers == 1);
+      a.release(); // Idempotent
+      CHECK(s[0].readers == 1);
+    }
+    if (i % 2 == 0) {
+      continue;
+    }
+  }
+  CHECK(s[0].readers == 0);
+
+  // Never below zero, even if the count was reset under the lease
+  {
+    ReaderLease<CountingMutex> lease(m);
+    lease.acquire(s[1]);
+    s[1].readers = 0;
+  }
+  CHECK(s[1].readers == 0);
+
+  // What two leaked readers look like: no slot to record into (start() answers ESP_ERR_NOT_FINISHED)
+  s[0].readers = 1;
+  s[1].readers = 1;
+  CHECK(choose_slot(s, 2, 200) == -1);
+}
+
+static void auto_stops() {
+  AutoStopInput in;
+  in.idle = false;
+  in.now_us = 1000;
+  CHECK(auto_stop_reason(in) == StopReason::NONE);
+  in.idle = true;
+  in.streaming = false;
+  CHECK(auto_stop_reason(in) == StopReason::NONE); // Idle: never
+  in.idle = false;
+  CHECK(auto_stop_reason(in) == StopReason::CAPTURE_ENDED);
+  in.full = true;
+  CHECK(auto_stop_reason(in) == StopReason::CAPTURE_ENDED); // Ranks first
+  in.streaming = true;
+  CHECK(auto_stop_reason(in) == StopReason::LIMIT);
+  in.auto_send_at_limit = false;
+  CHECK(auto_stop_reason(in) == StopReason::NONE); // Stays FULL for the caller
+  in.stop_deadline_us = 1000;
+  CHECK(auto_stop_reason(in) == StopReason::TIMED); // At the deadline, not before
+  in.stop_deadline_us = 1001;
+  CHECK(auto_stop_reason(in) == StopReason::NONE);
+  in.auto_send_at_limit = true;
+  CHECK(auto_stop_reason(in) == StopReason::LIMIT); // The limit before the time
+  in.full = false;
+  in.stop_deadline_us = 0; // None
+  in.hold_until_us = 1000;
+  CHECK(auto_stop_reason(in) == StopReason::NONE); // Not a hold_lease recording
+  in.hold_lease = true;
+  CHECK(auto_stop_reason(in) == StopReason::HOLD_ENDED);
+  in.hold_until_us = 1001;
+  CHECK(auto_stop_reason(in) == StopReason::NONE); // hold() pushed it on
+  in.stop_deadline_us = 500;
+  CHECK(auto_stop_reason(in) == StopReason::TIMED); // The time before the lease
+  CHECK(std::string(stop_reason_text(StopReason::LIMIT)) == "the limit");
+  CHECK(stop_reason_text(StopReason::NONE) == nullptr);
+}
+
+static void announce_schedule() {
+  // Published: sent whatever came before
+  CHECK(announce_step(AnnounceAttempt::PUBLISHED, 0, 0).kind == AnnounceStep::SENT);
+  CHECK(announce_step(AnnounceAttempt::PUBLISHED, 9, 14000).kind == AnnounceStep::SENT);
+  // The URL is gone: nothing to retry
+  CHECK(announce_step(AnnounceAttempt::NOT_SERVABLE, 0, 0).kind == AnnounceStep::FAIL);
+  CHECK(announce_step(AnnounceAttempt::NOT_SERVABLE, 3, 500).kind == AnnounceStep::FAIL);
+  // No IP at release: fails at once; after a retry it is waited out
+  CHECK(announce_step(AnnounceAttempt::NO_IP, 0, 0).kind == AnnounceStep::FAIL);
+  CHECK(announce_step(AnnounceAttempt::NO_IP, 1, 300).kind == AnnounceStep::RETRY);
+
+  // MQTT down all along: the whole schedule, as the worker would run it
+  uint32_t elapsed = 0, failed = 0;
+  std::vector<uint32_t> delays;
+  for (;;) {
+    AnnounceStep step = announce_step(AnnounceAttempt::PUBLISH_FAILED, failed, elapsed);
+    if (step.kind != AnnounceStep::RETRY) {
+      CHECK(step.kind == AnnounceStep::FAIL);
+      break;
+    }
+    delays.push_back(step.delay_ms);
+    elapsed += step.delay_ms;
+    failed++;
+    if (failed >= 100) {
+      CHECK(false);
+      break;
+    }
+  }
+  CHECK(elapsed == ANNOUNCE_BUDGET_MS); // Gives up exactly at the budget, never past it
+  CHECK(delays.size() >= 8 && delays[0] == 250 && delays[1] == 500 && delays[2] == 1000 && delays[3] == 2000 && delays[4] == 2000);
+  for (uint32_t d : delays) {
+    CHECK(d > 0 && d <= ANNOUNCE_MAX_DELAY_MS);
+  }
+  // The last wait is cut to what is left
+  CHECK(announce_step(AnnounceAttempt::PUBLISH_FAILED, 5, ANNOUNCE_BUDGET_MS - 700).delay_ms == 700);
+  CHECK(announce_step(AnnounceAttempt::PUBLISH_FAILED, 5, ANNOUNCE_BUDGET_MS).kind == AnnounceStep::FAIL);
+  CHECK(announce_step(AnnounceAttempt::PUBLISH_FAILED, 5, ANNOUNCE_BUDGET_MS + 5000).kind == AnnounceStep::FAIL);
+  // A huge attempt count does not overflow the backoff
+  CHECK(announce_step(AnnounceAttempt::PUBLISH_FAILED, 4000000000u, 0).delay_ms == ANNOUNCE_MAX_DELAY_MS);
+  // The budget leaves most of the URL's 60 s for Home Assistant to fetch it
+  CHECK(ANNOUNCE_BUDGET_MS <= 30 * 1000);
+}
+
 static void level() {
   CHECK(level_from_peak(0) == 0);
   CHECK(level_from_peak(33) == 0);
@@ -196,6 +336,9 @@ int main() {
   wav_header();
   slot_choice();
   lookup();
+  readers();
+  auto_stops();
+  announce_schedule();
   level();
   if (failures == 0) {
     std::printf("voice_recorder: all passed\n");

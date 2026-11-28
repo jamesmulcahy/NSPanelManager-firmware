@@ -102,18 +102,46 @@ void notify(bool sent, esp_err_t err) {
   }
 }
 
-// Worker task: the MQTT message for a finished recording, then the listener.
-void announce_now(const VoiceRecorder::Recording &recording) {
+// Announcements the worker is working on: queued by announce() or the auto-stops, published when MQTT lets
+// them, retried (VoiceRecorderPure's announce_step()) while it does not. Worker task only. A message that
+// finds all of them taken is failed at once (announce() queues at most 4 and the worker moves them here
+// before anything else, so this is only reached when the retries of four recordings pile up).
+struct Pending {
+  bool used = false;
+  VoiceRecorder::Recording recording = {};
+  uint32_t failed = 0;      // Attempts that have failed so far
+  int64_t first_us = 0;     // When the first attempt was due
+  int64_t next_us = 0;      // When the next one is
+};
+Pending pending[4];
+
+// What the retry gave up on (for the listener), by the last attempt's outcome.
+esp_err_t error_for(AnnounceAttempt last) {
+  switch (last) {
+  case AnnounceAttempt::NOT_SERVABLE: return ESP_ERR_NOT_FOUND;
+  case AnnounceAttempt::NO_IP: return ESP_ERR_NOT_ALLOWED;
+  default: return ESP_ERR_TIMEOUT; // MQTT stayed down for the whole budget
+  }
+}
+
+// One attempt: is the URL still served, is there an IP, is MQTT up, then the publish. The payload is built
+// afresh each time, so the URL carries the IP the panel has NOW (it can change between start and release, and
+// between attempts), and expires_in what is left of the token's life.
+AnnounceAttempt attempt_announce(const VoiceRecorder::Recording &recording) {
   {
-    // Still servable? (Overwritten, or long expired, while the queue was busy.)
+    // Still servable? (Overwritten, or long expired, while the queue was busy or MQTT was down.)
     Lock lock(locks().slots);
     int index = -1;
     if (find_token(metas, VoiceRecorder::SLOTS, recording.token, esp_timer_get_time(), &index) != Lookup::FOUND) {
-      ESP_LOGW(TAG, "Not announcing #%u: its URL is no longer served.", (unsigned)recording.sequence);
-      PanelMetrics::voice_announce_failures.add();
-      notify(false, ESP_ERR_NOT_FOUND);
-      return;
+      return AnnounceAttempt::NOT_SERVABLE;
     }
+  }
+  if (WiFiManager::ip_info().ip.addr == 0) {
+    return AnnounceAttempt::NO_IP;
+  }
+  if (!MqttManager::connected()) {
+    // Not MqttManager::publish(): it would log an error and count a failure for each of these tries.
+    return AnnounceAttempt::PUBLISH_FAILED;
   }
   nlohmann::json json;
   const std::string ip = WiFiManager::ip_string();
@@ -137,15 +165,72 @@ void announce_now(const VoiceRecorder::Recording &recording) {
   topic.append("/voice/recording");
   // QoS 1, not retained: a retained message would make Home Assistant replay an old broadcast on restart.
   const esp_err_t err = MqttManager::publish(topic, payload.c_str(), payload.size(), false, 1);
-  if (err == ESP_OK) {
+  if (err != ESP_OK) {
+    return AnnounceAttempt::PUBLISH_FAILED;
+  }
+  ESP_LOGI(TAG, "Announced #%u: %s (%u ms, %u bytes).", (unsigned)recording.sequence, payload.c_str(), (unsigned)recording.duration_ms,
+           (unsigned)recording.bytes);
+  return AnnounceAttempt::PUBLISHED;
+}
+
+// The announcement is over, one way or the other: count it, tell the listener (the UI's toast).
+void finish_announce(Pending &p, bool sent, esp_err_t err) {
+  p.used = false;
+  if (sent) {
     outcome(PanelMetrics::VOICE_SENT);
-    ESP_LOGI(TAG, "Announced #%u: %s (%u ms, %u bytes).", (unsigned)recording.sequence, payload.c_str(), (unsigned)recording.duration_ms,
-             (unsigned)recording.bytes);
   } else {
     PanelMetrics::voice_announce_failures.add();
-    ESP_LOGW(TAG, "Announcement of #%u failed (MQTT down or the publish failed).", (unsigned)recording.sequence);
+    ESP_LOGW(TAG, "Announcement of #%u failed after %u attempt(s): %s.", (unsigned)p.recording.sequence, (unsigned)(p.failed + 1),
+             esp_err_to_name(err));
   }
-  notify(err == ESP_OK, err);
+  // voice_rec's own high-water mark, after the JSON and the publish (also nspanel_task_stack_unused_bytes{task="voice_rec"})
+  ESP_LOGI(TAG, "voice_rec stack: %u bytes never used.", (unsigned)uxTaskGetStackHighWaterMark(NULL));
+  notify(sent, err);
+}
+
+// Worker task: take on a finished recording's announcement. The first attempt is made by service_pending() right away.
+void start_announce(const VoiceRecorder::Recording &recording) {
+  for (Pending &p : pending) {
+    if (!p.used) {
+      p.used = true;
+      p.recording = recording;
+      p.failed = 0;
+      p.first_us = p.next_us = esp_timer_get_time();
+      return;
+    }
+  }
+  Pending overflow;
+  overflow.recording = recording;
+  finish_announce(overflow, false, ESP_ERR_NO_MEM);
+}
+
+// Worker task, every 100 ms at least: the attempts that are due.
+void service_pending() {
+  for (Pending &p : pending) {
+    const int64_t now = esp_timer_get_time();
+    if (!p.used || now < p.next_us) {
+      continue;
+    }
+    const AnnounceAttempt result = attempt_announce(p.recording);
+    const uint32_t elapsed_ms = (uint32_t)std::min<int64_t>((now - p.first_us) / 1000, UINT32_MAX);
+    const AnnounceStep step = announce_step(result, p.failed, elapsed_ms);
+    switch (step.kind) {
+    case AnnounceStep::SENT:
+      finish_announce(p, true, ESP_OK);
+      break;
+    case AnnounceStep::FAIL:
+      finish_announce(p, false, error_for(result));
+      break;
+    case AnnounceStep::RETRY:
+      if (p.failed == 0) {
+        ESP_LOGW(TAG, "Announcement of #%u not sent (%s); trying again for up to %u s.", (unsigned)p.recording.sequence,
+                 result == AnnounceAttempt::NO_IP ? "no IP address" : "MQTT is down", (unsigned)(ANNOUNCE_BUDGET_MS / 1000));
+      }
+      p.failed++;
+      p.next_us = now + (int64_t)step.delay_ms * 1000;
+      break;
+    }
+  }
 }
 
 // Free the slot being recorded into (nothing kept).
@@ -167,6 +252,44 @@ esp_err_t send_head(httpd_req_t *req, const char *status, const char *extra_head
     return ESP_FAIL;
   }
   return httpd_send(req, buffer, n) < 0 ? ESP_FAIL : ESP_OK;
+}
+
+// The slots' mutex, as ReaderLease wants it.
+struct SlotsMutex {
+  void lock() { xSemaphoreTake(locks().slots, portMAX_DELAY); }
+  void unlock() { xSemaphoreGive(locks().slots); }
+};
+
+// The body of a recording, after its headers: in pieces of CHUNK bytes, until it is all sent, the socket fails
+// (the web server's send timeout, a reset client, Wi-Fi gone: httpd_send() returns an error), or
+// DOWNLOAD_BUDGET_MS has passed in all. httpd_resp_send() would give each send() the whole send timeout, so a
+// client taking a few bytes per timeout could hold the web server's only task (and the slot) for minutes. On
+// failure it returns ESP_FAIL, which makes the web server close the connection.
+esp_err_t send_body(httpd_req_t *req, const uint8_t *data, size_t length) {
+  constexpr size_t CHUNK = 16 * 1024;
+  const int64_t deadline_us = esp_timer_get_time() + (int64_t)DOWNLOAD_BUDGET_MS * 1000;
+  size_t sent = 0;
+  esp_err_t result = ESP_OK;
+  while (sent < length) {
+    if (esp_timer_get_time() >= deadline_us) {
+      ESP_LOGW(TAG, "Download cut off after %u of %u bytes: too slow.", (unsigned)sent, (unsigned)length);
+      result = ESP_FAIL;
+      break;
+    }
+    const size_t piece = std::min(length - sent, CHUNK);
+    const int n = httpd_send(req, reinterpret_cast<const char *>(data + sent), piece);
+    if (n <= 0) {
+      ESP_LOGW(TAG, "Download stopped after %u of %u bytes: the client went away or stalled (%d).", (unsigned)sent, (unsigned)length, n);
+      result = ESP_FAIL;
+      break;
+    }
+    sent += (size_t)n;
+  }
+  PanelMetrics::voice_http_bytes.add(sent);
+  if (result != ESP_OK) {
+    PanelMetrics::voice_http_aborted.add();
+  }
+  return result;
 }
 
 esp_err_t reply_error(httpd_req_t *req, const char *status, PanelMetrics::VoiceHttp counter) {
@@ -203,7 +326,8 @@ esp_err_t VoiceRecorder::_ensure_allocated() { // api mutex held
     }
     return ESP_ERR_NO_MEM;
   }
-  // Internal RAM stack (the default), 6 KB: room for the JSON and the publish (unmeasured on hardware).
+  // Internal RAM stack (the default), 6 KB: room for the JSON and the publish. Not measured under load yet: read
+  // nspanel_task_stack_unused_bytes{task="voice_rec"} on /metrics (and the "voice_rec stack" log line) before changing it.
   queue = q;
   if (xTaskCreate(_worker, "voice_rec", 6144, NULL, 3, NULL) != pdPASS) {
     queue = NULL;
@@ -260,18 +384,21 @@ void VoiceRecorder::_sink(const int16_t *mono, size_t frames, void *) {
   }
 }
 
-// The worker: publishes announcements, and at least every 100 ms runs the automatic stops.
+// The worker: takes announcements off the queue and publishes them (retrying), and at least every 100 ms runs the
+// automatic stops. It never waits on one announcement: a recording that is stopped while another is still
+// being retried is handled in the same loop.
 void VoiceRecorder::_worker(void *) {
   for (;;) {
     Message message;
     if (xQueueReceive(queue, &message, pdMS_TO_TICKS(100)) == pdTRUE && message.type == Message::ANNOUNCE) {
-      announce_now(message.recording);
+      start_announce(message.recording);
     }
     Recording recording;
     if (_auto_stop(&recording)) {
-      // Announced here, not queued: the worker queueing to itself could find its own queue full.
-      announce_now(recording);
+      // Not queued: the worker queueing to itself could find its own queue full.
+      start_announce(recording);
     }
+    service_pending();
   }
 }
 
@@ -401,12 +528,16 @@ bool VoiceRecorder::_auto_stop(Recording *out) {
   if (state == State::IDLE) {
     return false;
   }
-  const int64_t now = esp_timer_get_time();
-  const char *why = !VoiceCapture::streaming()                          ? "the capture ended"
-                    : state == State::FULL && current_auto_send         ? "the limit"
-                    : stop_deadline_us != 0 && now >= stop_deadline_us ? "its time"
-                    : current_hold_lease && now >= hold_until_us.load() ? "the hold ended"
-                                                                        : nullptr;
+  AutoStopInput input;
+  input.idle = false;
+  input.streaming = VoiceCapture::streaming();
+  input.full = state == State::FULL;
+  input.auto_send_at_limit = current_auto_send;
+  input.now_us = esp_timer_get_time();
+  input.stop_deadline_us = stop_deadline_us;
+  input.hold_lease = current_hold_lease;
+  input.hold_until_us = hold_until_us.load();
+  const char *why = stop_reason_text(auto_stop_reason(input));
   if (why == nullptr) {
     return false;
   }
@@ -486,11 +617,16 @@ esp_err_t VoiceRecorder::serve(httpd_req_t *req) {
   int index = -1;
   Lookup found;
   size_t total = 0;
+  // The reader count is held by this lease and let go by its destructor, on every way out of this function
+  // (the early returns, the socket errors, the cut-off): a count that leaked would keep start() from ever
+  // recording into the slot again.
+  SlotsMutex slots_mutex;
+  ReaderLease<SlotsMutex> reader(slots_mutex);
   {
     Lock lock(locks().slots);
     found = find_token(metas, SLOTS, token, esp_timer_get_time(), &index);
     if (found == Lookup::FOUND) {
-      metas[index].readers++; // start() will not pick this slot while it is > 0
+      reader.acquire(metas[index]); // start() will not pick this slot while it is held
       total = WAV_HEADER_BYTES + (size_t)slots[index].frames * sizeof(int16_t);
     }
   }
@@ -533,35 +669,19 @@ esp_err_t VoiceRecorder::serve(httpd_req_t *req) {
     const size_t first = partial ? range.first : 0;
     const size_t length = partial ? range.last - range.first + 1 : total;
     PanelMetrics::voice_http_requests[partial ? PanelMetrics::VOICE_HTTP_206 : PanelMetrics::VOICE_HTTP_200].add();
-    if (head) {
-      char headers[160];
-      int n = snprintf(headers, sizeof(headers), "Content-Type: audio/wav\r\nAccept-Ranges: bytes\r\n");
-      if (partial) {
-        snprintf(headers + n, sizeof(headers) - n, "Content-Range: bytes %u-%u/%u\r\n", (unsigned)range.first, (unsigned)range.last, (unsigned)total);
-      }
-      result = send_head(req, partial ? "206 Partial Content" : "200 OK", headers, length);
-    } else {
-      char content_range[64];
-      httpd_resp_set_type(req, "audio/wav");
-      httpd_resp_set_hdr(req, "Accept-Ranges", "bytes");
-      httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-      if (partial) {
-        snprintf(content_range, sizeof(content_range), "bytes %u-%u/%u", (unsigned)range.first, (unsigned)range.last, (unsigned)total);
-        httpd_resp_set_status(req, "206 Partial Content");
-        httpd_resp_set_hdr(req, "Content-Range", content_range);
-      }
-      // Straight from PSRAM, with a Content-Length (not chunked): some players need it.
-      result = httpd_resp_send(req, reinterpret_cast<const char *>(data + first), length);
-      if (result == ESP_OK) {
-        PanelMetrics::voice_http_bytes.add(length);
-      }
+    char headers[160];
+    int n = snprintf(headers, sizeof(headers), "Content-Type: audio/wav\r\nAccept-Ranges: bytes\r\n");
+    if (partial) {
+      snprintf(headers + n, sizeof(headers) - n, "Content-Range: bytes %u-%u/%u\r\n", (unsigned)range.first, (unsigned)range.last, (unsigned)total);
+    }
+    result = send_head(req, partial ? "206 Partial Content" : "200 OK", headers, length);
+    if (result == ESP_OK && !head) {
+      // Straight from PSRAM, with a Content-Length (not chunked): some players need it. Sent in pieces, against
+      // a deadline for the whole body (see send_body()).
+      result = send_body(req, data + first, length);
     }
   }
-  {
-    Lock lock(locks().slots);
-    metas[index].readers--;
-  }
-  return result;
+  return result; // `reader` lets go of the slot here
 }
 
 void VoiceRecorder::handle_command(const char *action, int seconds) {

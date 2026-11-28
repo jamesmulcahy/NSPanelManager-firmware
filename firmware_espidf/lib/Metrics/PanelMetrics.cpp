@@ -38,6 +38,7 @@ Counter voice_recorded_ms;
 Counter voice_announce_failures;
 Counter voice_http_requests[VOICE_HTTP_COUNT];
 Counter voice_http_bytes;
+Counter voice_http_aborted;
 Counter voice_sink_overruns;
 #endif
 
@@ -335,6 +336,7 @@ constexpr MetricDesc registry[] = {
     metric("nspanel_voice_http_requests_total", voice_http_requests[VOICE_HTTP_410], {"status", "410"}),
     metric("nspanel_voice_http_requests_total", voice_http_requests[VOICE_HTTP_416], {"status", "416"}),
     metric("nspanel_voice_http_bytes_total", voice_http_bytes),
+    metric("nspanel_voice_http_aborted_total", voice_http_aborted),
     metric("nspanel_voice_sink_overruns_total", voice_sink_overruns),
 #endif
 };

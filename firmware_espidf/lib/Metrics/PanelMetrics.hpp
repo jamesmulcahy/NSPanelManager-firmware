@@ -132,6 +132,7 @@ enum VoiceHttp { VOICE_HTTP_200,
                  VOICE_HTTP_COUNT };
 extern Counter voice_http_requests[VOICE_HTTP_COUNT];
 extern Counter voice_http_bytes;     // nspanel_voice_http_bytes_total
+extern Counter voice_http_aborted;   // nspanel_voice_http_aborted_total: downloads that did not finish (client gone, stalled, too slow)
 extern Counter voice_sink_overruns;  // nspanel_voice_sink_overruns_total
 #endif
 

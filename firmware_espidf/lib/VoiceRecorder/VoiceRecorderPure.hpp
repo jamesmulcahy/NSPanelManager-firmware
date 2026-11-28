@@ -1,6 +1,7 @@
 #pragma once
 // The parts of the voice recorder that are plain computation: the token's form, the Range header, the WAV
-// header, which slot a new recording takes, and the level meter's scale. No ESP-IDF, no FreeRTOS, so
+// header, which slot a new recording takes, the readers' accounting, the automatic stops, the announcement's
+// retry schedule and the level meter's scale. No ESP-IDF, no FreeRTOS, so
 // test/host/voice_recorder compiles and tests them on the build machine. VoiceRecorder.cpp uses them as they
 // are. Header-only and not behind BOARD_CUSTOM (nothing here includes the board's code).
 #include <cmath>
@@ -268,6 +269,167 @@ inline Lookup find_token(const SlotMeta *slots, size_t count, const char *token,
   *index = match;
   return Lookup::FOUND;
 }
+
+// --- Readers -------------------------------------------------------------------------------------------------
+
+/**
+ * One serve() call's claim on a slot: counts it in SlotMeta::readers while the claim lives, and always lets
+ * it go, whatever way the request ends (return, early return, an error from the socket). A reader that is
+ * never let go would keep choose_slot() away from the slot for good, and after two such leaks start() would
+ * refuse every recording until a reboot.
+ *
+ * `Mutex` has lock() and unlock(); it is the one that guards the slots' metadata. acquire() is called WITH
+ * that mutex held, in the same critical section as the find_token() that picked the slot, so that the slot
+ * cannot be chosen for a new recording between the lookup and the count. The destructor takes the mutex
+ * itself, so it must run without it held (serve() holds it nowhere else).
+ */
+template <class Mutex>
+class ReaderLease {
+public:
+  explicit ReaderLease(Mutex &mutex) : _mutex(mutex) {}
+  ~ReaderLease() { release(); }
+  ReaderLease(const ReaderLease &) = delete;
+  ReaderLease &operator=(const ReaderLease &) = delete;
+
+  void acquire(SlotMeta &meta) { // Mutex held by the caller
+    if (_meta == nullptr) {
+      _meta = &meta;
+      meta.readers++;
+    }
+  }
+  void release() { // Idempotent; the count never goes below zero
+    if (_meta != nullptr) {
+      _mutex.lock();
+      if (_meta->readers > 0) {
+        _meta->readers--;
+      }
+      _mutex.unlock();
+      _meta = nullptr;
+    }
+  }
+
+private:
+  Mutex &_mutex;
+  SlotMeta *_meta = nullptr;
+};
+
+// --- Automatic stops -----------------------------------------------------------------------------------------
+
+enum class StopReason : uint8_t { NONE, CAPTURE_ENDED, LIMIT, TIMED, HOLD_ENDED };
+
+inline const char *stop_reason_text(StopReason reason) {
+  switch (reason) {
+  case StopReason::CAPTURE_ENDED: return "the capture ended";
+  case StopReason::LIMIT: return "the limit";
+  case StopReason::TIMED: return "its time";
+  case StopReason::HOLD_ENDED: return "the hold ended";
+  case StopReason::NONE: break;
+  }
+  return nullptr;
+}
+
+// What the worker knows about the recording under way when it asks whether a stop is due.
+struct AutoStopInput {
+  bool idle = true;                // Nothing is being recorded: never a stop
+  bool streaming = true;           // VoiceCapture is still delivering audio
+  bool full = false;               // MAX_FRAMES reached
+  bool auto_send_at_limit = true;  // Options::auto_send_at_limit
+  int64_t now_us = 0;
+  int64_t stop_deadline_us = 0;    // Options::stop_after_ms as a time; 0: none
+  bool hold_lease = false;         // Options::hold_lease
+  int64_t hold_until_us = 0;       // When the lease runs out unless hold() pushes it on
+};
+
+/**
+ * Whether the recording under way is to be stopped now, and why: in this order, the capture having ended on
+ * its own (an I2S failure: the stop discards), the limit (only with auto_send_at_limit; otherwise the
+ * recording stays FULL for the caller), the timed stop, the hold lease having lapsed.
+ */
+inline StopReason auto_stop_reason(const AutoStopInput &in) {
+  if (in.idle) {
+    return StopReason::NONE;
+  }
+  if (!in.streaming) {
+    return StopReason::CAPTURE_ENDED;
+  }
+  if (in.full && in.auto_send_at_limit) {
+    return StopReason::LIMIT;
+  }
+  if (in.stop_deadline_us != 0 && in.now_us >= in.stop_deadline_us) {
+    return StopReason::TIMED;
+  }
+  if (in.hold_lease && in.now_us >= in.hold_until_us) {
+    return StopReason::HOLD_ENDED;
+  }
+  return StopReason::NONE;
+}
+
+// --- Announcement retries ------------------------------------------------------------------------------------
+
+// The URL lives 60 s from stop(). While MQTT (or the Wi-Fi under it) is down, the announcement is tried again
+// for this long, then given up and reported as failed. The UI shows nothing until it is reported, so this is
+// also the longest a release waits for its toast.
+inline constexpr uint32_t ANNOUNCE_BUDGET_MS = 15000;
+inline constexpr uint32_t ANNOUNCE_FIRST_DELAY_MS = 250;
+inline constexpr uint32_t ANNOUNCE_MAX_DELAY_MS = 2000;
+
+enum class AnnounceAttempt : uint8_t {
+  PUBLISHED,     // Handed to the MQTT client
+  NOT_SERVABLE,  // The recording's URL is gone (overwritten or expired): nothing worth announcing
+  NO_IP,         // The panel has no IP address, so there is no URL to give out
+  PUBLISH_FAILED // MQTT is down, or the client refused the message
+};
+
+struct AnnounceStep {
+  enum Kind : uint8_t { SENT, FAIL, RETRY } kind = FAIL;
+  uint32_t delay_ms = 0; // RETRY: wait this long, then try again
+};
+
+/**
+ * What to do after an attempt. `failed_before` is how many attempts have already failed, not counting this one;
+ * `elapsed_ms` the time since the first attempt. Retries back off 250, 500, 1000, 2000, 2000 ... ms, the last
+ * one cut to what is left of ANNOUNCE_BUDGET_MS. No IP address at the very first attempt fails at once (start()
+ * refuses without one, so the Wi-Fi went away during the recording, and a release into nothing should not
+ * wait); once the panel has retried, no IP is waited out like MQTT being down.
+ */
+inline AnnounceStep announce_step(AnnounceAttempt attempt, uint32_t failed_before, uint32_t elapsed_ms) {
+  AnnounceStep step;
+  switch (attempt) {
+  case AnnounceAttempt::PUBLISHED:
+    step.kind = AnnounceStep::SENT;
+    return step;
+  case AnnounceAttempt::NOT_SERVABLE:
+    return step; // FAIL
+  case AnnounceAttempt::NO_IP:
+    if (failed_before == 0) {
+      return step; // FAIL
+    }
+    break;
+  case AnnounceAttempt::PUBLISH_FAILED:
+    break;
+  }
+  if (elapsed_ms >= ANNOUNCE_BUDGET_MS) {
+    return step; // FAIL
+  }
+  uint32_t delay = ANNOUNCE_FIRST_DELAY_MS;
+  for (uint32_t i = 0; i < failed_before && delay < ANNOUNCE_MAX_DELAY_MS; i++) {
+    delay *= 2;
+  }
+  if (delay > ANNOUNCE_MAX_DELAY_MS) {
+    delay = ANNOUNCE_MAX_DELAY_MS;
+  }
+  const uint32_t left = ANNOUNCE_BUDGET_MS - elapsed_ms;
+  step.kind = AnnounceStep::RETRY;
+  step.delay_ms = delay < left ? delay : left;
+  return step;
+}
+
+// --- Downloads -----------------------------------------------------------------------------------------------
+
+// A download of a recording (480 KB at most) is cut off after this long in all, however slowly the client takes
+// it: the web server has one task, and a client that drains a byte per timeout would otherwise hold it, and the
+// slot, for minutes. 250 KB/s measured; this allows a floor of 16 KB/s.
+inline constexpr uint32_t DOWNLOAD_BUDGET_MS = 30000;
 
 // --- Level ---------------------------------------------------------------------------------------------------
 

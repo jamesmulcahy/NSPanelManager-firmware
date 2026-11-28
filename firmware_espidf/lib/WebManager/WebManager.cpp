@@ -110,6 +110,16 @@ void WebManager::start() {
     // TCP keepalive closes dead sessions after ~30 s idle; capping sessions at 4 (plus the 3 the
     // server uses internally) leaves sockets free for MQTT and HTTP clients, and LRU purge drops
     // the oldest session instead of refusing new clients when the cap is reached.
+#if defined(BOARD_CUSTOM)
+    // The server has ONE task: a client that stops reading a recording's download (or a request that stops
+    // arriving) holds every other request, /metrics included, for as long as one send()/recv() may block, which
+    // is these timeouts (the default is 5 s). 3 s: lwIP's first retransmission is at 1.5 s and the second at 3 s,
+    // so a lost tail segment on a healthy link recovers inside it and a peer that has really gone is dropped
+    // after at most 3 s of waiting; the voice download as a whole is also capped (DOWNLOAD_BUDGET_MS), because
+    // a peer that takes a few bytes per timeout never trips a per-call timeout. Other boards keep the default.
+    WebManager::_config.send_wait_timeout = 3;
+    WebManager::_config.recv_wait_timeout = 3;
+#endif
     WebManager::_config.max_open_sockets = 4;
     WebManager::_config.lru_purge_enable = true;
     WebManager::_config.keep_alive_enable = true;
