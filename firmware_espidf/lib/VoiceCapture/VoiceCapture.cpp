@@ -73,36 +73,61 @@ esp_err_t VoiceCapture::record(int16_t *out, size_t frames, int gain_db) {
   return VoiceCapture::record(out, frames, options);
 }
 
+VoiceCapture::Request &VoiceCapture::_stream_request() {
+  static Request request = {nullptr, 0, Options(), ESP_FAIL};
+  return request;
+}
+
+esp_err_t VoiceCapture::_validate(const Options &options) {
+  if ((options.outputs & ALL_OUTPUTS) == 0 || (options.outputs & ~ALL_OUTPUTS) != 0 || options.ns_level < 0 || options.ns_level > 2 ||
+      (options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000)) || options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f ||
+      options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  return ESP_OK;
+}
+
+// The capture task starts on the first use, and stays (the codec is stopped between recordings).
+esp_err_t VoiceCapture::_ensure_task() {
+  if (VoiceCapture::_requests != NULL) {
+    return ESP_OK;
+  }
+  esp_log_level_set(TAG, ConfigManager::log_level);
+  VoiceCapture::_requests = xQueueCreate(1, sizeof(Request *));
+  VoiceCapture::_done = xSemaphoreCreateBinary();
+  VoiceCapture::_started = xSemaphoreCreateBinary();
+  // Above the web server (5) and the UI, so that its reads keep up with the DMA. The stack has room for
+  // esp-sr's calls (the high-water mark is logged after each recording that runs them).
+  if (VoiceCapture::_requests == NULL || VoiceCapture::_done == NULL || VoiceCapture::_started == NULL ||
+      xTaskCreatePinnedToCore(VoiceCapture::_task, "voice_capture", 8192, NULL, 6, NULL, tskNO_AFFINITY) != pdPASS) {
+    ESP_LOGE(TAG, "No memory for the capture task.");
+    if (VoiceCapture::_requests != NULL) {
+      vQueueDelete(VoiceCapture::_requests);
+      VoiceCapture::_requests = NULL;
+    }
+    if (VoiceCapture::_done != NULL) {
+      vSemaphoreDelete(VoiceCapture::_done);
+      VoiceCapture::_done = NULL;
+    }
+    if (VoiceCapture::_started != NULL) {
+      vSemaphoreDelete(VoiceCapture::_started);
+      VoiceCapture::_started = NULL;
+    }
+    return ESP_ERR_NO_MEM;
+  }
+  return ESP_OK;
+}
+
 esp_err_t VoiceCapture::record(int16_t *out, size_t frames, const Options &options) {
-  if (out == nullptr || frames == 0 || (options.outputs & ALL_OUTPUTS) == 0 || (options.outputs & ~ALL_OUTPUTS) != 0 ||
-      options.ns_level < 0 || options.ns_level > 2 || (options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000)) ||
-      options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f || options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f) {
+  if (out == nullptr || frames == 0 || VoiceCapture::_validate(options) != ESP_OK) {
     return ESP_ERR_INVALID_ARG;
   }
   if (VoiceCapture::_busy.exchange(true)) {
     return ESP_ERR_INVALID_STATE;
   }
-  // The task starts on the first recording, and stays (the codec is stopped between recordings).
-  if (VoiceCapture::_requests == NULL) {
-    esp_log_level_set(TAG, ConfigManager::log_level);
-    VoiceCapture::_requests = xQueueCreate(1, sizeof(Request *));
-    VoiceCapture::_done = xSemaphoreCreateBinary();
-    // Above the web server (5) and the UI, so that its reads keep up with the DMA. The stack has room for
-    // esp-sr's calls (the high-water mark is logged after each recording that runs them).
-    if (VoiceCapture::_requests == NULL || VoiceCapture::_done == NULL ||
-        xTaskCreatePinnedToCore(VoiceCapture::_task, "voice_capture", 8192, NULL, 6, NULL, tskNO_AFFINITY) != pdPASS) {
-      ESP_LOGE(TAG, "No memory for the capture task.");
-      if (VoiceCapture::_requests != NULL) {
-        vQueueDelete(VoiceCapture::_requests);
-        VoiceCapture::_requests = NULL;
-      }
-      if (VoiceCapture::_done != NULL) {
-        vSemaphoreDelete(VoiceCapture::_done);
-        VoiceCapture::_done = NULL;
-      }
-      VoiceCapture::_busy = false;
-      return ESP_ERR_NO_MEM;
-    }
+  if (VoiceCapture::_ensure_task() != ESP_OK) {
+    VoiceCapture::_busy = false;
+    return ESP_ERR_NO_MEM;
   }
   Request request = {out, frames, options, ESP_FAIL};
   Request *pending = &request;
@@ -111,6 +136,49 @@ esp_err_t VoiceCapture::record(int16_t *out, size_t frames, const Options &optio
   xSemaphoreTake(VoiceCapture::_done, portMAX_DELAY);
   VoiceCapture::_busy = false;
   return request.result;
+}
+
+esp_err_t VoiceCapture::start(Sink sink, void *context, const Options &options) {
+  if (sink == nullptr || VoiceCapture::_validate(options) != ESP_OK || VoiceCapture::channels(options.outputs) != 1) {
+    return ESP_ERR_INVALID_ARG;
+  }
+  if (VoiceCapture::_busy.exchange(true)) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  if (VoiceCapture::_ensure_task() != ESP_OK) {
+    VoiceCapture::_busy = false;
+    return ESP_ERR_NO_MEM;
+  }
+  Request &request = VoiceCapture::_stream_request();
+  request.out = nullptr;
+  request.frames = 0;
+  request.options = options;
+  request.result = ESP_FAIL;
+  request.sink = sink;
+  request.context = context;
+  request.stop_flag = false;
+  request.opened = false;
+  Request *pending = &request;
+  xQueueSend(VoiceCapture::_requests, &pending, portMAX_DELAY);
+  // Given when the codec is open, or by _task() if it is not going to be.
+  xSemaphoreTake(VoiceCapture::_started, portMAX_DELAY);
+  if (!request.opened) {
+    xSemaphoreTake(VoiceCapture::_done, portMAX_DELAY);
+    VoiceCapture::_busy = false;
+    return request.result != ESP_OK ? request.result : ESP_FAIL;
+  }
+  VoiceCapture::_stream_active = true;
+  return ESP_OK;
+}
+
+esp_err_t VoiceCapture::stop() {
+  if (!VoiceCapture::_stream_active.exchange(false)) {
+    return ESP_ERR_INVALID_STATE;
+  }
+  VoiceCapture::_stream_request().stop_flag = true;
+  xSemaphoreTake(VoiceCapture::_done, portMAX_DELAY);
+  VoiceCapture::_busy = false;
+  return VoiceCapture::_stream_request().result;
 }
 
 void VoiceCapture::_task(void *param) {
@@ -122,6 +190,9 @@ void VoiceCapture::_task(void *param) {
     request->result = codec_dev != nullptr ? ESP_OK : VoiceCapture::_init_codec();
     if (request->result == ESP_OK) {
       request->result = VoiceCapture::_capture(request);
+    }
+    if (request->sink != nullptr && !request->opened) {
+      xSemaphoreGive(VoiceCapture::_started); // The stream never opened: start() is waiting
     }
     xSemaphoreGive(VoiceCapture::_done);
   }
@@ -399,18 +470,20 @@ esp_err_t VoiceCapture::_capture(Request *request) {
   const Options &options = request->options;
   // The heap before anything of this recording's, for what its buffers and esp-sr take.
   const HeapMark before = HeapMark::now();
+  const bool stream = request->sink != nullptr;
   const int64_t setup_start = esp_timer_get_time();
   Pipeline pipeline;
   esp_err_t result = pipeline.start(options);
   const int64_t setup_us = esp_timer_get_time() - setup_start;
   // A chunk as read (TDM, SLOTS interleaved), then one array per channel.
   int16_t *tdm = result != ESP_OK ? nullptr
-                                  : static_cast<int16_t *>(heap_caps_malloc(CHUNK_FRAMES * (SLOTS + CHANNELS) * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+                                  : static_cast<int16_t *>(heap_caps_malloc(CHUNK_FRAMES * (SLOTS + CHANNELS + 1) * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   if (tdm == nullptr) {
     pipeline.stop();
     return result != ESP_OK ? result : ESP_ERR_NO_MEM;
   }
   const HeapMark ready = HeapMark::now();
+  int16_t *mono = tdm + CHUNK_FRAMES * (SLOTS + CHANNELS); // A stream's processed chunk
   int16_t *inputs[CHANNELS];
   for (int channel = 0; channel < CHANNELS; channel++) {
     inputs[channel] = tdm + CHUNK_FRAMES * (SLOTS + channel);
@@ -435,13 +508,18 @@ esp_err_t VoiceCapture::_capture(Request *request) {
     ESP_LOGW(TAG, "Gain %d dB: %d.", options.gain_db, ret);
   }
 
+  if (stream) {
+    request->opened = true;
+    xSemaphoreGive(VoiceCapture::_started);
+  }
   int64_t sum[SLOTS] = {};
   uint64_t squares[SLOTS] = {};
   int peak[SLOTS] = {};
   size_t skip = SETTLE_FRAMES, done = 0;
   const int64_t start_us = esp_timer_get_time();
-  while (done < request->frames) {
-    size_t wanted = skip > 0 ? skip : request->frames - done;
+  // A recording ends at its frame count, a stream when stop() says (checked once per chunk).
+  while (stream ? !request->stop_flag.load() : done < request->frames) {
+    size_t wanted = skip > 0 ? skip : (stream ? CHUNK_FRAMES : request->frames - done);
     size_t frames = wanted < CHUNK_FRAMES ? wanted : CHUNK_FRAMES;
     ret = esp_codec_dev_read(codec_dev, tdm, frames * SLOTS * sizeof(int16_t));
     if (ret != ESP_CODEC_DEV_OK) {
@@ -462,7 +540,14 @@ esp_err_t VoiceCapture::_capture(Request *request) {
         inputs[SLOT_CHANNEL[slot]][i / SLOTS] = sample;
       }
     }
-    VoiceCapture::_process(pipeline, inputs, frames, request->out + done * pipeline.channels);
+    if (stream) {
+      VoiceCapture::_process(pipeline, inputs, frames, mono);
+      for (size_t at = 0; at < frames; at += SINK_FRAMES) {
+        request->sink(mono + at, frames - at < SINK_FRAMES ? frames - at : SINK_FRAMES, request->context);
+      }
+    } else {
+      VoiceCapture::_process(pipeline, inputs, frames, request->out + done * pipeline.channels);
+    }
     done += frames;
   }
   const int64_t wall_us = esp_timer_get_time() - start_us;

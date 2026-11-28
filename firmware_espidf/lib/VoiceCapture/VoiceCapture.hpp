@@ -92,13 +92,45 @@ public:
   // The three inputs, interleaved MIC1, MIC2, REF (MODE_RAW).
   static esp_err_t record(int16_t *out, size_t frames, int gain_db = DEFAULT_GAIN_DB);
 
+  /**
+   * The streaming sink: called on the capture task with `frames` frames of the processed audio, 16 kHz mono
+   * 16-bit, at most SINK_FRAMES (320, 20 ms) at a time (each 40 ms read's output is handed over as two
+   * halves). Must not block or take a lock that a blocking task holds. `mono` is only valid during the call.
+   */
+  using Sink = void (*)(const int16_t *mono, size_t frames, void *context);
+  static constexpr size_t SINK_FRAMES = 320;
+
+  /**
+   * Stream processed audio to `sink` until stop(). Shares record()'s busy flag, so the two exclude each
+   * other. Blocks until the codec is open (or failed), then returns; the first 100 ms are dropped before the
+   * first sink call. `options.outputs` must name exactly one output (the sink gets that one, mono).
+   * @return ESP_OK; ESP_ERR_INVALID_ARG (no sink, bad options, not a single output); ESP_ERR_INVALID_STATE
+   *         (record() or another stream is running); ESP_ERR_NO_MEM; or the codec's failure.
+   */
+  static esp_err_t start(Sink sink, void *context, const Options &options);
+
+  /**
+   * End the stream. Returns once the capture task has returned from its last sink call and closed the codec
+   * (about 40 ms, at most one chunk plus one I2S read timeout). The sink is never called again.
+   * @return ESP_OK; ESP_ERR_INVALID_STATE (no stream); ESP_FAIL if an I2S read failed during the stream (it
+   *         had ended itself; stop() still releases it).
+   */
+  static esp_err_t stop();
+
 private:
   struct Request {
     int16_t *out;
     size_t frames;
     Options options;
     esp_err_t result;
+    // Streaming (start()): the sink, and the flags between the caller and the capture task.
+    Sink sink = nullptr;
+    void *context = nullptr;
+    std::atomic<bool> stop_flag{false};
+    std::atomic<bool> opened{false};
   };
+  static esp_err_t _validate(const Options &options);
+  static esp_err_t _ensure_task();
   struct Pipeline;
 
   static void _task(void *param);
@@ -115,5 +147,8 @@ private:
   static inline std::atomic<bool> _busy = false;
   static inline QueueHandle_t _requests = NULL;
   static inline SemaphoreHandle_t _done = NULL;
+  static inline SemaphoreHandle_t _started = NULL; // Given once per stream: the codec is open, or it will not be
+  static Request &_stream_request(); // The stream's request (in the .cpp: Options is not complete here)
+  static inline std::atomic<bool> _stream_active = false;
 };
 #endif
