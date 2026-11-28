@@ -20,7 +20,7 @@ set -euo pipefail
 BOARD_TYPE="${1:-}"
 cd "$(dirname "$0")"
 
-if [ "${BOARD_TYPE}" == "custom" ]; then
+if [ "${BOARD_TYPE}" == "waveshare_p4" ]; then
   PIO_ENV="custom_pcb"
   CHIP_ARGS=(--chip esp32p4 merge_bin --flash_mode qio --flash_size 32MB)
   # The ESP32-P4 boots its second-stage bootloader from 0x2000 (CONFIG_BOOTLOADER_OFFSET_IN_FLASH in
@@ -33,7 +33,7 @@ elif [ "${BOARD_TYPE}" == "sonoff" ]; then
   BOOTLOADER_OFFSET=0x1000
   PARTITIONS_CSV=partitions.csv
 else
-  echo "Syntax: $0 <sonoff|custom> [output file]"
+  echo "Syntax: $0 <sonoff|waveshare_p4> [output file]"
   exit 1
 fi
 OUTPUT="${2:-provisioned-flash-${BOARD_TYPE}.bin}"
