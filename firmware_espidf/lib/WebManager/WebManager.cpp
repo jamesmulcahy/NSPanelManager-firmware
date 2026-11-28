@@ -127,7 +127,7 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_screenshot);             // The LVGL screen as an image
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_metrics);                // Prometheus scrape endpoint
 #if defined(BOARD_CUSTOM)
-      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // TEMPORARY: raw microphone audio
+      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // TEMPORARY: microphone audio, raw or processed
 #endif
 #ifdef NSPM_HEAP_DIAG
       HeapDiag::register_uris(WebManager::_server); // 2 more, 14 in all (15 on custom_pcb)
@@ -577,69 +577,108 @@ esp_err_t WebManager::_handle_uri_screenshot(httpd_req_t *req) {
 }
 
 #if defined(BOARD_CUSTOM)
-// TEMPORARY (voice, phase 0b): the microphones' raw audio, to listen to. Remove once voice capture has its
-// own way out (the AFE's output, its URL sent over MQTT).
+// TEMPORARY (voice, phases 0b and 1b): the microphones' audio, raw or through any of the processing
+// stages, to listen to and to tune by (docs/CUSTOM_PCB.md, "Tuning the processing"). Remove once voice
+// capture has its own way out (phase 2b: the recording's URL sent over MQTT).
 static void put_le(uint8_t *at, uint32_t value, int bytes) {
   for (int i = 0; i < bytes; i++) {
     at[i] = (value >> (8 * i)) & 0xFF;
   }
 }
 
+// GET /rec/test.wav?mode=raw|ns|bf|bf_ns|all&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=65&ch=all|1|2|ref
 esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   static constexpr int MAX_SECONDS = 30;
   static constexpr size_t WAV_HEADER = 44;
+  static constexpr int DEFAULT_HPF_HZ = 100; // what hpf=1 means
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  char query[96], value[16];
-  int seconds = 5, gain_db = VoiceCapture::DEFAULT_GAIN_DB;
-  int channel = -1; // -1: all three
+  char query[192], value[16];
+  int seconds = 5;
+  VoiceCapture::Options options;
+  const char *mode = "raw";
+  int channel = -1; // raw only: -1 all three, or one of them
   bool bad = false;
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    if (httpd_query_key_value(query, "mode", value, sizeof(value)) == ESP_OK) {
+      // Each maps to its Output bits; "all" is the four stages of the same audio, 4 channels.
+      static constexpr struct {
+        const char *name;
+        uint8_t outputs;
+      } MODES[] = {{"raw", VoiceCapture::MODE_RAW}, {"ns", VoiceCapture::MODE_NS}, {"bf", VoiceCapture::MODE_BF}, {"bf_ns", VoiceCapture::MODE_BF_NS},
+                   {"all", VoiceCapture::MODE_COMPARE}};
+      bool known = false;
+      for (const auto &entry : MODES) {
+        if (strcmp(value, entry.name) == 0) {
+          mode = entry.name;
+          options.outputs = entry.outputs;
+          known = true;
+        }
+      }
+      bad |= !known;
+    }
     if (httpd_query_key_value(query, "secs", value, sizeof(value)) == ESP_OK) {
       seconds = atoi(value);
       bad |= seconds < 1 || seconds > MAX_SECONDS;
     }
     if (httpd_query_key_value(query, "gain", value, sizeof(value)) == ESP_OK) {
-      gain_db = atoi(value);
-      bad |= gain_db < 0 || gain_db > 37;
+      options.gain_db = atoi(value);
+      bad |= options.gain_db < 0 || options.gain_db > 37;
+    }
+    if (httpd_query_key_value(query, "ns", value, sizeof(value)) == ESP_OK) {
+      options.ns_level = atoi(value);
+      bad |= options.ns_level < 0 || options.ns_level > 2;
+    }
+    if (httpd_query_key_value(query, "hpf", value, sizeof(value)) == ESP_OK) {
+      // 0 off, 1 the default cutoff, or a cutoff in Hz.
+      const int hpf = atoi(value);
+      options.hpf_hz = hpf == 1 ? DEFAULT_HPF_HZ : hpf;
+      bad |= options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000);
+    }
+    if (httpd_query_key_value(query, "angle", value, sizeof(value)) == ESP_OK) {
+      options.bf_angle_deg = atof(value);
+      bad |= options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f;
+    }
+    if (httpd_query_key_value(query, "spacing", value, sizeof(value)) == ESP_OK) {
+      options.mic_spacing_mm = atof(value);
+      bad |= options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f;
     }
     if (httpd_query_key_value(query, "ch", value, sizeof(value)) == ESP_OK) {
-      channel = strcmp(value, "1") == 0     ? VoiceCapture::MIC1
-                : strcmp(value, "2") == 0   ? VoiceCapture::MIC2
-                : strcmp(value, "ref") == 0 ? VoiceCapture::REF
+      channel = strcmp(value, "1") == 0     ? VoiceCapture::OUT_MIC1
+                : strcmp(value, "2") == 0   ? VoiceCapture::OUT_MIC2
+                : strcmp(value, "ref") == 0 ? VoiceCapture::OUT_REF
                 : strcmp(value, "all") == 0 ? -1
                                             : -2;
-      bad |= channel == -2;
+      bad |= channel == -2 || (channel > 0 && options.outputs != VoiceCapture::MODE_RAW);
     }
   }
   if (bad) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_sendstr(req, "secs must be 1-30, ch all, 1, 2 or ref, gain 0-37 (dB).\n");
+    return httpd_resp_sendstr(req, "mode raw, ns, bf, bf_ns or all; secs 1-30; gain 0-37 (dB); ns 0-2; hpf 0, 1 or 20-2000 (Hz); angle 0-360 (deg); "
+                                   "spacing 5-500 (mm); ch all, 1, 2 or ref (mode raw only).\n");
+  }
+  if (channel > 0) {
+    options.outputs = channel;
   }
 
-  // The recording, with room for the WAV header in front. A single channel is then packed in place.
+  // The recording, with room for the WAV header in front.
   const size_t frames = (size_t)seconds * VoiceCapture::SAMPLE_RATE;
-  const int channels = channel < 0 ? VoiceCapture::CHANNELS : 1;
-  uint8_t *wav = static_cast<uint8_t *>(heap_caps_malloc(WAV_HEADER + frames * VoiceCapture::CHANNELS * sizeof(int16_t), MALLOC_CAP_SPIRAM));
+  const int channels = VoiceCapture::channels(options.outputs);
+  uint8_t *wav = static_cast<uint8_t *>(heap_caps_malloc(WAV_HEADER + frames * channels * sizeof(int16_t), MALLOC_CAP_SPIRAM));
   if (wav == nullptr) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, "No memory for the recording.\n");
   }
   int16_t *samples = reinterpret_cast<int16_t *>(wav + WAV_HEADER);
-  // Blocks this (the web server's) task for the recording; the I2S reads run on VoiceCapture's.
-  esp_err_t err = VoiceCapture::record(samples, frames, gain_db);
+  // Blocks this (the web server's) task for the recording; the I2S reads and the processing run on VoiceCapture's.
+  esp_err_t err = VoiceCapture::record(samples, frames, options);
   if (err != ESP_OK) {
     heap_caps_free(wav);
     ESP_LOGW("WebManager", "No recording: %s.", esp_err_to_name(err));
     httpd_resp_set_status(req, err == ESP_ERR_INVALID_STATE ? "503 Service Unavailable" : "500 Internal Server Error");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, err == ESP_ERR_INVALID_STATE ? "Another recording is under way.\n" : "Recording failed: see the log.\n");
-  }
-  if (channels == 1) {
-    for (size_t i = 0; i < frames; i++) {
-      samples[i] = samples[i * VoiceCapture::CHANNELS + channel];
-    }
   }
 
   const uint32_t data_size = frames * channels * sizeof(int16_t);
@@ -661,7 +700,7 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   // One send, so the response has a Content-Length.
   err = httpd_resp_send(req, reinterpret_cast<const char *>(wav), WAV_HEADER + data_size);
   heap_caps_free(wav);
-  ESP_LOGI("WebManager", "Recording sent: %d s, %d channel(s), %lu bytes%s.", seconds, channels, (unsigned long)(WAV_HEADER + data_size),
+  ESP_LOGI("WebManager", "Recording sent: mode %s, %d s, %d channel(s), %lu bytes%s.", mode, seconds, channels, (unsigned long)(WAV_HEADER + data_size),
            err == ESP_OK ? "" : " (send failed)");
   return err;
 }
