@@ -598,7 +598,7 @@ static void put_le(uint8_t *at, uint32_t value, int bytes) {
 
 // GET /rec/test.wav?mode=raw|ns|bf|bf_ns|stages|voice|cmp&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=60&ch=all|1|2|ref
 //                  &mic=1|2|avg&makeup=12&agc=1&target=-20&maxgain=24&gate=12
-//                  &presence=5&presencehz=2800&lowmid=-3&lowmidhz=400&ratio=3&thresh=-28&compmakeup=5
+//                  &presence=5&presencehz=2800&lowmid=-3&lowmidhz=400&ratio=4&thresh=-30&compmakeup=5
 // voice and cmp (all) default to the production settings (VoiceCapture::voice_options()): gain 36, hpf 150 (hpf=1 still means 100).
 esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   static constexpr int MAX_SECONDS = 30;

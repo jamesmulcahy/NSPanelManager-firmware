@@ -435,7 +435,7 @@ struct Level {
 // its energy at 1-4 kHz, where its clarity is, and most of it at 150-1000 Hz. The AGC measures after it.
 //
 // After the makeup gain and the expander, a feed-forward compressor (Options::comp_*): a peak envelope
-// (5 ms attack, 120 ms release), and above the threshold the gain drops by (1 - 1/ratio) of the excess,
+// (5 ms attack, 120 ms release; 4:1 above -30 dBFS by default), and above the threshold the gain drops by (1 - 1/ratio) of the excess,
 // re-computed every COMP_BLOCK samples and ramped between, then its own makeup gain. The AGC only sets the
 // level over half a second or more; this evens the syllables out, which is what makes a voice dense.
 // ratio 1 is off.
