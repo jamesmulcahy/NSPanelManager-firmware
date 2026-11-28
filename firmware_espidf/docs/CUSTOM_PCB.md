@@ -108,7 +108,7 @@ its end (about 65 KB of internal RAM held only while recording; see `VoiceCaptur
 recording logs, at INFO (raise the manager's log level to see it):
 
 ```
-VoiceCapture: Recorded 80000 frames (5000 ms) at 30 dB, outputs 0x39, NS level 1, HPF 0 Hz, beam 90 deg, spacing 65 mm:
+VoiceCapture: Recorded 80000 frames (5000 ms) at 30 dB, outputs 0x39, NS level 1, HPF 0 Hz, beam 90 deg, spacing 60 mm:
 VoiceCapture:   slot 0 MIC1       peak ..., RMS ... (-.. dBFS), mean ..      <- the inputs, before the HPF
 VoiceCapture:   out NS(BF)   peak ... (-.. dBFS), RMS ... (-.. dBFS)         <- each output
 VoiceCapture:   CPU: setup .. us; HPF .. us (..%), GSC .. us (..%), NS(MIC1) .. us (..%), NS(BF) .. us (..%); .. ms wall for 5000 ms of audio
@@ -133,7 +133,7 @@ The panel must run a build with this code: `pio run -e custom_pcb -t upload --up
 | `ns` | 0, 1, 2 (1) | WebRTC NS strength: mild, medium, aggressive. Applies to both NS outputs |
 | `hpf` | 0, 1, or 20-2000 Hz (0) | Software 2nd-order Butterworth high-pass on the inputs, before everything (raw included). `1` = 100 Hz. For hum, rumble, HVAC |
 | `angle` | 0-360 deg (90) | Beamformer steering, from the axis through MIC1 and MIC2. 90 = broadside, straight out of the panel: right for a talker in front |
-| `spacing` | 5-500 mm (65) | MIC1-MIC2 distance for the beamformer's geometry. 65 is a placeholder: measure the board. At `angle=90` it matters little (broadside needs no steering delay) |
+| `spacing` | 5-500 mm (60) | MIC1-MIC2 distance for the beamformer's geometry. 60 mm, measured on the board. At `angle=90` it matters little (broadside needs no steering delay) |
 | `ch` | `all`, `1`, `2`, `ref` | `mode=raw` only: one input alone, mono |
 
 ```
@@ -170,14 +170,14 @@ What to decide, in order, and how to tell:
    raises the noise floor relative to speech after NS.
 2. **Does the beamformer help?** Compare channels 1 and 3 (MIC1 vs BF), and 2 and 4 (NS vs BF+NS), of
    one `mode=all` recording, with a noise source off to one side (a radio, a tap). With only two mics
-   about 65 mm apart (correlation 0.88), the gain is small and mostly above 1-2 kHz; if BF+NS is not
+   60 mm apart (correlation 0.88), the gain is small and mostly above 1-2 kHz; if BF+NS is not
    clearly better than NS alone, or sounds hollow or phasey, the plan can drop to NS on MIC1 (or on
    (MIC1+MIC2)/2) and save GSC's CPU and PSRAM.
 3. **NS level.** `ns=0`, `1`, `2` on `mode=all`. Listen to NS(BF) for musical noise (warbling), clipped
    word starts and ends, and pumping. Pick the strongest level that keeps speech natural.
 4. **HPF.** `hpf=1` (100 Hz), or 80-150. Keep it if the room has hum or rumble and the voice does not get
    thin. The ES7210 has its own DC filter, so it is off by default.
-5. **Spacing and angle.** Only if the beamformer is kept: measure the mic spacing and set `spacing`;
+5. **Spacing and angle.** Only if the beamformer is kept: the spacing is measured (60 mm), so leave `spacing` alone and
    leave `angle=90` unless talkers are off to one side.
 6. **Cost.** Read the `CPU:` and `Heap:` lines: GSC and NS should each be a few percent of a core; note
    the internal RAM "took" and the lowest free internal RAM, and report them.

@@ -586,7 +586,7 @@ static void put_le(uint8_t *at, uint32_t value, int bytes) {
   }
 }
 
-// GET /rec/test.wav?mode=raw|ns|bf|bf_ns|all&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=65&ch=all|1|2|ref
+// GET /rec/test.wav?mode=raw|ns|bf|bf_ns|all&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=60&ch=all|1|2|ref
 esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   static constexpr int MAX_SECONDS = 30;
   static constexpr size_t WAV_HEADER = 44;

@@ -74,8 +74,8 @@ public:
     // The beamformer's steering, degrees from the axis through MIC1 and MIC2: 90 is broadside, straight
     // out of the panel (and anywhere in the plane at right angles to that axis).
     float bf_angle_deg = 90.0f;
-    // The distance between MIC1 and MIC2, for the beamformer's geometry.
-    float mic_spacing_mm = 65.0f;
+    // The distance between MIC1 and MIC2, for the beamformer's geometry: 60 mm on this board (measured).
+    float mic_spacing_mm = 60.0f;
   };
 
   // How many channels (samples per frame) a recording with these outputs holds.
