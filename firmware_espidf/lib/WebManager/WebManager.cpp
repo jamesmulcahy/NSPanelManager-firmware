@@ -598,7 +598,8 @@ static void put_le(uint8_t *at, uint32_t value, int bytes) {
 
 // GET /rec/test.wav?mode=raw|ns|bf|bf_ns|stages|voice|cmp&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=60&ch=all|1|2|ref
 //                  &mic=1|2|avg&makeup=12&agc=1&target=-20&maxgain=24&gate=12
-// voice and cmp (all) default to the production settings (VoiceCapture::voice_options()): gain 36, hpf 200 (hpf=1 still means 100).
+//                  &presence=5&presencehz=2800&lowmid=-3&lowmidhz=400&ratio=3&thresh=-28&compmakeup=5
+// voice and cmp (all) default to the production settings (VoiceCapture::voice_options()): gain 36, hpf 150 (hpf=1 still means 100).
 esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   static constexpr int MAX_SECONDS = 30;
   static constexpr size_t WAV_HEADER = 44;
@@ -693,6 +694,28 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
       options.gate_depth_db = atof(value);
       bad |= options.gate_depth_db < 0.0f || options.gate_depth_db > 40.0f;
     }
+    // The EQ and the compressor; VoiceCapture::record() checks their ranges.
+    if (httpd_query_key_value(query, "presence", value, sizeof(value)) == ESP_OK) {
+      options.eq_presence_db = atof(value);
+    }
+    if (httpd_query_key_value(query, "presencehz", value, sizeof(value)) == ESP_OK) {
+      options.eq_presence_hz = atof(value);
+    }
+    if (httpd_query_key_value(query, "lowmid", value, sizeof(value)) == ESP_OK) {
+      options.eq_lowmid_db = atof(value);
+    }
+    if (httpd_query_key_value(query, "lowmidhz", value, sizeof(value)) == ESP_OK) {
+      options.eq_lowmid_hz = atof(value);
+    }
+    if (httpd_query_key_value(query, "ratio", value, sizeof(value)) == ESP_OK) {
+      options.comp_ratio = atof(value);
+    }
+    if (httpd_query_key_value(query, "thresh", value, sizeof(value)) == ESP_OK) {
+      options.comp_threshold_dbfs = atof(value);
+    }
+    if (httpd_query_key_value(query, "compmakeup", value, sizeof(value)) == ESP_OK) {
+      options.comp_makeup_db = atof(value);
+    }
     if (httpd_query_key_value(query, "ch", value, sizeof(value)) == ESP_OK) {
       channel = strcmp(value, "1") == 0     ? VoiceCapture::OUT_MIC1
                 : strcmp(value, "2") == 0   ? VoiceCapture::OUT_MIC2
@@ -707,7 +730,8 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, "mode raw, ns, bf, bf_ns, stages, voice or cmp; secs 1-30; gain 0-37 (dB); ns 0-2; hpf 0, 1 or 20-2000 (Hz); "
                                    "angle 0-360 (deg); spacing 5-500 (mm); ch all, 1, 2 or ref (mode raw only); mic 1, 2 or avg (voice, cmp); "
-                                   "makeup -20 to 40 (dB); agc 0 or 1; target -40 to -3 (dBFS); maxgain 0-40 (dB); gate 0-40 (dB).\n");
+                                   "makeup -20 to 40 (dB); agc 0 or 1; target -40 to -3 (dBFS); maxgain 0-40 (dB); gate 0-40 (dB); presence, lowmid -12 to 12 (dB); presencehz 500-7000, lowmidhz "
+                                   "100-2000 (Hz); ratio 1-20 (1 off); thresh -50 to 0 (dBFS); compmakeup 0-20 (dB).\n");
   }
   if (channel > 0) {
     options.outputs = channel;

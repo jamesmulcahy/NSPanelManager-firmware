@@ -68,9 +68,9 @@ VoiceCapture::Options VoiceCapture::voice_options() {
   options.outputs = MODE_VOICE;
   options.gain_db = 36;
   options.ns_level = 1;
-  // 200 Hz: round 2's speech had over half its energy at 150-300 Hz (the voice's fundamental, about
-  // 180 Hz), and boomed through the 100 Hz filter; a broadcast voice loses little below 200.
-  options.hpf_hz = 200;
+  // 150 Hz: round 2's speech had over half its energy at 150-300 Hz (the voice's fundamental, about
+  // 180 Hz) and boomed through the 100 Hz filter; 200 Hz thinned it, and the user preferred 150 by ear.
+  options.hpf_hz = 150;
   return options;
 }
 
@@ -94,7 +94,12 @@ esp_err_t VoiceCapture::_validate(const Options &options) {
       (options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000)) || options.voice_mic > VOICE_AVG ||
       options.voice_mic_b > VOICE_AVG || options.makeup_db < -20.0f || options.makeup_db > 40.0f || options.agc_target_dbfs < -40.0f ||
       options.agc_target_dbfs > -3.0f || options.agc_max_gain_db < 0.0f || options.agc_max_gain_db > 40.0f ||
-      options.gate_depth_db < 0.0f || options.gate_depth_db > 40.0f ||
+      options.gate_depth_db < 0.0f || options.gate_depth_db > 40.0f || options.eq_presence_db < -12.0f ||
+      options.eq_presence_db > 12.0f || options.eq_lowmid_db < -12.0f || options.eq_lowmid_db > 12.0f ||
+      options.eq_presence_hz < 500.0f || options.eq_presence_hz > 7000.0f || options.eq_lowmid_hz < 100.0f ||
+      options.eq_lowmid_hz > 2000.0f || options.comp_ratio < 1.0f || options.comp_ratio > 20.0f ||
+      options.comp_threshold_dbfs < -50.0f || options.comp_threshold_dbfs > 0.0f || options.comp_makeup_db < 0.0f ||
+      options.comp_makeup_db > 20.0f ||
       options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f || options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f) {
     return ESP_ERR_INVALID_ARG;
   }
@@ -368,6 +373,29 @@ struct HighPass {
   }
 };
 
+// A peaking EQ (RBJ's cookbook), transposed direct form II, on floats. 0 dB is a pass-through.
+struct Peak {
+  float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+  bool on = false;
+  void design(float hz, float q, float gain_db) {
+    on = gain_db != 0.0f;
+    const float A = powf(10.0f, gain_db / 40.0f), w = 2.0f * (float)M_PI * hz / VoiceCapture::SAMPLE_RATE;
+    const float alpha = sinf(w) / (2.0f * q), c = cosf(w), a0 = 1.0f + alpha / A;
+    b0 = (1.0f + alpha * A) / a0;
+    b1 = -2.0f * c / a0;
+    b2 = (1.0f - alpha * A) / a0;
+    a1 = b1;
+    a2 = (1.0f - alpha / A) / a0;
+    z1 = z2 = 0;
+  }
+  float run(float x) {
+    const float y = b0 * x + z1;
+    z1 = b1 * x - a1 * y + z2;
+    z2 = b2 * x - a2 * y;
+    return y;
+  }
+};
+
 struct Level {
   uint64_t squares = 0;
   int peak = 0;
@@ -402,9 +430,27 @@ struct Level {
 // between words sits where NS left it instead of being raised with the voice. Both gains are ramped
 // across the frame, sample by sample.
 //
+// Before all of it, an EQ on NS's output (Options::eq_*): a presence peak (+5 dB at 2.8 kHz) and a
+// low-mid cut (-3 dB at 400 Hz). The user found the chain "echoy and hollow"; round 2's speech had 2% of
+// its energy at 1-4 kHz, where its clarity is, and most of it at 150-1000 Hz. The AGC measures after it.
+//
+// After the makeup gain and the expander, a feed-forward compressor (Options::comp_*): a peak envelope
+// (5 ms attack, 120 ms release), and above the threshold the gain drops by (1 - 1/ratio) of the excess,
+// re-computed every COMP_BLOCK samples and ramped between, then its own makeup gain. The AGC only sets the
+// level over half a second or more; this evens the syllables out, which is what makes a voice dense.
+// ratio 1 is off.
+//
 // The limiter has a ceiling of -3 dBFS: per sample the gain drops at once to what keeps the sample at the
 // ceiling, and recovers over 80 ms, so nothing passes the ceiling (no wraparound, no hard clipping).
 struct Makeup {
+  static constexpr size_t COMP_BLOCK = 16;                 // 1 ms
+  static constexpr float COMP_ATTACK = 0.0124f;            // 1 - exp(-1 / (0.005 s * 16000 Hz))
+  static constexpr float COMP_RELEASE = 0.00052f;          // 1 - exp(-1 / (0.12 s * 16000 Hz))
+  Peak presence, lowmid;
+  float comp_slope = 0.0f, comp_threshold = 0.0f, comp_makeup = 1.0f; // slope = 1 - 1/ratio; threshold linear
+  float comp_env = 0.0f, comp_gain = 1.0f;
+  float comp_gr_max = 0.0f, comp_gr_sum = 0.0f; // Gain reduction, dB, over the counted blocks
+  uint32_t comp_blocks = 0;
   static constexpr float GATE_DB = -60.0f;   // Never speech below this, however quiet the room
   static constexpr float SPEECH_DB = 10.0f;  // Speech: this far above the floor
   static constexpr float OPEN_DB = 6.0f;     // The expander opens this far above the floor
@@ -428,13 +474,24 @@ struct Makeup {
     target_db = options.agc_target_dbfs;
     gain_db = idle_db;
     gate_depth = powf(10.0f, -options.gate_depth_db / 20.0f);
+    presence.design(options.eq_presence_hz, 1.0f, options.eq_presence_db);
+    lowmid.design(options.eq_lowmid_hz, 1.0f, options.eq_lowmid_db);
+    comp_slope = options.comp_ratio > 1.0f ? 1.0f - 1.0f / options.comp_ratio : 0.0f;
+    comp_threshold = 32768.0f * powf(10.0f, options.comp_threshold_dbfs / 20.0f);
+    comp_makeup = comp_slope > 0.0f ? powf(10.0f, options.comp_makeup_db / 20.0f) : 1.0f;
+    comp_gain = comp_makeup;
   }
 
   // NS_FRAMES samples. `count` is false for the padding after a recording's last whole frame.
-  void run(const int16_t *in, int16_t *out, bool count) {
+  void run(const int16_t *in_samples, int16_t *out, bool count) {
+    float in[NS_FRAMES];
     float squares = 0.0f;
     for (size_t i = 0; i < NS_FRAMES; i++) {
-      squares += (float)in[i] * in[i];
+      float x = in_samples[i];
+      x = lowmid.on ? lowmid.run(x) : x;
+      x = presence.on ? presence.run(x) : x;
+      in[i] = x;
+      squares += x * x;
     }
     const float level_db = 10.0f * log10f(squares / NS_FRAMES / 1073741824.0f + 1e-12f);
     if (!floor_set || level_db < floor_db) {
@@ -461,9 +518,28 @@ struct Makeup {
     const float step = (to - from) / NS_FRAMES;
     uint32_t limited = 0;
     float gain = from;
+    float comp_step = 0.0f;
     for (size_t i = 0; i < NS_FRAMES; i++) {
       gain += step;
-      const float v = in[i] * gain, magnitude = fabsf(v);
+      float v = in[i] * gain;
+      if (comp_slope > 0.0f) {
+        const float a = fabsf(v);
+        comp_env += (a > comp_env ? COMP_ATTACK : COMP_RELEASE) * (a - comp_env);
+        if (i % COMP_BLOCK == 0) {
+          // The gain this block ramps to: the reduction above the threshold, then the compressor's makeup.
+          const float over_db = comp_env > comp_threshold ? 20.0f * log10f(comp_env / comp_threshold) : 0.0f;
+          const float gr_db = over_db * comp_slope;
+          comp_step = (comp_makeup * powf(10.0f, -gr_db / 20.0f) - comp_gain) / COMP_BLOCK;
+          if (count) {
+            comp_gr_max = gr_db > comp_gr_max ? gr_db : comp_gr_max;
+            comp_gr_sum += gr_db;
+            comp_blocks++;
+          }
+        }
+        comp_gain += comp_step;
+        v *= comp_gain;
+      }
+      const float magnitude = fabsf(v);
       const float need = magnitude > CEILING ? CEILING / magnitude : 1.0f;
       if (need < limiter) {
         limiter = need;
@@ -776,10 +852,11 @@ esp_err_t VoiceCapture::_capture(Request *request) {
     if (c.on && c.makeup.frames > 0) {
       const Makeup &m = c.makeup;
       ESP_LOGI(TAG, "  %s (mic %s, %s, target %.0f dBFS): makeup gain min %.1f / avg %.1f / max %.1f dB; limiter on %u of %u frames (%llu samples, %.2f%%); "
-                    "floor %.1f dBFS, gate closed on %u frames",
+                    "floor %.1f dBFS, gate closed on %u frames; compressor reduction avg %.1f / max %.1f dB",
                OUTPUT_NAME[6 + i], MIC_NAME[c.mic], m.agc ? "AGC" : "fixed", m.target_db, m.gain_min, m.gain_sum / m.frames, m.gain_max,
                (unsigned)m.limited_frames, (unsigned)m.frames, (unsigned long long)m.limited_samples,
-               m.limited_samples * 100.0f / ((float)m.frames * NS_FRAMES), m.floor_db, (unsigned)m.gated_frames);
+               m.limited_samples * 100.0f / ((float)m.frames * NS_FRAMES), m.floor_db, (unsigned)m.gated_frames,
+               m.comp_blocks > 0 ? m.comp_gr_sum / m.comp_blocks : 0.0f, m.comp_gr_max);
     }
   }
   // CPU time per stage, against the audio's length: the share of one core it takes. The capture task is

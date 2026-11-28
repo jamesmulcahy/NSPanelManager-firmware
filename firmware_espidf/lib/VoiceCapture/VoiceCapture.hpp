@@ -108,6 +108,17 @@ public:
     // The expander after the makeup gain: how far frames near the noise floor (between words) are turned
     // down, dB; 0 is off.
     float gate_depth_db = 12.0f;
+    // The EQ on NS's output, before the AGC: a presence peak and a low-mid cut (peaking filters, Q 1;
+    // 0 dB is off).
+    float eq_presence_db = 5.0f;
+    float eq_presence_hz = 2800.0f;
+    float eq_lowmid_db = -3.0f;
+    float eq_lowmid_hz = 400.0f;
+    // The compressor after the AGC and the expander: ratio (1 is off), threshold on its peak envelope,
+    // and the gain after it.
+    float comp_ratio = 3.0f;
+    float comp_threshold_dbfs = -28.0f;
+    float comp_makeup_db = 5.0f;
   };
   // Options for the voice chain as the recorder uses it (see MODE_VOICE).
   static Options voice_options();
