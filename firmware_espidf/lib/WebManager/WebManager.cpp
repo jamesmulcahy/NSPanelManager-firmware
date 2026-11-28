@@ -132,8 +132,10 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_screenshot);             // The LVGL screen as an image
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_metrics);                // Prometheus scrape endpoint
 #if defined(BOARD_CUSTOM)
-      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // TEMPORARY: microphone audio, raw or processed
-      // The voice recorder's recordings, after /rec/test.wav (the first match wins).
+#if defined(NSPM_VOICE_TEST_ENDPOINT)
+      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // Listening tests: microphone audio, raw or processed
+#endif
+      // The voice recorder's recordings, after /rec/test.wav when it is built in (the first match wins).
       static httpd_uri_t uri_rec_get = {.uri = "/rec/*", .method = HTTP_GET, .handler = VoiceRecorder::serve, .user_ctx = NULL};
       static httpd_uri_t uri_rec_head = {.uri = "/rec/*", .method = HTTP_HEAD, .handler = VoiceRecorder::serve, .user_ctx = NULL};
       httpd_register_uri_handler(WebManager::_server, &uri_rec_get);
@@ -586,10 +588,10 @@ esp_err_t WebManager::_handle_uri_screenshot(httpd_req_t *req) {
   return sent ? ESP_OK : ESP_FAIL;
 }
 
-#if defined(BOARD_CUSTOM)
-// TEMPORARY (voice, phases 0b and 1b): the microphones' audio, raw or through any of the processing
-// stages, to listen to and to tune by (docs/CUSTOM_PCB.md, "Tuning the processing"). Remove once voice
-// capture has its own way out (phase 2b: the recording's URL sent over MQTT).
+#if defined(BOARD_CUSTOM) && defined(NSPM_VOICE_TEST_ENDPOINT)
+// The microphones' audio, raw or through any of the processing stages, to listen to and to tune by
+// (docs/CUSTOM_PCB.md). Not built by default (the recorder's /rec/<token>.wav is how recordings leave the
+// panel); kept, not deleted, so the next tuning round needs only -DNSPM_VOICE_TEST_ENDPOINT.
 static void put_le(uint8_t *at, uint32_t value, int bytes) {
   for (int i = 0; i < bytes; i++) {
     at[i] = (value >> (8 * i)) & 0xFF;

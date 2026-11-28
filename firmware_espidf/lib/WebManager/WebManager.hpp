@@ -26,9 +26,9 @@ private:
   static esp_err_t _handle_uri_screenshot(httpd_req_t *req);
   // Panel metrics in Prometheus text format, see PanelMetrics.hpp.
   static esp_err_t _handle_uri_metrics(httpd_req_t *req);
-#if defined(BOARD_CUSTOM)
-  // TEMPORARY (voice, phase 0b): GET /rec/test.wav?secs=5&ch=all|1|2|ref&gain=30, the microphones' raw
-  // audio as a WAV. Remove once voice capture has its own way out.
+#if defined(BOARD_CUSTOM) && defined(NSPM_VOICE_TEST_ENDPOINT)
+  // Off by default: GET /rec/test.wav, the microphones' audio raw or through any processing stage, for
+  // listening tests and tuning (docs/CUSTOM_PCB.md). Build with -DNSPM_VOICE_TEST_ENDPOINT to have it.
   static esp_err_t _handle_uri_rec_test_wav(httpd_req_t *req);
 #endif
 
@@ -114,7 +114,7 @@ private:
       .method = HTTP_GET,
       .handler = _handle_uri_metrics,
       .user_ctx = NULL};
-#if defined(BOARD_CUSTOM)
+#if defined(BOARD_CUSTOM) && defined(NSPM_VOICE_TEST_ENDPOINT)
   static inline httpd_uri_t _uri_rec_test_wav = {
       .uri = "/rec/test.wav",
       .method = HTTP_GET,

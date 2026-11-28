@@ -10,7 +10,7 @@ The manager still knows it as model `custom`. The earlier ESP32-S3 custom PCB is
 | SoC | ESP32-P4 (rev 3.x, RISC-V, 400 MHz), 32 MB QIO flash, 32 MB PSRAM (hex, 200 MHz) |
 | Wi-Fi | ESP32-C6 co-processor over SDIO (ESP-Hosted 3.0.10 + esp_wifi_remote 1.6.5, the versions of Waveshare's factory app). SDIO CLK 18, CMD 19, D0-D3 14-17, C6 reset 54 (`ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD`) |
 | Display | 4" 720x720 MIPI-DSI, 2 lanes at 480 Mbps (D-PHY on LDO VO3, 2.5 V), reset GPIO 27; ST7703 or JD9365DA depending on the unit, probed at boot. Backlight GPIO 26 (PWM, inverted). GT911 touch on I2C port 1 (SDA 7, SCL 8), reset GPIO 23, INT not wired (polled) |
-| Microphones | ES7210 ADC (I2C 0x40, the same bus as touch: `lib/BoardI2c`), I2S 0 TDM RX at 16 kHz, MCLK 13, BCLK 12, WS 10, DIN 11. Slots: MIC1, MIC3 (the ES8311's output looped back, the echo reference), MIC2, MIC4 (not connected). Started on first use (`lib/VoiceCapture`); for now only the temporary `GET /rec/test.wav` uses it (see "Microphones: processing and tuning" below). The ES8311 (0x18) and the speaker amplifier (enable GPIO 53) are not driven |
+| Microphones | ES7210 ADC (I2C 0x40, the same bus as touch: `lib/BoardI2c`), I2S 0 TDM RX at 16 kHz, MCLK 13, BCLK 12, WS 10, DIN 11. Slots: MIC1, MIC3 (the ES8311's output looped back, the echo reference), MIC2, MIC4 (not connected). Started on first use (`lib/VoiceCapture`); used by the voice recorder (`lib/VoiceRecorder`, `docs/VOICE_RECORDER.md`) and by the test endpoint `GET /rec/test.wav`, off by default (see "Microphones: processing and tuning" below). The ES8311 (0x18) and the speaker amplifier (enable GPIO 53) are not driven |
 | Buttons, relays | None. The relays are state only, kept and reported over MQTT as on the Sonoff |
 | Temperature | None reported (the P4's die sensor is not room temperature) |
 | Console | UART0, on the board's USB-UART USB-C port, 115200 |
@@ -169,9 +169,13 @@ how much the limiter did (frames and samples limited):
 VoiceCapture:   VOICE (mic avg, AGC, target -20 dBFS): makeup gain min 12.0 / avg 19.4 / max 24.0 dB; limiter on 3 of 800 frames (41 samples, 0.03%)
 ```
 
-### Fetching clips (TEMPORARY endpoint)
+### Fetching clips (test endpoint, off by default)
 
-`GET /rec/test.wav` records on request and answers with a WAV, 16 kHz 16-bit. It blocks for the
+`GET /rec/test.wav` is not in a normal build. To have it, build with `-DNSPM_VOICE_TEST_ENDPOINT`:
+uncomment that line in `[env:custom_pcb]`'s `build_flags` in `platformio.ini`, or set
+`PLATFORMIO_BUILD_FLAGS=-DNSPM_VOICE_TEST_ENDPOINT` for one build.
+
+It records on request and answers with a WAV, 16 kHz 16-bit. It blocks for the
 recording's length, then sends it; one recording at a time (503 otherwise). `<ip>` is the panel's.
 The panel must run a build with this code: `pio run -e custom_pcb -t upload --upload-port <port>`
 ("Build and flash" below; over USB-OTG, unplug it afterwards to boot).
