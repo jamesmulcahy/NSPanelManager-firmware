@@ -25,9 +25,11 @@
  * and between recordings the ES7210 is powered down and I2S stopped. The I2S reads run on the capture
  * task, not the caller's.
  *
- * Processing (on the capture task, as the audio comes in): MIC1 and MIC2 through esp-sr's GSC beamformer
- * (two microphones, steered broadside: at the talker in front of the panel), then WebRTC noise suppression
- * (esp-sr's ns_pro), out as 16 kHz mono. Which of the stages run, and which of their outputs a recording
+ * Processing (on the capture task, as the audio comes in). The voice path (MODE_VOICE, what the recorder
+ * takes): a microphone (MIC1, MIC2 or their average), the high-pass filter, WebRTC noise suppression
+ * (esp-sr's ns_pro), makeup gain (an AGC, or a fixed gain) and a peak limiter, out as 16 kHz mono. The
+ * beamformer (esp-sr's GSC, MIC1 + MIC2 steered broadside) stays for comparison (MODE_BF, MODE_BF_NS) but
+ * is not on the voice path: see docs/CUSTOM_PCB.md. Which of the stages run, and which of their outputs a recording
  * holds, is the Options' `outputs`: any set of Output bits, written interleaved in Output order, so one
  * recording can hold several stages' outputs of the same audio, to compare. esp-sr's handles are made for
  * each recording that needs them and freed after it (see _capture()).
@@ -45,7 +47,9 @@ public:
    *   OUT_MIC1, OUT_MIC2, OUT_REF  the inputs as read (after the high-pass filter, if on)
    *   OUT_NS                       WebRTC NS on MIC1 alone
    *   OUT_BF                       the GSC beamformer on MIC1 + MIC2
-   *   OUT_BF_NS                    the beamformer, then WebRTC NS: the voice path
+   *   OUT_BF_NS                    the beamformer, then WebRTC NS
+   *   OUT_VOICE                    the production chain: Options::voice_mic, HPF, NS, makeup gain, limiter
+   *   OUT_VOICE_B                  the same chain on Options::voice_mic_b, for comparing mic choices
    */
   enum Output : uint8_t {
     OUT_MIC1 = 1 << 0,
@@ -54,14 +58,27 @@ public:
     OUT_NS = 1 << 3,
     OUT_BF = 1 << 4,
     OUT_BF_NS = 1 << 5,
+    OUT_VOICE = 1 << 6,
+    OUT_VOICE_B = 1 << 7,
   };
+  // Which input the voice chain starts from. AVG is (MIC1 + MIC2) / 2.
+  enum VoiceMic : uint8_t { VOICE_MIC1 = 0, VOICE_MIC2 = 1, VOICE_AVG = 2 };
   // The modes the temporary /rec/test.wav offers. RAW is what record() wrote before processing existed.
   static constexpr uint8_t MODE_RAW = OUT_MIC1 | OUT_MIC2 | OUT_REF;
   static constexpr uint8_t MODE_NS = OUT_NS;
   static constexpr uint8_t MODE_BF = OUT_BF;
   static constexpr uint8_t MODE_BF_NS = OUT_BF_NS;
-  // All four stages of the same audio: MIC1 as it came in, NS(MIC1), GSC, NS(GSC).
-  static constexpr uint8_t MODE_COMPARE = OUT_MIC1 | OUT_NS | OUT_BF | OUT_BF_NS;
+  // All four beamformer stages of the same audio: MIC1 as it came in, NS(MIC1), GSC, NS(GSC).
+  static constexpr uint8_t MODE_STAGES = OUT_MIC1 | OUT_NS | OUT_BF | OUT_BF_NS;
+  /**
+   * THE PRODUCTION MODE: mono 16 kHz int16, the voice chain. Record it with voice_options() (gain 36 dB,
+   * HPF 100 Hz, NS level 1, the microphones' average, AGC and limiter on): Options with `outputs`
+   * MODE_VOICE and nothing else needs setting.
+   */
+  static constexpr uint8_t MODE_VOICE = OUT_VOICE;
+  // The listening comparison, one recording, 4 channels: MIC1 raw, NS(MIC1), the voice chain on MIC1, the
+  // voice chain on voice_mic_b (the average by default).
+  static constexpr uint8_t MODE_COMPARE = OUT_MIC1 | OUT_NS | OUT_VOICE | OUT_VOICE_B;
 
   struct Options {
     uint8_t outputs = MODE_RAW;
@@ -76,7 +93,20 @@ public:
     float bf_angle_deg = 90.0f;
     // The distance between MIC1 and MIC2, for the beamformer's geometry: 60 mm on this board (measured).
     float mic_spacing_mm = 60.0f;
+    // The voice chain's input (OUT_VOICE), and the second chain's (OUT_VOICE_B).
+    VoiceMic voice_mic = VOICE_AVG;
+    VoiceMic voice_mic_b = VOICE_AVG;
+    // Makeup gain after NS, dB. With the AGC off, the fixed gain; with it on, where the gain starts and
+    // what it settles to when there is no speech (the residual noise floor is never raised past this).
+    float makeup_db = 12.0f;
+    // AGC: moves the gain, between 0 dB and agc_max_gain_db, to bring the speech's level (10 ms RMS,
+    // following the louder frames) to agc_target_dbfs. Only frames above a gate (-60 dBFS) count as speech.
+    bool agc = true;
+    float agc_target_dbfs = -20.0f;
+    float agc_max_gain_db = 24.0f;
   };
+  // Options for the voice chain as the recorder uses it (see MODE_VOICE).
+  static Options voice_options();
 
   // How many channels (samples per frame) a recording with these outputs holds.
   static int channels(uint8_t outputs);
@@ -85,8 +115,8 @@ public:
    * Record `frames` frames (1/SAMPLE_RATE s each) into `out`: frames x channels(options.outputs) samples,
    * interleaved (it may be in PSRAM). Blocks the calling task until done. One recording at a time:
    * ESP_ERR_INVALID_STATE while another is under way; ESP_ERR_INVALID_ARG for no outputs or a bad option.
-   * Each recording logs the inputs' peak and RMS, each output's, the CPU time of each stage and the heap
-   * taken.
+   * Each recording logs the inputs' peak and RMS, each output's (the voice chains' makeup gain, min/avg/max,
+   * and how much the limiter did), the CPU time of each stage and the heap taken.
    */
   static esp_err_t record(int16_t *out, size_t frames, const Options &options);
   // The three inputs, interleaved MIC1, MIC2, REF (MODE_RAW).
