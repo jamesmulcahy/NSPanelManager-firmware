@@ -4,8 +4,9 @@ Hold-to-talk on the panel → a WAV in PSRAM → `http://<panel IP>/rec/<token>.
 Home Assistant automation calls `script.broadcast_voice_prompted` with the URL, and the speakers fetch and
 play it. No STT, no TTS, no models (GSC + WebRTC NS run without the `model` partition).
 
-Interface: [`lib/VoiceRecorder/VoiceRecorder.hpp`](../lib/VoiceRecorder/VoiceRecorder.hpp) (declarations
-only; phase 2b writes the .cpp). This file is the reasoning and the parts that are not C++.
+Interface: [`lib/VoiceRecorder/VoiceRecorder.hpp`](../lib/VoiceRecorder/VoiceRecorder.hpp); implemented in
+`VoiceRecorder.cpp` (phase 2b), with the pure parts in `VoiceRecorderPure.hpp` (host tests:
+`test/host/voice_recorder/build.sh`). This file is the reasoning and the parts that are not C++.
 
 ## 1. The pieces and their tasks
 
@@ -181,6 +182,7 @@ mosquitto_sub -v -t 'nspanel/+/voice/recording'
 ## 7. Home Assistant
 
 ```yaml
+# configuration.yaml / automations.yaml. Final form; only the script's field names remain to be confirmed.
 automation:
   - alias: "NSPanel voice broadcast"
     mode: queued
@@ -189,14 +191,16 @@ automation:
       - platform: mqtt
         topic: "nspanel/+/voice/recording"
     condition:
-      - "{{ trigger.payload_json.url is defined }}"
+      - condition: template
+        value_template: "{{ trigger.payload_json.url is defined }}"
     action:
       - service: script.broadcast_voice_prompted
         data:
-          # The script's own field names; adjust to match it.
+          # TO BE CONFIRMED BY THE USER: the field names below (audio_url, source) are guesses; use the ones
+          # script.broadcast_voice_prompted actually declares. The URL is the only value it must get.
           audio_url: "{{ trigger.payload_json.url }}"
           source: "{{ trigger.payload_json.name }}"
-          # e.g. exclude the speaker in the panel's room:
+          # e.g. exclude the speaker in the panel's room (when the payload has "room"):
           # exclude_room: "{{ trigger.payload_json.room | default('') }}"
 ```
 
@@ -239,3 +243,17 @@ on port 80 (same LAN/VLAN or a firewall rule). Phase 4 may route this through MQ
 2. At the limit it **sends automatically**.
 3. The URL may be fetched **any number of times** and **expires 60 s** after `stop()`.
 4. The MQTT message is **not retained** (a recording made while HA restarts is lost).
+
+## 11. As built (phase 2b)
+
+- `VoiceCapture::start(sink, context, const Options &)` takes Options, not just a gain; the one place the
+  recorder chooses them is `VoiceRecorder::capture_options()`. The `GAIN_DB` constant was dropped (it was
+  30 while the options say 36).
+- The `voice_rec` task has a 6 KB stack (not 4 KB), unmeasured on hardware; the JSON, the log line and the
+  MQTT publish run on it.
+- `room` is not in the payload: the room's name is not available without RoomManager's state.
+- `expires_in` is the time left when the message is published (at most 60), not a constant 60.
+- `stop_after_ms` is timed by the worker's 100 ms poll, so a test recording ends up to 100 ms late.
+- Test: `mosquitto_pub -t 'nspanel/<mac>/command' -m '{"command":"voice_record","action":"start","seconds":5}'`,
+  `mosquitto_sub -v -t 'nspanel/+/voice/recording'`, then `curl -sv -o /tmp/r.wav <url>`, `curl -sI <url>`,
+  `curl -s -H 'Range: bytes=0-99' -o /dev/null -w '%{http_code}\n' <url>` (206), and the same URL after 60 s (410).
