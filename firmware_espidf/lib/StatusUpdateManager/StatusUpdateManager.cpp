@@ -1,3 +1,4 @@
+#include <BuildIdentity.hpp>
 #include <PanelRestart.hpp>
 #include <ConfigManager.hpp>
 #include <LvglLook.hpp>
@@ -48,6 +49,8 @@ void StatusUpdateManager::init() {
   StatusUpdateManager::_status_report.md5_firmware = (char *)ConfigManager::md5_firmware.c_str();
   StatusUpdateManager::_status_report.md5_littlefs = (char *)NSPM_WEB_UI_EMBEDDED;
   StatusUpdateManager::_status_report.md5_tft_gui = (char *)ConfigManager::md5_gui.c_str();
+  // Constant for this boot: which build is running. The first call hashes the running partition.
+  StatusUpdateManager::_status_report.build = BuildIdentity::get().to_protobuf();
   nspanel_warning__init(&StatusUpdateManager::_link_baud_warning);
   StatusUpdateManager::_link_baud_warning.level = NSPANEL_WARNING_LEVEL__WARNING;
   // Constant, so set once here rather than in _send_status_update. Repeated from register_request

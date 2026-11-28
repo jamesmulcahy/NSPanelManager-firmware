@@ -1,4 +1,5 @@
 #include "NSPM_ConfigManager.hpp"
+#include <BuildIdentity.hpp>
 #include <ConfigManager.hpp>
 #include <MqttManager.hpp>
 #include <MqttSubscriptions.hpp>
@@ -368,6 +369,8 @@ void NSPM_ConfigManager::_task_send_register_request(void *arg) {
   // that send this in its Prometheus service discovery.
   json["metrics_port"] = WebManager::HTTP_PORT;
   json["model"] = BOARD_MODEL;
+  // Which build this is (version, image SHA-256, ...). Managers that predate it ignore the key.
+  json["build"] = BuildIdentity::get().to_json();
   std::string json_string = json.dump();
 
   // Publish register_request every 5s until _send_register_requests goes false
