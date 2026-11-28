@@ -129,6 +129,9 @@ void WebManager::start() {
 #if defined(BOARD_CUSTOM)
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // TEMPORARY: raw microphone audio
 #endif
+      // Captive-portal probes from Apple (/hotspot-detect.html, /library/test/success.html), Windows
+      // (/connecttest.txt, /ncsi.txt) and others all land here, so they need no handler slots of their own.
+      httpd_register_err_handler(WebManager::_server, HTTPD_404_NOT_FOUND, &WebManager::_handle_not_found);
 #ifdef NSPM_HEAP_DIAG
       HeapDiag::register_uris(WebManager::_server); // 2 more, 14 in all (15 on custom_pcb)
 #endif
@@ -448,6 +451,21 @@ esp_err_t WebManager::_handle_uri_generate_204(httpd_req_t *req) {
   httpd_resp_set_status(req, "302 Found");
   httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
   return httpd_resp_send(req, NULL, 0); // empty body, sets Content-Length: 0
+}
+
+esp_err_t WebManager::_handle_not_found(httpd_req_t *req, httpd_err_code_t err) {
+  if (!WiFiManager::ap_active()) {
+    // Normal (station) mode: keep the stock 404.
+    return httpd_resp_send_err(req, err, nullptr);
+  }
+  // Setup AP: DNS points every name at us, so whatever an OS probes for to detect a captive portal
+  // (Apple's CNA asks for /hotspot-detect.html and expects the exact "Success" page) ends up here.
+  // Anything but the expected answer makes the client open the setup page.
+  ESP_LOGI("WebManager", "Captive portal redirect for %s", req->uri);
+  httpd_resp_set_status(req, "302 Found");
+  httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+  httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+  return httpd_resp_send(req, NULL, 0);
 }
 
 esp_err_t WebManager::_send_embedded_gzip(httpd_req_t *req, const char *content_type, const uint8_t *data, size_t length) {

@@ -43,6 +43,11 @@ public:
   static bool connected();
 
   /**
+   * @brief Is the setup/fallback access point (captive portal) currently active?
+   */
+  static bool ap_active() { return _ap_active; }
+
+  /**
    * @brief Get the last esp_netif_ip_info_t that was handed to the ESP32
    * @return Latest network IP information handed to the ESP32.
    */
