@@ -57,6 +57,36 @@ width, their bottoms on the screen's. `test/host/lvgl_sim/build.sh` draws every 
 - **sdkconfig.** `sdkconfig.custom_pcb` is the P4's defaults with `sdkconfig.original_sonoff`'s settings;
   after changing the Sonoff's, run `tools/sync_sdkconfig_custom_pcb.py` (see its docstring).
 
+## Microphones (esp-sr, in progress)
+
+esp-sr 2.6.2 (`src/idf_component.yml`, P4 only) is in the build; nothing in `custom_pcb` calls it yet,
+so it costs no flash. A feasibility test (commit bcf8394, since removed) started the audio front end for
+two mics ("MM": BSS and WebRTC noise suppression), then the GSC beamformer and WebRTC NS on their own, on
+the panel. The AFE took 410 KB of PSRAM and about 10% of one core; GSC and WebRTC NS took 64.8 KB of
+internal RAM and 42 KB of PSRAM. The plan is GSC plus WebRTC NS, without the AFE.
+
+| | Flash (firmware.bin) | Static internal RAM |
+|---|---|---|
+| `custom_pcb` | 1,632,480 | 40.4 KB |
+| + GSC + WebRTC NS | +61 KB | +1.1 KB |
+| + the AFE (links every NS net, WakeNet, esp-dl) | +763 KB | +34 KB |
+
+WebRTC NS, BSS and GSC need no models. Only NSNet (2-4), VADNet, WakeNet and MultiNet do: they live in
+`srmodels.bin` in the `model` partition, which PlatformIO's build does not make or flash. To make one,
+select the models in `sdkconfig.custom_pcb` (e.g. `CONFIG_SR_NSN_NSNET3=y` instead of
+`CONFIG_SR_NSN_WEBRTC=y`; nsnet3 is 107 KB) and run esp-sr's packer, then flash it at the partition's offset:
+
+```
+python3 managed_components/espressif__esp-sr/model/movemodel.py -d1 sdkconfig.custom_pcb \
+    -d2 managed_components/espressif__esp-sr -d3 .pio/build/custom_pcb
+~/.platformio/penv/bin/python ~/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32p4 -p <port> \
+    -b 460800 --before no-reset write-flash 0xC20000 .pio/build/custom_pcb/srmodels/srmodels.bin
+```
+
+`esp_srmodel_init("model")` maps the whole partition and reads its first word as the model count, so
+check for an erased partition (0xFFFFFFFF) before calling it: a panel updated only over the air has
+no `model` partition at all, and one flashed without `srmodels.bin` has an erased one.
+
 ## Build and flash
 
 ```
