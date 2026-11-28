@@ -26,6 +26,11 @@ private:
   static esp_err_t _handle_uri_screenshot(httpd_req_t *req);
   // Panel metrics in Prometheus text format, see PanelMetrics.hpp.
   static esp_err_t _handle_uri_metrics(httpd_req_t *req);
+#if defined(BOARD_CUSTOM)
+  // TEMPORARY (voice, phase 0b): GET /rec/test.wav?secs=5&ch=all|1|2|ref&gain=30, the microphones' raw
+  // audio as a WAV. Remove once voice capture has its own way out.
+  static esp_err_t _handle_uri_rec_test_wav(httpd_req_t *req);
+#endif
 
   /**
    * @brief Send a gzip-compressed asset embedded in the firmware, as stored
@@ -109,4 +114,11 @@ private:
       .method = HTTP_GET,
       .handler = _handle_uri_metrics,
       .user_ctx = NULL};
+#if defined(BOARD_CUSTOM)
+  static inline httpd_uri_t _uri_rec_test_wav = {
+      .uri = "/rec/test.wav",
+      .method = HTTP_GET,
+      .handler = _handle_uri_rec_test_wav,
+      .user_ctx = NULL};
+#endif
 };

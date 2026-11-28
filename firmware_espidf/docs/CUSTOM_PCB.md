@@ -10,6 +10,7 @@ The manager still knows it as model `custom`. The earlier ESP32-S3 custom PCB is
 | SoC | ESP32-P4 (rev 3.x, RISC-V, 400 MHz), 32 MB QIO flash, 32 MB PSRAM (hex, 200 MHz) |
 | Wi-Fi | ESP32-C6 co-processor over SDIO (ESP-Hosted 3.0.10 + esp_wifi_remote 1.6.5, the versions of Waveshare's factory app). SDIO CLK 18, CMD 19, D0-D3 14-17, C6 reset 54 (`ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD`) |
 | Display | 4" 720x720 MIPI-DSI, 2 lanes at 480 Mbps (D-PHY on LDO VO3, 2.5 V), reset GPIO 27; ST7703 or JD9365DA depending on the unit, probed at boot. Backlight GPIO 26 (PWM, inverted). GT911 touch on I2C port 1 (SDA 7, SCL 8), reset GPIO 23, INT not wired (polled) |
+| Microphones | ES7210 ADC (I2C 0x40, the same bus as touch: `lib/BoardI2c`), I2S 0 TDM RX at 16 kHz, MCLK 13, BCLK 12, WS 10, DIN 11. Slots: MIC1, MIC3 (the ES8311's output looped back, the echo reference), MIC2, MIC4 (not connected). Started on first use (`lib/VoiceCapture`); for now only the temporary `GET /rec/test.wav?secs=5&ch=all\|1\|2\|ref&gain=30` uses it. The ES8311 (0x18) and the speaker amplifier (enable GPIO 53) are not driven |
 | Buttons, relays | None. The relays are state only, kept and reported over MQTT as on the Sonoff |
 | Temperature | None reported (the P4's die sensor is not room temperature) |
 | Console | UART0, on the board's USB-UART USB-C port, 115200 |
@@ -55,6 +56,36 @@ width, their bottoms on the screen's. `test/host/lvgl_sim/build.sh` draws every 
 - **Partitions.** `partitions_p4.csv`: same names, 4 MB app slots, 4 MB LittleFS.
 - **sdkconfig.** `sdkconfig.custom_pcb` is the P4's defaults with `sdkconfig.original_sonoff`'s settings;
   after changing the Sonoff's, run `tools/sync_sdkconfig_custom_pcb.py` (see its docstring).
+
+## Microphones (esp-sr, in progress)
+
+esp-sr 2.6.2 (`src/idf_component.yml`, P4 only) is in the build; nothing in `custom_pcb` calls it yet,
+so it costs no flash. A feasibility test (commit bcf8394, since removed) started the audio front end for
+two mics ("MM": BSS and WebRTC noise suppression), then the GSC beamformer and WebRTC NS on their own, on
+the panel. The AFE took 410 KB of PSRAM and about 10% of one core; GSC and WebRTC NS took 64.8 KB of
+internal RAM and 42 KB of PSRAM. The plan is GSC plus WebRTC NS, without the AFE.
+
+| | Flash (firmware.bin) | Static internal RAM |
+|---|---|---|
+| `custom_pcb` | 1,632,480 | 40.4 KB |
+| + GSC + WebRTC NS | +61 KB | +1.1 KB |
+| + the AFE (links every NS net, WakeNet, esp-dl) | +763 KB | +34 KB |
+
+WebRTC NS, BSS and GSC need no models. Only NSNet (2-4), VADNet, WakeNet and MultiNet do: they live in
+`srmodels.bin` in the `model` partition, which PlatformIO's build does not make or flash. To make one,
+select the models in `sdkconfig.custom_pcb` (e.g. `CONFIG_SR_NSN_NSNET3=y` instead of
+`CONFIG_SR_NSN_WEBRTC=y`; nsnet3 is 107 KB) and run esp-sr's packer, then flash it at the partition's offset:
+
+```
+python3 managed_components/espressif__esp-sr/model/movemodel.py -d1 sdkconfig.custom_pcb \
+    -d2 managed_components/espressif__esp-sr -d3 .pio/build/custom_pcb
+~/.platformio/penv/bin/python ~/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32p4 -p <port> \
+    -b 460800 --before no-reset write-flash 0xC20000 .pio/build/custom_pcb/srmodels/srmodels.bin
+```
+
+`esp_srmodel_init("model")` maps the whole partition and reads its first word as the model count, so
+check for an erased partition (0xFFFFFFFF) before calling it: a panel updated only over the air has
+no `model` partition at all, and one flashed without `srmodels.bin` has an erased one.
 
 ## Build and flash
 

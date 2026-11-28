@@ -2,6 +2,7 @@
 #include "DsiDisplay.hpp"
 #include "DsiPanel.h"
 
+#include <BoardI2c.hpp>
 #include <ConfigManager.hpp>
 #include <cstring>
 #include <driver/gpio.h>
@@ -30,9 +31,6 @@ static constexpr gpio_num_t BACKLIGHT_GPIO = GPIO_NUM_26;
 static constexpr ledc_timer_t BACKLIGHT_TIMER = LEDC_TIMER_1;
 static constexpr ledc_channel_t BACKLIGHT_CHANNEL = LEDC_CHANNEL_1;
 static constexpr uint32_t BACKLIGHT_MAX_DUTY = 1023; // 10 bits
-static constexpr i2c_port_num_t TOUCH_I2C_PORT = I2C_NUM_1;
-static constexpr gpio_num_t TOUCH_SDA_GPIO = GPIO_NUM_7;
-static constexpr gpio_num_t TOUCH_SCL_GPIO = GPIO_NUM_8;
 static constexpr gpio_num_t TOUCH_RESET_GPIO = GPIO_NUM_23;
 
 // How often the GT911 is read: its INT line is not wired to the P4.
@@ -189,15 +187,9 @@ esp_err_t DsiDisplay::_init_touch() {
   gpio_set_level(TOUCH_RESET_GPIO, 1);
   vTaskDelay(pdMS_TO_TICKS(100));
 
-  i2c_master_bus_handle_t i2c = nullptr;
-  i2c_master_bus_config_t bus_config = {};
-  bus_config.i2c_port = TOUCH_I2C_PORT;
-  bus_config.sda_io_num = TOUCH_SDA_GPIO;
-  bus_config.scl_io_num = TOUCH_SCL_GPIO;
-  bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-  bus_config.glitch_ignore_cnt = 7;
-  bus_config.flags.enable_internal_pullup = true;
-  ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_config, &i2c), TAG, "I2C bus");
+  // The board's I2C bus, which the ES7210 and ES8311 audio chips share (BoardI2c).
+  i2c_master_bus_handle_t i2c = BoardI2c::bus();
+  ESP_RETURN_ON_FALSE(i2c != nullptr, ESP_FAIL, TAG, "I2C bus");
 
   uint8_t address = 0;
   for (uint8_t candidate : {ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS, ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP}) {
