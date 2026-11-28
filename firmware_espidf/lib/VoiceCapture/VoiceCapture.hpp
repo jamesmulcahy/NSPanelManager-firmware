@@ -100,10 +100,14 @@ public:
     // what it settles to when there is no speech (the residual noise floor is never raised past this).
     float makeup_db = 12.0f;
     // AGC: moves the gain, between 0 dB and agc_max_gain_db, to bring the speech's level (10 ms RMS,
-    // following the louder frames) to agc_target_dbfs. Only frames above a gate (-60 dBFS) count as speech.
+    // following the louder frames) to agc_target_dbfs. Only frames 10 dB above the tracked noise floor
+    // (and above -60 dBFS) count as speech.
     bool agc = true;
     float agc_target_dbfs = -20.0f;
     float agc_max_gain_db = 24.0f;
+    // The expander after the makeup gain: how far frames near the noise floor (between words) are turned
+    // down, dB; 0 is off.
+    float gate_depth_db = 12.0f;
   };
   // Options for the voice chain as the recorder uses it (see MODE_VOICE).
   static Options voice_options();

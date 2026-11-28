@@ -68,7 +68,9 @@ VoiceCapture::Options VoiceCapture::voice_options() {
   options.outputs = MODE_VOICE;
   options.gain_db = 36;
   options.ns_level = 1;
-  options.hpf_hz = 100;
+  // 200 Hz: round 2's speech had over half its energy at 150-300 Hz (the voice's fundamental, about
+  // 180 Hz), and boomed through the 100 Hz filter; a broadcast voice loses little below 200.
+  options.hpf_hz = 200;
   return options;
 }
 
@@ -92,6 +94,7 @@ esp_err_t VoiceCapture::_validate(const Options &options) {
       (options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000)) || options.voice_mic > VOICE_AVG ||
       options.voice_mic_b > VOICE_AVG || options.makeup_db < -20.0f || options.makeup_db > 40.0f || options.agc_target_dbfs < -40.0f ||
       options.agc_target_dbfs > -3.0f || options.agc_max_gain_db < 0.0f || options.agc_max_gain_db > 40.0f ||
+      options.gate_depth_db < 0.0f || options.gate_depth_db > 40.0f ||
       options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f || options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f) {
     return ESP_ERR_INVALID_ARG;
   }
@@ -383,26 +386,39 @@ struct Level {
 // The voice chain's last two stages, per 10 ms frame (one NS frame), state carried from frame to frame:
 // makeup gain, then a peak limiter.
 //
-// Makeup is an AGC, or a fixed gain with the AGC off. The AGC measures each frame's RMS after NS. Frames
-// above GATE_DB are speech: a level envelope follows them (up fast, down over about a second) and the
-// gain heads for target - envelope, clamped to 0..max, falling quickly (loud talker: about 30 ms) and
-// rising slowly (about half a second), so it does not pump between words. Frames below the gate (what NS
-// leaves of the room: about -79 dBFS) never raise the gain; they let it drift to the idle gain
-// (makeup_db), so the noise floor is never lifted past that, and a long pause cannot leave +24 dB
-// waiting for the next breath of noise. The gain is ramped across the frame, sample by sample.
+// Makeup is an AGC, or a fixed gain with the AGC off. The AGC measures each frame's RMS after NS, and
+// follows the noise floor NS leaves (a minimum tracker: down within a few frames, up over about 5 s).
+// Frames more than SPEECH_DB above that floor (and above GATE_DB) are speech: a level envelope follows
+// them (up fast, down over about a second) and the gain heads for target - envelope, clamped to 0..max,
+// falling quickly (loud talker: about 30 ms) and rising slowly (about half a second), so it does not pump
+// between words. Other frames never raise the gain; they let it drift to the idle gain (makeup_db), so a
+// long pause cannot leave +24 dB waiting for the next breath of noise.
+//
+// The floor test matters in a noisy room: NS left one at about -62 dBFS, above a fixed -60 gate, so the
+// room counted as speech and was raised by the full 17 dB the voice was (round 2 of the listening tests).
+//
+// Then a downward expander (Options::gate_depth_db): frames within OPEN_DB of the floor are turned down by
+// up to the depth, opening within a frame for the next word and closing over about 150 ms, so the room
+// between words sits where NS left it instead of being raised with the voice. Both gains are ramped
+// across the frame, sample by sample.
 //
 // The limiter has a ceiling of -3 dBFS: per sample the gain drops at once to what keeps the sample at the
 // ceiling, and recovers over 80 ms, so nothing passes the ceiling (no wraparound, no hard clipping).
 struct Makeup {
-  static constexpr float GATE_DB = -60.0f;
+  static constexpr float GATE_DB = -60.0f;   // Never speech below this, however quiet the room
+  static constexpr float SPEECH_DB = 10.0f;  // Speech: this far above the floor
+  static constexpr float OPEN_DB = 6.0f;     // The expander opens this far above the floor
   static constexpr float CEILING = 32768.0f * 0.70794578f; // -3 dBFS
   static constexpr float RELEASE = 0.00078f;               // 1 - exp(-1 / (0.08 s * 16000 Hz))
   bool agc = true;
   float idle_db = 12.0f, max_db = 24.0f, target_db = -20.0f;
   float gain_db = 12.0f, envelope_db = -90.0f, limiter = 1.0f;
+  float floor_db = 0.0f;  // The noise floor, after NS (set from the first frame)
+  bool floor_set = false;
+  float gate_depth = 1.0f, gate = 1.0f; // The expander: its deepest gain, and its gain now (linear)
   // What it did, over the frames that reached the recording.
   float gain_min = 1e9f, gain_max = -1e9f, gain_sum = 0.0f;
-  uint32_t frames = 0, limited_frames = 0;
+  uint32_t frames = 0, limited_frames = 0, gated_frames = 0;
   uint64_t limited_samples = 0;
 
   void design(const VoiceCapture::Options &options) {
@@ -411,6 +427,7 @@ struct Makeup {
     idle_db = agc && options.makeup_db > max_db ? max_db : options.makeup_db;
     target_db = options.agc_target_dbfs;
     gain_db = idle_db;
+    gate_depth = powf(10.0f, -options.gate_depth_db / 20.0f);
   }
 
   // NS_FRAMES samples. `count` is false for the padding after a recording's last whole frame.
@@ -420,10 +437,17 @@ struct Makeup {
       squares += (float)in[i] * in[i];
     }
     const float level_db = 10.0f * log10f(squares / NS_FRAMES / 1073741824.0f + 1e-12f);
+    if (!floor_set || level_db < floor_db) {
+      floor_db = floor_set ? floor_db + 0.5f * (level_db - floor_db) : level_db;
+      floor_set = true;
+    } else {
+      floor_db += 0.002f * (level_db - floor_db);
+    }
+    const bool speech = level_db > GATE_DB && level_db > floor_db + SPEECH_DB;
     float next_db = gain_db;
     if (!agc) {
       next_db = idle_db;
-    } else if (level_db > GATE_DB) {
+    } else if (speech) {
       envelope_db += (level_db > envelope_db ? 0.5f : 0.01f) * (level_db - envelope_db);
       float want_db = target_db - envelope_db;
       want_db = want_db < 0.0f ? 0.0f : want_db > max_db ? max_db : want_db;
@@ -431,7 +455,10 @@ struct Makeup {
     } else {
       next_db += 0.02f * (idle_db - gain_db);
     }
-    const float from = powf(10.0f, gain_db / 20.0f), step = (powf(10.0f, next_db / 20.0f) - from) / NS_FRAMES;
+    const bool open = level_db > floor_db + OPEN_DB;
+    const float next_gate = gate + (open ? 0.7f : 0.065f) * ((open ? 1.0f : gate_depth) - gate);
+    const float from = powf(10.0f, gain_db / 20.0f) * gate, to = powf(10.0f, next_db / 20.0f) * next_gate;
+    const float step = (to - from) / NS_FRAMES;
     uint32_t limited = 0;
     float gain = from;
     for (size_t i = 0; i < NS_FRAMES; i++) {
@@ -449,7 +476,9 @@ struct Makeup {
       out[i] = y > 32767.0f ? 32767 : y < -32768.0f ? -32768 : (int16_t)lroundf(y);
     }
     gain_db = next_db;
+    gate = next_gate;
     if (count) {
+      gated_frames += !open;
       frames++;
       gain_min = next_db < gain_min ? next_db : gain_min;
       gain_max = next_db > gain_max ? next_db : gain_max;
@@ -746,10 +775,11 @@ esp_err_t VoiceCapture::_capture(Request *request) {
     const VoiceChain &c = pipeline.chain[i];
     if (c.on && c.makeup.frames > 0) {
       const Makeup &m = c.makeup;
-      ESP_LOGI(TAG, "  %s (mic %s, %s, target %.0f dBFS): makeup gain min %.1f / avg %.1f / max %.1f dB; limiter on %u of %u frames (%llu samples, %.2f%%)",
+      ESP_LOGI(TAG, "  %s (mic %s, %s, target %.0f dBFS): makeup gain min %.1f / avg %.1f / max %.1f dB; limiter on %u of %u frames (%llu samples, %.2f%%); "
+                    "floor %.1f dBFS, gate closed on %u frames",
                OUTPUT_NAME[6 + i], MIC_NAME[c.mic], m.agc ? "AGC" : "fixed", m.target_db, m.gain_min, m.gain_sum / m.frames, m.gain_max,
                (unsigned)m.limited_frames, (unsigned)m.frames, (unsigned long long)m.limited_samples,
-               m.limited_samples * 100.0f / ((float)m.frames * NS_FRAMES));
+               m.limited_samples * 100.0f / ((float)m.frames * NS_FRAMES), m.floor_db, (unsigned)m.gated_frames);
     }
   }
   // CPU time per stage, against the audio's length: the share of one core it takes. The capture task is

@@ -597,8 +597,8 @@ static void put_le(uint8_t *at, uint32_t value, int bytes) {
 }
 
 // GET /rec/test.wav?mode=raw|ns|bf|bf_ns|stages|voice|cmp&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=60&ch=all|1|2|ref
-//                  &mic=1|2|avg&makeup=12&agc=1&target=-20&maxgain=24
-// voice and cmp (all) default to the production settings (VoiceCapture::voice_options()): gain 36, hpf 100.
+//                  &mic=1|2|avg&makeup=12&agc=1&target=-20&maxgain=24&gate=12
+// voice and cmp (all) default to the production settings (VoiceCapture::voice_options()): gain 36, hpf 200 (hpf=1 still means 100).
 esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   static constexpr int MAX_SECONDS = 30;
   static constexpr size_t WAV_HEADER = 44;
@@ -689,6 +689,10 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
       options.agc_max_gain_db = atof(value);
       bad |= options.agc_max_gain_db < 0.0f || options.agc_max_gain_db > 40.0f;
     }
+    if (httpd_query_key_value(query, "gate", value, sizeof(value)) == ESP_OK) {
+      options.gate_depth_db = atof(value);
+      bad |= options.gate_depth_db < 0.0f || options.gate_depth_db > 40.0f;
+    }
     if (httpd_query_key_value(query, "ch", value, sizeof(value)) == ESP_OK) {
       channel = strcmp(value, "1") == 0     ? VoiceCapture::OUT_MIC1
                 : strcmp(value, "2") == 0   ? VoiceCapture::OUT_MIC2
@@ -703,7 +707,7 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, "mode raw, ns, bf, bf_ns, stages, voice or cmp; secs 1-30; gain 0-37 (dB); ns 0-2; hpf 0, 1 or 20-2000 (Hz); "
                                    "angle 0-360 (deg); spacing 5-500 (mm); ch all, 1, 2 or ref (mode raw only); mic 1, 2 or avg (voice, cmp); "
-                                   "makeup -20 to 40 (dB); agc 0 or 1; target -40 to -3 (dBFS); maxgain 0-40 (dB).\n");
+                                   "makeup -20 to 40 (dB); agc 0 or 1; target -40 to -3 (dBFS); maxgain 0-40 (dB); gate 0-40 (dB).\n");
   }
   if (channel > 0) {
     options.outputs = channel;
