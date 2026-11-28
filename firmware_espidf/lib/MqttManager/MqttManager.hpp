@@ -38,10 +38,11 @@ public:
    * @param topic: The MQTT topic to send data to
    * @param data: The data to send
    * @param data_length: The length of the data to send (number of bytes)
-   * @param retian: Should MQTT retain the message
+   * @param retain: Should MQTT retain the message
+   * @param qos: MQTT quality of service: 0 (the default), 1 or 2
    * @return ESP_OK in case it was successful or ESP_ERR_NOT_FINISHED in case publish failed.
    */
-  static esp_err_t publish(std::string topic, const char *data, size_t data_length, bool retain);
+  static esp_err_t publish(std::string topic, const char *data, size_t data_length, bool retain, int qos = 0);
 
   /**
    * @brief Be told when the broker connection comes up or goes down. Called on the MQTT client task, after

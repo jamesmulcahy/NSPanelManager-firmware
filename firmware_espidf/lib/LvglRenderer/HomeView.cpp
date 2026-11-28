@@ -27,7 +27,10 @@ static void tile_released(lv_event_t *event) {
   bool swiped = lv_event_get_code(event) == LV_EVENT_PRESS_LOST || (indev != NULL && lv_indev_get_gesture_dir(indev) != LV_DIR_NONE) ||
                 (HomeView::is_swipe != nullptr && HomeView::is_swipe());
   if (swiped) {
-    emit(up == HomeView::Action::CEILING_UP ? HomeView::Action::CEILING_CANCEL : HomeView::Action::TABLE_CANCEL, 0);
+    emit(up == HomeView::Action::CEILING_UP ? HomeView::Action::CEILING_CANCEL
+         : up == HomeView::Action::MIC_UP   ? HomeView::Action::MIC_CANCEL
+                                            : HomeView::Action::TABLE_CANCEL,
+         0);
   } else {
     emit(up, 0);
   }
@@ -124,6 +127,48 @@ void HomeView::build(lv_obj_t *parent, bool landscape) {
   HomeView::_no_lights_text = Theme::label(HomeView::_no_lights, "", Theme::body_font(), Theme::muted());
   lv_obj_add_flag(HomeView::_no_lights, LV_OBJ_FLAG_HIDDEN);
   HomeView::_show_controls(HomeState());
+
+  // Hold to talk: a full-width bar under the body, built hidden (show() shows it where the board has mics).
+  HomeView::_body = body;
+  HomeView::_mic_timer = NULL;
+  HomeView::_toast = NULL;
+  HomeView::_toast_timer = NULL;
+  HomeView::_mic_checked = false;
+  HomeView::_mic_fits = true;
+  HomeView::_mic_shown = 0;
+  HomeView::_mic = Ui::tile(parent, NSPM_ICON_MICROPHONE, 40, "Hold to talk", true);
+  lv_obj_set_size(HomeView::_mic, lv_pct(100), Theme::px(56));
+  lv_obj_set_flex_align(HomeView::_mic, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_all(HomeView::_mic, 0, 0); // The meter fills the button edge to edge
+  lv_obj_set_style_pad_gap(HomeView::_mic, Theme::SPACE_L, 0);
+  HomeView::_mic_icon = Ui::tile_icon(HomeView::_mic);
+  HomeView::_mic_label = Ui::tile_label(HomeView::_mic);
+  lv_obj_set_flex_grow(HomeView::_mic_label, 0);
+  lv_obj_set_width(HomeView::_mic_label, LV_SIZE_CONTENT);
+  lv_obj_set_style_text_font(HomeView::_mic_label, Theme::title_font(), 0);
+  // The meter, behind the icon and the text: a bar filling the button from the left. Not part of the
+  // flex layout, and no touch of its own.
+  HomeView::_mic_meter = lv_bar_create(HomeView::_mic);
+  lv_obj_remove_style_all(HomeView::_mic_meter);
+  lv_obj_add_flag(HomeView::_mic_meter, (lv_obj_flag_t)(LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING));
+  lv_obj_remove_flag(HomeView::_mic_meter, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  lv_obj_set_size(HomeView::_mic_meter, lv_pct(100), lv_pct(100));
+  lv_obj_set_pos(HomeView::_mic_meter, 0, 0);
+  lv_bar_set_range(HomeView::_mic_meter, 0, 100);
+  lv_obj_set_style_radius(HomeView::_mic_meter, Theme::RADIUS_INSET, LV_PART_MAIN);
+  lv_obj_set_style_radius(HomeView::_mic_meter, Theme::RADIUS_INSET, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(HomeView::_mic_meter, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(HomeView::_mic_meter, LV_OPA_50, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(HomeView::_mic_meter, Theme::danger(), LV_PART_INDICATOR);
+  lv_obj_set_style_anim_duration(HomeView::_mic_meter, 0, 0);
+  lv_obj_move_to_index(HomeView::_mic_meter, 0);
+  lv_obj_add_flag(HomeView::_mic_meter, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(HomeView::_mic, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_event_cb(HomeView::_mic, HomeView::_mic_deleted, LV_EVENT_DELETE, NULL);
+  lv_obj_add_event_cb(HomeView::_mic, [](lv_event_t *) { emit(Action::MIC_DOWN, 0); }, LV_EVENT_PRESSED, NULL);
+  for (lv_event_code_t code : {LV_EVENT_RELEASED, LV_EVENT_PRESS_LOST}) {
+    lv_obj_add_event_cb(HomeView::_mic, tile_released, code, (void *)(intptr_t)Action::MIC_UP);
+  }
 
   // Footer: the room, picked from a list that opens upwards, and the mode, a two-way switch.
   lv_obj_t *footer = Theme::group(parent, LV_FLEX_FLOW_ROW);
@@ -265,6 +310,103 @@ void HomeView::_room_event(lv_event_t *event) {
   }
 }
 
+// The button went with its page (or the page was built again): drop what pointed into it.
+void HomeView::_mic_deleted(lv_event_t *event) {
+  if (HomeView::_mic_timer != NULL) {
+    lv_timer_delete(HomeView::_mic_timer);
+    HomeView::_mic_timer = NULL;
+  }
+  if (HomeView::_toast_timer != NULL) {
+    lv_timer_delete(HomeView::_toast_timer);
+    HomeView::_toast_timer = NULL;
+  }
+  if (HomeView::_toast != NULL) {
+    lv_obj_delete(HomeView::_toast); // A sibling of the button: it may still be there
+    HomeView::_toast = NULL;
+  }
+  HomeView::_mic = HomeView::_mic_icon = HomeView::_mic_label = HomeView::_mic_meter = NULL;
+}
+
+void HomeView::show_mic_level(int level) {
+  if (HomeView::_mic_meter != NULL) {
+    HomeView::_mic_shown = level < 0 ? 0 : level > 100 ? 100 : level;
+    Ui::set_bar(HomeView::_mic_meter, HomeView::_mic_shown);
+  }
+}
+
+// About every 40 ms while recording: the level rises at once and falls away, so the bar is readable.
+void HomeView::_mic_poll(lv_timer_t *) {
+  if (HomeView::mic_holding != nullptr && HomeView::_mic != NULL && lv_obj_has_state(HomeView::_mic, LV_STATE_PRESSED)) {
+    HomeView::mic_holding();
+  }
+  int level = HomeView::mic_level != nullptr ? HomeView::mic_level() : 0;
+  int fall = HomeView::_mic_shown - 6;
+  HomeView::show_mic_level(level > fall ? level : fall);
+}
+
+void HomeView::show_mic_recording(bool recording) {
+  if (HomeView::_mic == NULL || lv_obj_has_flag(HomeView::_mic, LV_OBJ_FLAG_HIDDEN)) {
+    return;
+  }
+  Ui::set_visible(HomeView::_mic_meter, recording);
+  Ui::set_bg_color(HomeView::_mic, recording ? lv_color_mix(Theme::danger(), Theme::card(), 70) : Theme::card());
+  Ui::set_text_color(HomeView::_mic_icon, recording ? Theme::danger() : Theme::text());
+  Ui::set_text(HomeView::_mic_label, recording ? "Release to send" : "Hold to talk");
+  HomeView::show_mic_level(0);
+  if (recording && HomeView::_mic_timer == NULL) {
+    HomeView::_mic_timer = lv_timer_create(HomeView::_mic_poll, 40, NULL);
+  } else if (!recording && HomeView::_mic_timer != NULL) {
+    lv_timer_delete(HomeView::_mic_timer);
+    HomeView::_mic_timer = NULL;
+  }
+}
+
+void HomeView::show_toast(const std::string &text, Toast kind) {
+  if (HomeView::_mic == NULL || lv_obj_has_flag(HomeView::_mic, LV_OBJ_FLAG_HIDDEN)) {
+    return;
+  }
+  lv_obj_t *page = lv_obj_get_parent(HomeView::_mic);
+  if (HomeView::_toast == NULL) {
+    lv_obj_t *toast = Theme::card(page);
+    HomeView::_toast = toast;
+    lv_obj_add_flag(toast, (lv_obj_flag_t)(LV_OBJ_FLAG_IGNORE_LAYOUT | LV_OBJ_FLAG_FLOATING));
+    lv_obj_remove_flag(toast, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(toast, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(toast, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_hor(toast, Theme::SPACE_XL, 0);
+    lv_obj_set_style_pad_ver(toast, Theme::SPACE_M, 0);
+    lv_obj_set_style_pad_gap(toast, Theme::SPACE_M, 0);
+    // Solid, whatever the cards over a page background are: it sits over the tiles.
+    lv_obj_set_style_bg_color(toast, Theme::track(), 0);
+    lv_obj_set_style_bg_opa(toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(toast, Theme::RADIUS_CARD, 0);
+    HomeView::_toast_icon = Ui::icon(toast, NSPM_ICON_CHECK, 24, Theme::good());
+    HomeView::_toast_text = Theme::label(toast, "", Theme::title_font(), Theme::text());
+    lv_obj_add_event_cb(
+        toast, [](lv_event_t *) { HomeView::_toast = HomeView::_toast_icon = HomeView::_toast_text = NULL; }, LV_EVENT_DELETE, NULL);
+  }
+  lv_label_set_text(HomeView::_toast_icon, kind == Toast::OK ? NSPM_ICON_CHECK : kind == Toast::ERROR ? NSPM_ICON_CLOSE : NSPM_ICON_MICROPHONE);
+  lv_obj_set_style_text_color(HomeView::_toast_icon, kind == Toast::OK ? Theme::good() : kind == Toast::ERROR ? Theme::danger() : Theme::on(), 0);
+  lv_label_set_text(HomeView::_toast_text, text.c_str());
+  lv_obj_move_foreground(HomeView::_toast);
+  lv_obj_remove_flag(HomeView::_toast, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_update_layout(page);
+  lv_obj_align_to(HomeView::_toast, HomeView::_mic, LV_ALIGN_OUT_TOP_MID, 0, -Theme::SPACE_M);
+  if (HomeView::_toast_timer != NULL) {
+    lv_timer_delete(HomeView::_toast_timer);
+  }
+  HomeView::_toast_timer = lv_timer_create(
+      [](lv_timer_t *) {
+        HomeView::_toast_timer = NULL; // One shot: LVGL deletes it after this call
+        if (HomeView::_toast != NULL) {
+          lv_obj_add_flag(HomeView::_toast, LV_OBJ_FLAG_HIDDEN);
+        }
+      },
+      2000, NULL);
+  lv_timer_set_repeat_count(HomeView::_toast_timer, 1);
+}
+
 static void show_tile(lv_obj_t *tile, lv_obj_t *value, int level, bool editing) {
   char text[8];
   snprintf(text, sizeof(text), level > 0 ? "%d%%" : "Off", level);
@@ -301,6 +443,23 @@ void HomeView::_show_controls(const HomeState &state) {
 
 void HomeView::show(const HomeState &state) {
   HomeView::_show_controls(state);
+  if (state.has_mic && HomeView::_mic != NULL && !HomeView::_mic_checked) {
+    // Once: does the body keep room for its controls with the button taking its row? No refactor of
+    // the page for it (the layout is to be reworked): without room, no button, and a line in the log.
+    HomeView::_mic_checked = true;
+    lv_obj_remove_flag(HomeView::_mic, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_update_layout(lv_obj_get_parent(HomeView::_mic));
+    if (lv_obj_get_height(HomeView::_body) < Theme::px(HomeView::_landscape ? 110 : 200)) {
+      HomeView::_mic_fits = false;
+      lv_obj_add_flag(HomeView::_mic, LV_OBJ_FLAG_HIDDEN);
+      if (HomeView::log_warning != nullptr) {
+        HomeView::log_warning("No room for the hold-to-talk button on this screen: it is left out.");
+      }
+    }
+  }
+  if (HomeView::_mic != NULL && HomeView::_mic_checked) {
+    Ui::set_visible(HomeView::_mic, state.has_mic && HomeView::_mic_fits);
+  }
   Ui::set_text(HomeView::_time, state.time);
   Ui::set_icon(HomeView::_scenes, state.all_rooms ? NSPM_ICON_LIGHTBULB_GROUP : NSPM_ICON_PALETTE_SWATCH);
   Ui::set_visible(HomeView::_entities, state.entities);

@@ -23,6 +23,9 @@
 #include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include <nlohmann/json.hpp>
+#if defined(BOARD_CUSTOM)
+#include <VoiceRecorder.hpp>
+#endif
 
 ESP_EVENT_DEFINE_BASE(UPDATEMANAGER_EVENT);
 
@@ -645,6 +648,14 @@ void UpdateManager::_mqtt_message_handler(const mqtt::Message &message, void *co
       } else {
         ESP_LOGW("UpdateManager", "lvgl_tap needs x and y on the screen.");
       }
+#if defined(BOARD_CUSTOM)
+    } else if (command_string.compare("voice_record") == 0) {
+      // {"command": "voice_record", "action": "start"|"stop"|"cancel", "seconds": 5}: the voice recorder's test
+      // trigger (see docs/VOICE_RECORDER.md). "start" with "seconds" records that long and sends.
+      const std::string action = json.contains("action") && json["action"].is_string() ? json["action"].get<std::string>() : "";
+      const int seconds = json.contains("seconds") && json["seconds"].is_number_integer() ? json["seconds"].get<int>() : 0;
+      VoiceRecorder::handle_command(action.c_str(), seconds);
+#endif
     } else if (command_string.compare("lvgl_repaint") == 0) {
       // {"command": "lvgl_repaint"}: send the whole screen to the display again, rebuilding nothing.
       // Pixels the display got wrong go away; pixels LVGL draws wrong come back (see the LVGL

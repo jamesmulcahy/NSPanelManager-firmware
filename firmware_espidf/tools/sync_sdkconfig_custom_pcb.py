@@ -13,7 +13,8 @@ A second run right after the build changes nothing. To start over from the P4's 
 sdkconfig.custom_pcb, build custom_pcb once (it fails to link, but writes the defaults), copy that file
 aside and pass it as the second argument.
 
-An option whose value differs is taken from original_sonoff unless KEEP_P4 matches it. With
+An option whose value differs is taken from original_sonoff unless KEEP_P4 matches it (that is also where the P4-only
+overrides live: the TCP send/receive buffers and the receive mailbox, see the comment there). With
 esp_wifi_remote (Wi-Fi over ESP-Hosted), ESP_WIFI_<X> is a prompt-less mirror of WIFI_RMT_<X>, so
 original_sonoff's ESP_WIFI_<X> is set as WIFI_RMT_<X>.
 """
@@ -32,7 +33,10 @@ sonoff, p4 = parse(sonoff_path), parse(p4_path)
 # Chip- and board-level: the P4's own defaults stay.
 KEEP_P4 = re.compile(r'^(SOC_|IDF_|BOOTLOADER_CPU_CLK|BOOTLOADER_OFFSET|BROWNOUT|ESP_BROWNOUT|COMPILER_FLOAT_LIB|EFUSE_|ESP_EFUSE_|'
                      r'ESP32_WIFI_|ESP_WIFI_REMOTE_ENABLED|ESPTOOLPY_FLASH|FLASHMODE_|ESP_DEFAULT_CPU_FREQ|ESP_MAC_UNIVERSAL|ESP_REV_|ESP_ROM_|'
-                     r'ESP_SLEEP_|PM_|SD_ENABLE_SDIO|SPI_FLASH_SUPPORT_|ULP_|SPIRAM|PARTITION_)')
+                     r'ESP_SLEEP_|PM_|SD_ENABLE_SDIO|SPI_FLASH_SUPPORT_|ULP_|SPIRAM|PARTITION_|'
+                     # TCP buffers (and their pre-rename names): the P4 serves 480 KB recordings to Home Assistant over
+                     # Wi-Fi via the C6 and has the RAM; the Sonoff's 4 x MSS windows stay as they are.
+                     r'(LWIP_)?TCP_(SND_BUF_DEFAULT|WND_DEFAULT|RECVMBOX_SIZE)$)')
 want = {}
 for k in sorted(set(sonoff) & set(p4)):
     if KEEP_P4.match(k):

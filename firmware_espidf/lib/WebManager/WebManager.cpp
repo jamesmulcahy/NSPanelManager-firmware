@@ -14,6 +14,7 @@
 #include <WebManager.hpp>
 #if defined(BOARD_CUSTOM)
 #include <VoiceCapture.hpp>
+#include <VoiceRecorder.hpp>
 #endif
 #include <WiFiManager.hpp>
 #include <cstring>
@@ -92,7 +93,11 @@ void WebManager::start() {
   if (WebManager::_server == NULL) {
     WebManager::_config = HTTPD_DEFAULT_CONFIG();
     WebManager::_config.server_port = WebManager::HTTP_PORT;
-    WebManager::_config.max_uri_handlers = 16; // 12 registered (/screenshot and /metrics included; 13 on custom_pcb, +2 with NSPM_HEAP_DIAG), with room to spare
+    WebManager::_config.max_uri_handlers = 18; // 12 registered (/screenshot and /metrics included; 13 on custom_pcb, +2 for /rec/*, +2 with NSPM_HEAP_DIAG = 17), with room to spare
+#if defined(BOARD_CUSTOM)
+    // /rec/<token>.wav is a wildcard pattern; the exact URIs match as before.
+    WebManager::_config.uri_match_fn = httpd_uri_match_wildcard;
+#endif
     // The default 4 KB overflowed while /screenshot ran ROM tdefl under the PNG framing and a
     // chunked send, and 8 KB left only 412 bytes unused on a panel (PNG). See the
     // "Screenshot ..." log line for what is left unused.
@@ -105,6 +110,16 @@ void WebManager::start() {
     // TCP keepalive closes dead sessions after ~30 s idle; capping sessions at 4 (plus the 3 the
     // server uses internally) leaves sockets free for MQTT and HTTP clients, and LRU purge drops
     // the oldest session instead of refusing new clients when the cap is reached.
+#if defined(BOARD_CUSTOM)
+    // The server has ONE task: a client that stops reading a recording's download (or a request that stops
+    // arriving) holds every other request, /metrics included, for as long as one send()/recv() may block, which
+    // is these timeouts (the default is 5 s). 3 s: lwIP's first retransmission is at 1.5 s and the second at 3 s,
+    // so a lost tail segment on a healthy link recovers inside it and a peer that has really gone is dropped
+    // after at most 3 s of waiting; the voice download as a whole is also capped (DOWNLOAD_BUDGET_MS), because
+    // a peer that takes a few bytes per timeout never trips a per-call timeout. Other boards keep the default.
+    WebManager::_config.send_wait_timeout = 3;
+    WebManager::_config.recv_wait_timeout = 3;
+#endif
     WebManager::_config.max_open_sockets = 4;
     WebManager::_config.lru_purge_enable = true;
     WebManager::_config.keep_alive_enable = true;
@@ -127,7 +142,14 @@ void WebManager::start() {
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_screenshot);             // The LVGL screen as an image
       httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_metrics);                // Prometheus scrape endpoint
 #if defined(BOARD_CUSTOM)
-      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // TEMPORARY: raw microphone audio
+#if defined(NSPM_VOICE_TEST_ENDPOINT)
+      httpd_register_uri_handler(WebManager::_server, &WebManager::_uri_rec_test_wav); // Listening tests: microphone audio, raw or processed
+#endif
+      // The voice recorder's recordings, after /rec/test.wav when it is built in (the first match wins).
+      static httpd_uri_t uri_rec_get = {.uri = "/rec/*", .method = HTTP_GET, .handler = VoiceRecorder::serve, .user_ctx = NULL};
+      static httpd_uri_t uri_rec_head = {.uri = "/rec/*", .method = HTTP_HEAD, .handler = VoiceRecorder::serve, .user_ctx = NULL};
+      httpd_register_uri_handler(WebManager::_server, &uri_rec_get);
+      httpd_register_uri_handler(WebManager::_server, &uri_rec_head);
 #endif
       // Captive-portal probes from Apple (/hotspot-detect.html, /library/test/success.html), Windows
       // (/connecttest.txt, /ncsi.txt) and others all land here, so they need no handler slots of their own.
@@ -594,70 +616,179 @@ esp_err_t WebManager::_handle_uri_screenshot(httpd_req_t *req) {
   return sent ? ESP_OK : ESP_FAIL;
 }
 
-#if defined(BOARD_CUSTOM)
-// TEMPORARY (voice, phase 0b): the microphones' raw audio, to listen to. Remove once voice capture has its
-// own way out (the AFE's output, its URL sent over MQTT).
+#if defined(BOARD_CUSTOM) && defined(NSPM_VOICE_TEST_ENDPOINT)
+// The microphones' audio, raw or through any of the processing stages, to listen to and to tune by
+// (docs/CUSTOM_PCB.md). Not built by default (the recorder's /rec/<token>.wav is how recordings leave the
+// panel); kept, not deleted, so the next tuning round needs only -DNSPM_VOICE_TEST_ENDPOINT.
 static void put_le(uint8_t *at, uint32_t value, int bytes) {
   for (int i = 0; i < bytes; i++) {
     at[i] = (value >> (8 * i)) & 0xFF;
   }
 }
 
+// GET /rec/test.wav?mode=raw|ns|bf|bf_ns|stages|voice|cmp&secs=5&gain=30&ns=1&hpf=0&angle=90&spacing=60&ch=all|1|2|ref
+//                  &mic=1|2|avg&makeup=12&agc=1&target=-20&maxgain=24&gate=12
+//                  &presence=5&presencehz=2800&lowmid=-3&lowmidhz=400&ratio=4&thresh=-30&compmakeup=5
+// voice and cmp (all) default to the production settings (VoiceCapture::voice_options()): gain 36, hpf 150 (hpf=1 still means 100).
 esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   static constexpr int MAX_SECONDS = 30;
   static constexpr size_t WAV_HEADER = 44;
+  static constexpr int DEFAULT_HPF_HZ = 100; // what hpf=1 means
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-  char query[96], value[16];
-  int seconds = 5, gain_db = VoiceCapture::DEFAULT_GAIN_DB;
-  int channel = -1; // -1: all three
+  char query[192], value[16];
+  int seconds = 5;
+  VoiceCapture::Options options;
+  const char *mode = "raw";
+  int channel = -1; // raw only: -1 all three, or one of them
   bool bad = false;
+  VoiceCapture::VoiceMic mic = VoiceCapture::VOICE_AVG;
+  bool mic_given = false;
   if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+    if (httpd_query_key_value(query, "mode", value, sizeof(value)) == ESP_OK) {
+      // Each maps to its Output bits. "cmp" (and "all") is one recording of 4 channels: MIC1, NS(MIC1), the voice
+      // chain on MIC1, the voice chain on mic= (avg). "stages" is the old four: MIC1, NS(MIC1), BF, NS(BF).
+      // The voice modes start from the production options; the knobs below override them.
+      static constexpr struct {
+        const char *name;
+        uint8_t outputs;
+        bool production;
+      } MODES[] = {{"raw", VoiceCapture::MODE_RAW, false},
+                   {"ns", VoiceCapture::MODE_NS, false},
+                   {"bf", VoiceCapture::MODE_BF, false},
+                   {"bf_ns", VoiceCapture::MODE_BF_NS, false},
+                   {"stages", VoiceCapture::MODE_STAGES, false},
+                   {"voice", VoiceCapture::MODE_VOICE, true},
+                   {"cmp", VoiceCapture::MODE_COMPARE, true},
+                   {"all", VoiceCapture::MODE_COMPARE, true}};
+      bool known = false;
+      for (const auto &entry : MODES) {
+        if (strcmp(value, entry.name) == 0) {
+          mode = entry.name;
+          options = entry.production ? VoiceCapture::voice_options() : VoiceCapture::Options();
+          options.outputs = entry.outputs;
+          known = true;
+        }
+      }
+      bad |= !known;
+    }
     if (httpd_query_key_value(query, "secs", value, sizeof(value)) == ESP_OK) {
       seconds = atoi(value);
       bad |= seconds < 1 || seconds > MAX_SECONDS;
     }
     if (httpd_query_key_value(query, "gain", value, sizeof(value)) == ESP_OK) {
-      gain_db = atoi(value);
-      bad |= gain_db < 0 || gain_db > 37;
+      options.gain_db = atoi(value);
+      bad |= options.gain_db < 0 || options.gain_db > 37;
+    }
+    if (httpd_query_key_value(query, "ns", value, sizeof(value)) == ESP_OK) {
+      options.ns_level = atoi(value);
+      bad |= options.ns_level < 0 || options.ns_level > 2;
+    }
+    if (httpd_query_key_value(query, "hpf", value, sizeof(value)) == ESP_OK) {
+      // 0 off, 1 the default cutoff, or a cutoff in Hz.
+      const int hpf = atoi(value);
+      options.hpf_hz = hpf == 1 ? DEFAULT_HPF_HZ : hpf;
+      bad |= options.hpf_hz != 0 && (options.hpf_hz < 20 || options.hpf_hz > 2000);
+    }
+    if (httpd_query_key_value(query, "angle", value, sizeof(value)) == ESP_OK) {
+      options.bf_angle_deg = atof(value);
+      bad |= options.bf_angle_deg < 0.0f || options.bf_angle_deg > 360.0f;
+    }
+    if (httpd_query_key_value(query, "spacing", value, sizeof(value)) == ESP_OK) {
+      options.mic_spacing_mm = atof(value);
+      bad |= options.mic_spacing_mm < 5.0f || options.mic_spacing_mm > 500.0f;
+    }
+    if (httpd_query_key_value(query, "mic", value, sizeof(value)) == ESP_OK) {
+      mic = strcmp(value, "1") == 0     ? VoiceCapture::VOICE_MIC1
+            : strcmp(value, "2") == 0   ? VoiceCapture::VOICE_MIC2
+            : strcmp(value, "avg") == 0 ? VoiceCapture::VOICE_AVG
+                                        : VoiceCapture::VoiceMic(255);
+      mic_given = true;
+      bad |= mic > VoiceCapture::VOICE_AVG;
+    }
+    if (httpd_query_key_value(query, "makeup", value, sizeof(value)) == ESP_OK) {
+      options.makeup_db = atof(value);
+      bad |= options.makeup_db < -20.0f || options.makeup_db > 40.0f;
+    }
+    if (httpd_query_key_value(query, "agc", value, sizeof(value)) == ESP_OK) {
+      options.agc = atoi(value) != 0;
+    }
+    if (httpd_query_key_value(query, "target", value, sizeof(value)) == ESP_OK) {
+      options.agc_target_dbfs = atof(value);
+      bad |= options.agc_target_dbfs < -40.0f || options.agc_target_dbfs > -3.0f;
+    }
+    if (httpd_query_key_value(query, "maxgain", value, sizeof(value)) == ESP_OK) {
+      options.agc_max_gain_db = atof(value);
+      bad |= options.agc_max_gain_db < 0.0f || options.agc_max_gain_db > 40.0f;
+    }
+    if (httpd_query_key_value(query, "gate", value, sizeof(value)) == ESP_OK) {
+      options.gate_depth_db = atof(value);
+      bad |= options.gate_depth_db < 0.0f || options.gate_depth_db > 40.0f;
+    }
+    // The EQ and the compressor; VoiceCapture::record() checks their ranges.
+    if (httpd_query_key_value(query, "presence", value, sizeof(value)) == ESP_OK) {
+      options.eq_presence_db = atof(value);
+    }
+    if (httpd_query_key_value(query, "presencehz", value, sizeof(value)) == ESP_OK) {
+      options.eq_presence_hz = atof(value);
+    }
+    if (httpd_query_key_value(query, "lowmid", value, sizeof(value)) == ESP_OK) {
+      options.eq_lowmid_db = atof(value);
+    }
+    if (httpd_query_key_value(query, "lowmidhz", value, sizeof(value)) == ESP_OK) {
+      options.eq_lowmid_hz = atof(value);
+    }
+    if (httpd_query_key_value(query, "ratio", value, sizeof(value)) == ESP_OK) {
+      options.comp_ratio = atof(value);
+    }
+    if (httpd_query_key_value(query, "thresh", value, sizeof(value)) == ESP_OK) {
+      options.comp_threshold_dbfs = atof(value);
+    }
+    if (httpd_query_key_value(query, "compmakeup", value, sizeof(value)) == ESP_OK) {
+      options.comp_makeup_db = atof(value);
     }
     if (httpd_query_key_value(query, "ch", value, sizeof(value)) == ESP_OK) {
-      channel = strcmp(value, "1") == 0     ? VoiceCapture::MIC1
-                : strcmp(value, "2") == 0   ? VoiceCapture::MIC2
-                : strcmp(value, "ref") == 0 ? VoiceCapture::REF
+      channel = strcmp(value, "1") == 0     ? VoiceCapture::OUT_MIC1
+                : strcmp(value, "2") == 0   ? VoiceCapture::OUT_MIC2
+                : strcmp(value, "ref") == 0 ? VoiceCapture::OUT_REF
                 : strcmp(value, "all") == 0 ? -1
                                             : -2;
-      bad |= channel == -2;
+      bad |= channel == -2 || (channel > 0 && options.outputs != VoiceCapture::MODE_RAW);
     }
   }
   if (bad) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_sendstr(req, "secs must be 1-30, ch all, 1, 2 or ref, gain 0-37 (dB).\n");
+    return httpd_resp_sendstr(req, "mode raw, ns, bf, bf_ns, stages, voice or cmp; secs 1-30; gain 0-37 (dB); ns 0-2; hpf 0, 1 or 20-2000 (Hz); "
+                                   "angle 0-360 (deg); spacing 5-500 (mm); ch all, 1, 2 or ref (mode raw only); mic 1, 2 or avg (voice, cmp); "
+                                   "makeup -20 to 40 (dB); agc 0 or 1; target -40 to -3 (dBFS); maxgain 0-40 (dB); gate 0-40 (dB); presence, lowmid -12 to 12 (dB); presencehz 500-7000, lowmidhz "
+                                   "100-2000 (Hz); ratio 1-20 (1 off); thresh -50 to 0 (dBFS); compmakeup 0-20 (dB).\n");
   }
+  if (channel > 0) {
+    options.outputs = channel;
+  }
+  // voice: the chain on mic= (avg). cmp: the chain on MIC1 against the chain on mic= (avg), the same audio.
+  options.voice_mic = options.outputs == VoiceCapture::MODE_COMPARE ? VoiceCapture::VOICE_MIC1 : mic;
+  options.voice_mic_b = mic;
+  (void)mic_given;
 
-  // The recording, with room for the WAV header in front. A single channel is then packed in place.
+  // The recording, with room for the WAV header in front.
   const size_t frames = (size_t)seconds * VoiceCapture::SAMPLE_RATE;
-  const int channels = channel < 0 ? VoiceCapture::CHANNELS : 1;
-  uint8_t *wav = static_cast<uint8_t *>(heap_caps_malloc(WAV_HEADER + frames * VoiceCapture::CHANNELS * sizeof(int16_t), MALLOC_CAP_SPIRAM));
+  const int channels = VoiceCapture::channels(options.outputs);
+  uint8_t *wav = static_cast<uint8_t *>(heap_caps_malloc(WAV_HEADER + frames * channels * sizeof(int16_t), MALLOC_CAP_SPIRAM));
   if (wav == nullptr) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, "No memory for the recording.\n");
   }
   int16_t *samples = reinterpret_cast<int16_t *>(wav + WAV_HEADER);
-  // Blocks this (the web server's) task for the recording; the I2S reads run on VoiceCapture's.
-  esp_err_t err = VoiceCapture::record(samples, frames, gain_db);
+  // Blocks this (the web server's) task for the recording; the I2S reads and the processing run on VoiceCapture's.
+  esp_err_t err = VoiceCapture::record(samples, frames, options);
   if (err != ESP_OK) {
     heap_caps_free(wav);
     ESP_LOGW("WebManager", "No recording: %s.", esp_err_to_name(err));
     httpd_resp_set_status(req, err == ESP_ERR_INVALID_STATE ? "503 Service Unavailable" : "500 Internal Server Error");
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, err == ESP_ERR_INVALID_STATE ? "Another recording is under way.\n" : "Recording failed: see the log.\n");
-  }
-  if (channels == 1) {
-    for (size_t i = 0; i < frames; i++) {
-      samples[i] = samples[i * VoiceCapture::CHANNELS + channel];
-    }
   }
 
   const uint32_t data_size = frames * channels * sizeof(int16_t);
@@ -679,7 +810,7 @@ esp_err_t WebManager::_handle_uri_rec_test_wav(httpd_req_t *req) {
   // One send, so the response has a Content-Length.
   err = httpd_resp_send(req, reinterpret_cast<const char *>(wav), WAV_HEADER + data_size);
   heap_caps_free(wav);
-  ESP_LOGI("WebManager", "Recording sent: %d s, %d channel(s), %lu bytes%s.", seconds, channels, (unsigned long)(WAV_HEADER + data_size),
+  ESP_LOGI("WebManager", "Recording sent: mode %s, %d s, %d channel(s), %lu bytes%s.", mode, seconds, channels, (unsigned long)(WAV_HEADER + data_size),
            err == ESP_OK ? "" : " (send failed)");
   return err;
 }

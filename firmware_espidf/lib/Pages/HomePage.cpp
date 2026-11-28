@@ -17,6 +17,49 @@
 #include <memory>
 #include <protobuf_nspanel.pb-c.h>
 #include <vector>
+#if defined(BOARD_CUSTOM)
+#include <LvglRenderer.hpp>
+#include <VoiceRecorder.hpp>
+#include <atomic>
+#endif
+
+#if defined(BOARD_CUSTOM)
+// Hold to talk (HomeView's mic button, custom PCB). The actions arrive on LvglUi's task, one after another,
+// so a press's start() is finished before its release is looked at; LVGL is only touched by posting to its
+// own task (LvglRenderer::post). The result of a send comes from the recorder's task (voice_rec).
+namespace {
+// A press started a recording and neither its release, a cancel nor the recorder's own 15 s send has ended it.
+std::atomic<bool> mic_held = false;
+
+void mic_toast(const char *text, HomeView::Toast kind) {
+  std::string message = text;
+  LvglRenderer::post([message, kind]() { HomeView::show_toast(message, kind); });
+}
+
+void mic_idle() {
+  LvglRenderer::post([]() { HomeView::show_mic_recording(false); });
+}
+
+// voice_rec task: hand over to LvglUi's task, which orders it with the touches.
+void mic_result(bool sent, esp_err_t err, void *) {
+  LvglUi::defer([sent, err]() {
+    if (!InterfaceManager::is_current_page(HomePage::unshow)) {
+      return;
+    }
+    // The recorder sent on its own (the 15 s limit) with the finger still down: the button goes back to
+    // idle and the release that follows is ignored (mic_held is false). Not while a newer recording is
+    // under way: this is then the result of the one before.
+    if (VoiceRecorder::state() == VoiceRecorder::State::IDLE && mic_held.exchange(false)) {
+      mic_idle();
+    }
+    if (!sent) {
+      ESP_LOGW("HomePage", "Voice message not sent: %s", esp_err_to_name(err));
+    }
+    mic_toast(sent ? "Sent" : "Failed", sent ? HomeView::Toast::OK : HomeView::Toast::ERROR);
+  });
+}
+} // namespace
+#endif
 
 void HomePage::show() {
   esp_log_level_set("HomePage", ConfigManager::log_level);
@@ -27,6 +70,12 @@ void HomePage::show() {
       LvglUi::defer([action, value]() { HomePage::_lvgl_action((int)action, value); });
     };
     HomeView::is_swipe = []() { return LvglUi::swiping(); };
+#if defined(BOARD_CUSTOM)
+    HomeView::mic_level = []() { return (int)VoiceRecorder::level(); };
+    HomeView::mic_holding = []() { VoiceRecorder::hold(); };
+    HomeView::log_warning = [](const char *message) { ESP_LOGW("HomePage", "%s", message); };
+    VoiceRecorder::set_result_listener(mic_result, nullptr);
+#endif
     LvglUi::on_minute = []() {
       if (InterfaceManager::is_current_page(HomePage::unshow)) {
         HomePage::_lvgl_render(); // The clock in the corner.
@@ -66,6 +115,14 @@ void HomePage::show() {
 }
 
 void HomePage::unshow() {
+#if defined(BOARD_CUSTOM)
+  // Left the page (or the screen went to the screensaver) with the finger on the mic button: nothing
+  // would send it, as the release no longer reaches the page.
+  if (mic_held.exchange(false)) {
+    ESP_LOGI("HomePage", "Left the page while recording: cancelled.");
+    VoiceRecorder::cancel();
+  }
+#endif
   // Event handlers stop with the page: InterfaceManager only dispatches to the current page.
   HomePage::_current_affect_mode = HomePageAffectMode::ROOM;
   HomePage::_current_edit_mode = HomePageEditMode::ALL_LIGHTS;
@@ -736,6 +793,9 @@ void HomePage::_lvgl_render() {
     return;
   }
   HomeState state;
+#if defined(BOARD_CUSTOM)
+  state.has_mic = true; // The only board with microphones so far
+#endif
   std::shared_ptr<NSPanelRoomStatus> status;
   // The room list: every room this panel may show, by name once known.
   const uint32_t current_room = RoomManager::get_current_room_id();
@@ -876,6 +936,52 @@ void HomePage::_lvgl_action(int action, int32_t value) {
       HomePage::_special_mode_timer_activation_mode = HomePageEditMode::ALL_LIGHTS;
     }
     break;
+#if defined(BOARD_CUSTOM)
+  case HomeView::Action::MIC_DOWN: {
+    // Held only while the button is pressed (the hold lease): a release this page never gets (a rebuild
+    // under the finger, a dropped action) still ends the recording, within HOLD_LEASE_MS.
+    VoiceRecorder::Options options;
+    options.hold_lease = true;
+    // Held before start(), so that an unshow() on its own task from here on sees it and cancels.
+    mic_held = true;
+    esp_err_t err = VoiceRecorder::start(options);
+    if (err != ESP_OK) {
+      mic_held = false;
+      ESP_LOGW("HomePage", "Could not start recording: %s", esp_err_to_name(err));
+      mic_toast("Failed", HomeView::Toast::ERROR);
+    } else if (!InterfaceManager::is_current_page(HomePage::unshow)) {
+      // The page went while start() ran; unshow() may have looked before the recording existed.
+      mic_held = false;
+      VoiceRecorder::cancel();
+    } else {
+      LvglRenderer::post([]() { HomeView::show_mic_recording(true); });
+    }
+    break;
+  }
+  case HomeView::Action::MIC_UP: {
+    if (!mic_held.exchange(false)) {
+      break; // Nothing held: start() failed, or the recorder already sent at its limit
+    }
+    mic_idle();
+    esp_err_t err = VoiceRecorder::stop_and_send();
+    if (err == ESP_ERR_INVALID_SIZE) {
+      mic_toast("Hold to talk", HomeView::Toast::HINT); // Under VoiceRecorder::MIN_MS: a tap
+    } else if (err == ESP_ERR_INVALID_STATE) {
+      // The recorder ended it first (limit): its result listener reports.
+    } else if (err != ESP_OK) {
+      ESP_LOGW("HomePage", "Could not send the recording: %s", esp_err_to_name(err));
+      mic_toast("Failed", HomeView::Toast::ERROR);
+    }
+    break; // ESP_OK: "Sent" or "Failed" when the listener reports
+  }
+  case HomeView::Action::MIC_CANCEL:
+    // The press became a swipe (or slid off): nothing is sent.
+    if (mic_held.exchange(false)) {
+      VoiceRecorder::cancel();
+      mic_idle();
+    }
+    break;
+#endif
   default:
     break; // CEILING/TABLE taps and holds: the DOWN/UP pairs above carry them.
   }
