@@ -7,7 +7,7 @@ no pages, only "Display update needed" on the TFT's boot screen, until a GUI upd
 terminal TFT. The pages, data, navigation and manager protocol are those of NSPanel Manager; only
 the drawing is the firmware's own.
 
-On the custom PCB (Waveshare ESP32-P4-WIFI6-Touch-LCD-4B) there is no Nextion: the same pages are
+On the custom PCB (Waveshare ESP32-P4-86-Panel-ETH-2RO) there is no Nextion: the same pages are
 drawn on its 720x720 MIPI-DSI LCD by `lib/DsiDisplay`, at 480x480 scaled x1.5. See
 [CUSTOM_PCB.md](CUSTOM_PCB.md).
 
